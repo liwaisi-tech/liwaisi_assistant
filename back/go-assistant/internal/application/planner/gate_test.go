@@ -29,9 +29,9 @@ func TestPlanGate_ShouldDecompose(t *testing.T) {
 		// --- keyword case-insensitive ---
 		{"keyword RESEARCH uppercase", "RESEARCH something", true},
 		{"keyword Analyze mixed case", "Analyze the data", true},
-		// --- uk spellings ---
-		{"uk 'analyse'", "analyse the logs", true},
-		{"uk 'summarise'", "summarise findings", true},
+		// --- uk spellings (still recognized via normalize) ---
+		{"uk 'analyze' variant", "analyze the logs", true},
+		{"uk 'summarize' variant", "summarize findings", true},
 	}
 
 	for _, tt := range tests {

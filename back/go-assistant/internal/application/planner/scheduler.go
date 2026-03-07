@@ -12,7 +12,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 )
 
-// SchedulerOptions configure optional Scheduler behaviour.
+// SchedulerOptions configure optional Scheduler behavior.
 type SchedulerOptions struct {
 	// FailFast causes the scheduler to cancel all in-progress goroutines
 	// as soon as any single MicroTask fails.
@@ -65,7 +65,9 @@ func (s *Scheduler) Run(
 			inDegree[t.ID] = 0
 		}
 		for _, dep := range t.DependsOn {
-			inDegree[dep] = inDegree[dep] // ensure dep exists in map
+			if _, ok := inDegree[dep]; !ok {
+				inDegree[dep] = 0
+			}
 			inDegree[t.ID]++
 		}
 	}
@@ -80,9 +82,9 @@ func (s *Scheduler) Run(
 
 	planFailed := false
 
-	// Process waves until all tasks are executed or context is cancelled.
+	// Process waves until all tasks are executed or context is canceled.
 	for len(ready) > 0 {
-		// Stop processing new waves if context was cancelled (e.g. by FailFast).
+		// Stop processing new waves if context was canceled (e.g. by FailFast).
 		if runCtx.Err() != nil {
 			break
 		}

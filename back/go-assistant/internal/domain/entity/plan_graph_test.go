@@ -8,9 +8,9 @@ func makeSpec(name string) SubAgentSpec {
 
 func TestPlanGraph_Validate(t *testing.T) {
 	tests := []struct {
-		name    string
-		graph   PlanGraph
-		wantErr bool
+		name        string
+		graph       PlanGraph
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -56,9 +56,9 @@ func TestPlanGraph_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "empty graph — invalid",
-			graph:   PlanGraph{Tasks: []*MicroTask{}},
-			wantErr: true,
+			name:        "empty graph — invalid",
+			graph:       PlanGraph{Tasks: []*MicroTask{}},
+			wantErr:     true,
 			errContains: "at least one task",
 		},
 		{
@@ -68,7 +68,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "", Spec: makeSpec("s1")},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "empty ID",
 		},
 		{
@@ -79,7 +79,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "A", Spec: makeSpec("s2")},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "duplicate task ID",
 		},
 		{
@@ -89,7 +89,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "A", Spec: makeSpec("s1"), DependsOn: []string{"nonexistent"}},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "unknown ID",
 		},
 		{
@@ -99,7 +99,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "A", Spec: makeSpec("s1"), ContextFrom: []string{"ghost"}},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "unknown ContextFrom ID",
 		},
 		{
@@ -110,7 +110,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "B", Spec: makeSpec("s2"), DependsOn: []string{"A"}},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "cycle detected",
 		},
 		{
@@ -122,7 +122,7 @@ func TestPlanGraph_Validate(t *testing.T) {
 					{ID: "C", Spec: makeSpec("s3"), DependsOn: []string{"B"}},
 				},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "cycle detected",
 		},
 	}

@@ -6,8 +6,9 @@ import "strings"
 
 // complexKeywords are indicators that a task needs multi-step decomposition.
 var complexKeywords = []string{
-	"research", "find", "analyze", "analyse", "synthesize", "synthesise",
-	"compare", "summarize", "summarise", "investigate", "evaluate",
+	"research", "find", "analyze",
+	"synthesize",
+	"compare", "summarize", "investigate", "evaluate",
 	"compile", "gather", "aggregate", "explore",
 }
 

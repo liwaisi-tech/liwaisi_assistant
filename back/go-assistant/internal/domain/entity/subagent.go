@@ -26,7 +26,7 @@ type SubAgentSpec struct {
 	Timeout      time.Duration         `json:"timeout,omitempty"`
 	// BuiltIn marks this spec as a pre-registered built-in agent (e.g., "planner").
 	// Built-in specs cannot be overwritten by user-defined agents.
-	BuiltIn  bool              `json:"builtin,omitempty"`
+	BuiltIn bool `json:"builtin,omitempty"`
 	// Metadata holds arbitrary key/value annotations for tooling and introspection.
 	Metadata map[string]string `json:"metadata,omitempty"`
 }

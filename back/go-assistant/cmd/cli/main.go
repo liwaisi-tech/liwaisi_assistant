@@ -12,12 +12,12 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/configs"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/env"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/memory"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/planner"
 	appservice "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/service"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/session"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/skill"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/skill/builtin"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/subagent"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/planner"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
 	envtool "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/env"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/filemanagement"
@@ -165,7 +165,7 @@ func run() error {
 		Home:         h,
 		HealthSvc:    healthSvc,
 		AgentSvc:     agentSvc,
-		PlannerSvc:   buildPlannerService(envStore),
+		PlannerSvc:   buildPlannerService(),
 		Memory:       sharedMemory,
 		SessionStore: sessionStore,
 		EnvStore:     envStore,
@@ -286,7 +286,7 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 // buildPlannerService wires together the Planner gate, decomposer, scheduler,
 // and a thin SubAgentService backed by the shared router. It also pre-registers
 // the built-in planner spec in the router.
-func buildPlannerService(envStore *env.Store) input.PlannerService {
+func buildPlannerService() input.PlannerService {
 	llmCfg, err := configs.LoadLLMConfig()
 	if err != nil {
 		slog.Warn("planner: failed to load LLM config; plan command will not use LLM decomposer", "error", err)

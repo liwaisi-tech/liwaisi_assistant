@@ -24,13 +24,13 @@ func (s PlanStatus) IsTerminal() bool {
 // MicroTaskResult captures the outcome of a single MicroTask execution.
 type MicroTaskResult struct {
 	// TaskID matches the MicroTask.ID that produced this result.
-	TaskID  string     `json:"task_id"`
+	TaskID string `json:"task_id"`
 	// Output is the textual result produced by the subagent.
-	Output  string     `json:"output"`
+	Output string `json:"output"`
 	// Err holds any execution error. Nil means success.
-	Err     error      `json:"-"`
+	Err error `json:"-"`
 	// Status reflects the terminal state of this micro-task.
-	Status  PlanStatus `json:"status"`
+	Status PlanStatus `json:"status"`
 	// Elapsed is the wall-clock time the task took to complete.
 	Elapsed time.Duration `json:"elapsed"`
 }
@@ -45,9 +45,9 @@ type PlanResult struct {
 	// Results holds one entry per MicroTask, in execution order.
 	Results []MicroTaskResult `json:"results"`
 	// Status is the overall plan status. It is Failed if any micro-task failed.
-	Status  PlanStatus        `json:"status"`
+	Status PlanStatus `json:"status"`
 	// Elapsed is the total wall-clock time from plan start to finish.
-	Elapsed time.Duration     `json:"elapsed"`
+	Elapsed time.Duration `json:"elapsed"`
 }
 
 // IsSuccess reports whether all micro-tasks completed successfully.

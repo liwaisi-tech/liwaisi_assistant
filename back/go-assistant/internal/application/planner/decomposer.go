@@ -37,14 +37,14 @@ Rules:
 - Return ONLY the JSON array, nothing else.
 - If tasks are independent, omit depends_on entirely.
 - Keep the plan flat; do not nest tasks.
-- Minimise the number of sequential dependencies.`
+- Minimize the number of sequential dependencies.`
 
 // Decomposer uses an LLM to decompose a complex task into a PlanGraph.
 type Decomposer struct {
-	client        output.LLMClient
-	model         string
-	maxRetries    int
-	recoveryCfg   subagent.RecoveryConfig
+	client      output.LLMClient
+	model       string
+	maxRetries  int
+	recoveryCfg subagent.RecoveryConfig
 }
 
 // NewDecomposer creates a Decomposer backed by the given LLM client.

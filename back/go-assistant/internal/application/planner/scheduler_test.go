@@ -15,12 +15,11 @@ import (
 // --- mock SubAgentService for scheduler tests ---
 
 type mockSubAgentService struct {
-	mu       sync.Mutex
-	delays   map[string]time.Duration // per-task artificial delay
-	outputs  map[string]string        // per-task output
-	errors   map[string]error         // per-task error
-	maxCalls int32                    // total calls received
-	calls    int32
+	mu      sync.Mutex
+	delays  map[string]time.Duration // per-task artificial delay
+	outputs map[string]string        // per-task output
+	errors  map[string]error         // per-task error
+	calls   int32
 }
 
 func newMockSvc(outputs map[string]string) *mockSubAgentService {
@@ -160,7 +159,7 @@ func TestScheduler_ParallelWave_ConcurrencyConfirmed(t *testing.T) {
 
 func TestScheduler_FailFast_CancelsOthers(t *testing.T) {
 	// Two parallel tasks; one fails. With FailFast, the sibling should be
-	// cancelled or at minimum the plan should report failure.
+	// canceled or at minimum the plan should report failure.
 	graph := &entity.PlanGraph{
 		Tasks: []*entity.MicroTask{
 			makeTask("good"),

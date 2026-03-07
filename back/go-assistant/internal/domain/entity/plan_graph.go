@@ -72,20 +72,20 @@ func (g *PlanGraph) Validate() error {
 		adj[t.ID] = t.DependsOn
 	}
 
-	// Detect cycles via DFS with three-colour marking.
+	// Detect cycles via DFS with three-color marking.
 	// white (0) → not visited, grey (1) → in stack, black (2) → done.
 	const (
 		white = 0
 		grey  = 1
 		black = 2
 	)
-	colour := make(map[string]int, len(g.Tasks))
+	color := make(map[string]int, len(g.Tasks))
 
 	var dfs func(id string) error
 	dfs = func(id string) error {
-		colour[id] = grey
+		color[id] = grey
 		for _, dep := range adj[id] {
-			switch colour[dep] {
+			switch color[dep] {
 			case grey:
 				return fmt.Errorf("plan graph: cycle detected between %q and %q", id, dep)
 			case white:
@@ -94,12 +94,12 @@ func (g *PlanGraph) Validate() error {
 				}
 			}
 		}
-		colour[id] = black
+		color[id] = black
 		return nil
 	}
 
 	for _, t := range g.Tasks {
-		if colour[t.ID] == white {
+		if color[t.ID] == white {
 			if err := dfs(t.ID); err != nil {
 				return err
 			}

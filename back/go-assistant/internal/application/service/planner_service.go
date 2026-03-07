@@ -34,7 +34,7 @@ var PlannerBuiltInSpec = entity.SubAgentSpec{
 	BuiltIn:     true,
 }
 
-// PlannerServiceOption configures optional plannerService behaviour.
+// PlannerServiceOption configures optional plannerService behavior.
 type PlannerServiceOption func(*plannerService)
 
 // WithFailFast enables fast-fail semantics: the first MicroTask failure
@@ -99,7 +99,7 @@ func (p *plannerService) Execute(ctx context.Context, sessionID string, graph *e
 }
 
 // PlanAndExecute is a convenience method: Plan then Execute.
-func (p *plannerService) PlanAndExecute(ctx context.Context, sessionID string, task string) (valueobject.PlanResult, error) {
+func (p *plannerService) PlanAndExecute(ctx context.Context, sessionID, task string) (valueobject.PlanResult, error) {
 	graph, err := p.Plan(ctx, task)
 	if err != nil {
 		return valueobject.PlanResult{}, err
