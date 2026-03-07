@@ -203,7 +203,9 @@ func (s *subagentService) CreateAgent(_ context.Context, spec *entity.SubAgentSp
 		}
 	}
 
-	s.router.Register(spec)
+	if err := s.router.Register(spec); err != nil {
+		return fmt.Errorf("create agent: %w", err)
+	}
 
 	if s.cache != nil {
 		s.cache.Put(spec)

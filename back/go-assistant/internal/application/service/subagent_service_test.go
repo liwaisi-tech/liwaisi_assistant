@@ -50,7 +50,9 @@ func newTestSubagentService(mock *mockClient, specs []entity.SubAgentSpec) (*sub
 
 	router := subagent.NewRouter()
 	for i := range specs {
-		router.Register(&specs[i])
+		if err := router.Register(&specs[i]); err != nil {
+			panic("unexpected Register error in test helper: " + err.Error())
+		}
 	}
 
 	runner := subagent.NewRunner(clientFactory, memFactory)
@@ -209,7 +211,9 @@ func TestSubagentService_SpawnParallel(t *testing.T) {
 
 	router := subagent.NewRouter()
 	for i := range specValues {
-		router.Register(&specValues[i])
+		if err := router.Register(&specValues[i]); err != nil {
+			t.Fatalf("Register() unexpected error: %v", err)
+		}
 	}
 	runner := subagent.NewRunner(clientFactory, memFactory)
 	registry := tool.NewRegistry()
@@ -332,7 +336,9 @@ func TestSubagentService_SpawnParallel_MixedValidInvalid(t *testing.T) {
 
 	router := subagent.NewRouter()
 	for i := range validSpecs {
-		router.Register(&validSpecs[i])
+		if err := router.Register(&validSpecs[i]); err != nil {
+			t.Fatalf("Register() unexpected error: %v", err)
+		}
 	}
 	runner := subagent.NewRunner(clientFactory, memFactory)
 	registry := tool.NewRegistry()

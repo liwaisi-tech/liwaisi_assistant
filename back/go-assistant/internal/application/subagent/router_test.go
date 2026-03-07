@@ -58,7 +58,9 @@ func TestRouter_Register_And_Get(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := NewRouter()
 			for i := range tt.specs {
-				router.Register(&tt.specs[i])
+				if err := router.Register(&tt.specs[i]); err != nil {
+					t.Fatalf("Register() unexpected error: %v", err)
+				}
 			}
 
 			got, ok := router.Get(tt.lookupName)
@@ -105,7 +107,9 @@ func TestRouter_List(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := NewRouter()
 			for i := range tt.specs {
-				router.Register(&tt.specs[i])
+				if err := router.Register(&tt.specs[i]); err != nil {
+					t.Fatalf("Register() unexpected error: %v", err)
+				}
 			}
 
 			got := router.List()
@@ -123,13 +127,15 @@ func TestRouter_List(t *testing.T) {
 
 func TestRouter_List_PreservesFullSpec(t *testing.T) {
 	router := NewRouter()
-	router.Register(&entity.SubAgentSpec{
+	if err := router.Register(&entity.SubAgentSpec{
 		Name:        "researcher",
 		Description: "Research agent",
 		Instruction: "You research topics.",
 		ModelTier:   valueobject.ModelTierFast,
 		MaxTurns:    5,
-	})
+	}); err != nil {
+		t.Fatalf("Register() unexpected error: %v", err)
+	}
 
 	specs := router.List()
 	if len(specs) != 1 {
@@ -157,7 +163,7 @@ func TestRouter_Concurrent(t *testing.T) {
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			router.Register(&entity.SubAgentSpec{
+			_ = router.Register(&entity.SubAgentSpec{
 				Name:        fmt.Sprintf("agent-%d", idx),
 				Instruction: "concurrent test",
 			})
@@ -172,4 +178,50 @@ func TestRouter_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestRouter_Register_ReservedName(t *testing.T) {
+	router := NewRouter()
+	err := router.Register(&entity.SubAgentSpec{
+		Name:        "planner",
+		Instruction: "I am a user-defined planner",
+	})
+	if err == nil {
+		t.Error("Register() should return error for reserved name \"planner\", got nil")
+	}
+	// Confirm it was NOT stored.
+	_, ok := router.Get("planner")
+	if ok {
+		t.Error("reserved name \"planner\" was stored despite Register() error")
+	}
+}
+
+func TestRouter_RegisterBuiltIn_Succeeds(t *testing.T) {
+	router := NewRouter()
+	spec := &entity.SubAgentSpec{
+		Name:    "planner",
+		BuiltIn: true,
+	}
+	router.RegisterBuiltIn(spec)
+
+	got, ok := router.Get("planner")
+	if !ok {
+		t.Fatal("RegisterBuiltIn() did not store spec")
+	}
+	if !got.BuiltIn {
+		t.Error("stored spec BuiltIn = false, want true")
+	}
+}
+
+func TestRouter_Register_After_RegisterBuiltIn_Rejected(t *testing.T) {
+	router := NewRouter()
+	router.RegisterBuiltIn(&entity.SubAgentSpec{Name: "planner", BuiltIn: true})
+
+	err := router.Register(&entity.SubAgentSpec{
+		Name:        "planner",
+		Instruction: "attempted override",
+	})
+	if err == nil {
+		t.Error("Register() should reject overwrite of built-in \"planner\"")
+	}
 }
