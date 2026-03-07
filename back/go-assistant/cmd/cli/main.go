@@ -17,6 +17,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/skill"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/skill/builtin"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/subagent"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/planner"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
 	envtool "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/env"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/filemanagement"
@@ -164,6 +165,7 @@ func run() error {
 		Home:         h,
 		HealthSvc:    healthSvc,
 		AgentSvc:     agentSvc,
+		PlannerSvc:   buildPlannerService(envStore),
 		Memory:       sharedMemory,
 		SessionStore: sessionStore,
 		EnvStore:     envStore,
@@ -279,6 +281,44 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 	default:
 		return buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, router, runner, svcOpts)
 	}
+}
+
+// buildPlannerService wires together the Planner gate, decomposer, scheduler,
+// and a thin SubAgentService backed by the shared router. It also pre-registers
+// the built-in planner spec in the router.
+func buildPlannerService(envStore *env.Store) input.PlannerService {
+	llmCfg, err := configs.LoadLLMConfig()
+	if err != nil {
+		slog.Warn("planner: failed to load LLM config; plan command will not use LLM decomposer", "error", err)
+		// Return a gate-only planner (all tasks treated as simple).
+		return appservice.NewPlannerService(planner.NewPlanGate(), nil, nil)
+	}
+
+	llmClient, err := openrouter.NewClient(&openrouter.ClientConfig{
+		APIKey:  llmCfg.APIKey,
+		BaseURL: llmCfg.BaseURL,
+		Model:   llmCfg.Model,
+		Timeout: llmCfg.Timeout,
+	})
+	if err != nil {
+		slog.Warn("planner: failed to create LLM client; plan command will not use LLM decomposer", "error", err)
+		return appservice.NewPlannerService(planner.NewPlanGate(), nil, nil)
+	}
+
+	// Pre-register the built-in planner SubAgentSpec in a dedicated mini-router.
+	plannerRouter := subagent.NewRouter()
+	plannerRouter.RegisterBuiltIn(&appservice.PlannerBuiltInSpec)
+
+	clientFactory := func(_ valueobject.ModelTier) (output.LLMClient, string) {
+		return llmClient, llmCfg.Model
+	}
+	mem := memory.NewConversationMemory()
+	memFactory := memory.NewSubAgentMemoryFactory(mem)
+	plannerRunner := subagent.NewRunner(clientFactory, memFactory)
+	plannerSubagentSvc := appservice.NewSubAgentService(plannerRouter, plannerRunner, nil)
+
+	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
+	return appservice.NewPlannerService(planner.NewPlanGate(), decomp, plannerSubagentSvc)
 }
 
 func buildEagerAgent(

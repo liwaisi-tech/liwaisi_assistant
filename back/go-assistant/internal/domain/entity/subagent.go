@@ -24,6 +24,11 @@ type SubAgentSpec struct {
 	ModelTier    valueobject.ModelTier `json:"model_tier,omitempty"`
 	MaxTurns     int                   `json:"max_turns,omitempty"`
 	Timeout      time.Duration         `json:"timeout,omitempty"`
+	// BuiltIn marks this spec as a pre-registered built-in agent (e.g., "planner").
+	// Built-in specs cannot be overwritten by user-defined agents.
+	BuiltIn  bool              `json:"builtin,omitempty"`
+	// Metadata holds arbitrary key/value annotations for tooling and introspection.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // EffectiveMaxTurns returns MaxTurns if set, otherwise the default of 10.
@@ -48,11 +53,13 @@ func (s *SubAgentSpec) HasToolRestrictions() bool {
 }
 
 // Validate checks that all required fields are present and constraints are met.
+// Built-in specs only require a non-empty Name; Instruction is optional
+// because instructions may be baked into the service implementation.
 func (s *SubAgentSpec) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("subagent spec: name is required")
 	}
-	if s.Instruction == "" {
+	if !s.BuiltIn && s.Instruction == "" {
 		return fmt.Errorf("subagent spec: instruction is required")
 	}
 	if s.MaxTurns < 0 {

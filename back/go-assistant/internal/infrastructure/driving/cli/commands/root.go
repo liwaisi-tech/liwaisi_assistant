@@ -18,6 +18,7 @@ type Options struct {
 	Home         *home.Home
 	HealthSvc    input.HealthService
 	AgentSvc     input.AgentService
+	PlannerSvc   input.PlannerService
 	Memory       *memory.ConversationMemory
 	SessionStore *session.Store
 	EnvStore     *env.Store
@@ -56,6 +57,7 @@ func NewRoot(opts *Options) *cobra.Command {
 		newAskCmd(opts.Home, opts.AgentSvc),
 		newConfigCmd(opts.Home),
 		newEnvCmd(opts.EnvStore),
+		newPlanCmd(opts.PlannerSvc),
 	)
 
 	return root
