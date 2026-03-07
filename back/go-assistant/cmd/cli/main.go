@@ -151,23 +151,30 @@ func run() error {
 	}
 
 	sharedMemory := memory.NewConversationMemory()
-	agentSvc, modelName, err := buildAgentService(h.Path(home.Workspace), envStore, sharedMemory)
-	if err != nil {
-		return err
-	}
-
 	cwd, _ := os.Getwd()
 	sessionsDir := filepath.Join(h.Path(home.Data), "sessions")
 	sessionStore := session.NewStore(sessionsDir, cwd)
 
+	var cachedAgentSvc input.AgentService
+	var cachedModelName string
+	var cachedAgentErr error
+	var agentInitialized bool
+
+	agentFactory := func() (input.AgentService, string, error) {
+		if !agentInitialized {
+			cachedAgentSvc, cachedModelName, cachedAgentErr = buildAgentService(h.Path(home.Workspace), envStore, sharedMemory)
+			agentInitialized = true
+		}
+		return cachedAgentSvc, cachedModelName, cachedAgentErr
+	}
+
 	opts := &commands.Options{
 		Home:         h,
 		HealthSvc:    healthSvc,
-		AgentSvc:     agentSvc,
+		AgentFactory: agentFactory,
 		Memory:       sharedMemory,
 		SessionStore: sessionStore,
 		EnvStore:     envStore,
-		ModelName:    modelName,
 		LogLevel:     logLevel,
 	}
 
