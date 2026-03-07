@@ -258,9 +258,9 @@ func run() error {
 	var agentSvc input.AgentService
 	switch llmCfg.ToolLoadingStrategy {
 	case configs.ToolLoadingEager:
-		agentSvc, _, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc)
+		agentSvc, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc)
 	default:
-		agentSvc, _, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc, svcOpts)
+		agentSvc, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc)
 	}
 
 	cwd, _ := os.Getwd()
@@ -296,7 +296,7 @@ func buildEagerAgent(
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
 	subagentSvc input.SubAgentService,
-) (input.AgentService, string, error) {
+) (svc input.AgentService, model string) {
 	slog.Info("tool loading strategy: eager")
 
 	registry := tool.NewRegistry()
@@ -311,8 +311,8 @@ func buildEagerAgent(
 
 	agentCfg.SystemPrompt = eagerSystemPrompt + skillRegistry.SystemPromptFragment()
 
-	svc := appservice.NewAgentService(llmClient, agentCfg, registry, mem)
-	return svc, agentCfg.Model, nil
+	svc = appservice.NewAgentService(llmClient, agentCfg, registry, mem)
+	return svc, agentCfg.Model
 }
 
 func buildJITAgent(
@@ -326,8 +326,7 @@ func buildJITAgent(
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
 	subagentSvc input.SubAgentService,
-	svcOpts []appservice.SubAgentServiceOption,
-) (input.AgentService, string, error) {
+) (svc input.AgentService, model string) {
 	slog.Info("tool loading strategy: jit")
 
 	catalog := tool.NewCatalog()
@@ -345,8 +344,8 @@ func buildJITAgent(
 
 	agentCfg.SystemPrompt = jitSystemPrompt + skillRegistry.SystemPromptFragment()
 
-	svc := appservice.NewAgentService(llmClient, agentCfg, nil, mem,
+	svc = appservice.NewAgentService(llmClient, agentCfg, nil, mem,
 		appservice.WithSessionStore(sessionStore),
 	)
-	return svc, agentCfg.Model, nil
+	return svc, agentCfg.Model
 }
