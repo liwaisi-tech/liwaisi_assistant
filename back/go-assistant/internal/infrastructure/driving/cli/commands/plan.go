@@ -34,7 +34,12 @@ Examples:
 
 			fmt.Fprintf(cmd.OutOrStdout(), "🧠 Planning: %s\n\n", task)
 
-			result, err := plannerSvc.PlanAndExecute(cmd.Context(), sessionID, task)
+			var opts []input.PlannerServiceOption
+			if failFast {
+				opts = append(opts, input.WithFailFast())
+			}
+
+			result, err := plannerSvc.PlanAndExecute(cmd.Context(), sessionID, task, opts...)
 			if err != nil {
 				return fmt.Errorf("plan: %w", err)
 			}
@@ -45,7 +50,6 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "Cancel remaining tasks if one fails")
-	_ = failFast // consumed at DI time via WithFailFast option
 
 	return cmd
 }

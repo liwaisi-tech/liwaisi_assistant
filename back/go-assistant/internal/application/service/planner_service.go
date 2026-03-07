@@ -34,36 +34,20 @@ var PlannerBuiltInSpec = entity.SubAgentSpec{
 	BuiltIn:     true,
 }
 
-// PlannerServiceOption configures optional plannerService behavior.
-type PlannerServiceOption func(*plannerService)
-
-// WithFailFast enables fast-fail semantics: the first MicroTask failure
-// cancels all in-flight sibling goroutines.
-func WithFailFast() PlannerServiceOption {
-	return func(p *plannerService) {
-		p.scheduler = planner.NewScheduler(planner.SchedulerOptions{FailFast: true})
-	}
-}
-
 // NewPlannerService wires the gate, decomposer, scheduler, and subagent
 // service together into a PlannerService.
 func NewPlannerService(
 	gate *planner.PlanGate,
 	decomp *planner.Decomposer,
 	subagentSvc input.SubAgentService,
-	opts ...PlannerServiceOption,
 ) input.PlannerService {
-	p := &plannerService{
+	return &plannerService{
 		gate:        gate,
 		decomp:      decomp,
 		scheduler:   planner.NewScheduler(planner.SchedulerOptions{}),
 		subagent:    subagentSvc,
 		defaultSpec: PlannerBuiltInSpec,
 	}
-	for _, opt := range opts {
-		opt(p)
-	}
-	return p
 }
 
 // Plan decomposes a task into a PlanGraph.
@@ -93,16 +77,26 @@ func (p *plannerService) Plan(ctx context.Context, task string) (*entity.PlanGra
 }
 
 // Execute runs a pre-built PlanGraph using the Scheduler.
-func (p *plannerService) Execute(ctx context.Context, sessionID string, graph *entity.PlanGraph) (valueobject.PlanResult, error) {
-	result := p.scheduler.Run(ctx, graph, sessionID, p.subagent)
+func (p *plannerService) Execute(ctx context.Context, sessionID string, graph *entity.PlanGraph, opts ...input.PlannerServiceOption) (valueobject.PlanResult, error) {
+	options := &input.PlannerServiceOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	sched := p.scheduler
+	if options.FailFast {
+		sched = planner.NewScheduler(planner.SchedulerOptions{FailFast: true})
+	}
+
+	result := sched.Run(ctx, graph, sessionID, p.subagent)
 	return result, nil
 }
 
 // PlanAndExecute is a convenience method: Plan then Execute.
-func (p *plannerService) PlanAndExecute(ctx context.Context, sessionID, task string) (valueobject.PlanResult, error) {
+func (p *plannerService) PlanAndExecute(ctx context.Context, sessionID, task string, opts ...input.PlannerServiceOption) (valueobject.PlanResult, error) {
 	graph, err := p.Plan(ctx, task)
 	if err != nil {
 		return valueobject.PlanResult{}, err
 	}
-	return p.Execute(ctx, sessionID, graph)
+	return p.Execute(ctx, sessionID, graph, opts...)
 }

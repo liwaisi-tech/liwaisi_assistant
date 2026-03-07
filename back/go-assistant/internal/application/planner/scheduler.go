@@ -58,8 +58,9 @@ func (s *Scheduler) Run(
 		taskByID[t.ID] = t
 	}
 
-	// Kahn's algorithm: compute in-degree for each task.
+	// Kahn's algorithm: compute in-degree for each task and build adjacency list.
 	inDegree := make(map[string]int, len(graph.Tasks))
+	adj := make(map[string][]string, len(graph.Tasks))
 	for _, t := range graph.Tasks {
 		if _, ok := inDegree[t.ID]; !ok {
 			inDegree[t.ID] = 0
@@ -69,6 +70,7 @@ func (s *Scheduler) Run(
 				inDegree[dep] = 0
 			}
 			inDegree[t.ID]++
+			adj[dep] = append(adj[dep], t.ID)
 		}
 	}
 
@@ -124,16 +126,12 @@ func (s *Scheduler) Run(
 			break
 		}
 
-		// Reduce in-degree for tasks downstream of completed wave.
+		// Reduce in-degree for tasks downstream of completed wave using adjacency list.
 		for _, waveTaskID := range wave {
-			for _, t := range graph.Tasks {
-				for _, dep := range t.DependsOn {
-					if dep == waveTaskID {
-						inDegree[t.ID]--
-						if inDegree[t.ID] == 0 {
-							ready = append(ready, t.ID)
-						}
-					}
+			for _, dependentID := range adj[waveTaskID] {
+				inDegree[dependentID]--
+				if inDegree[dependentID] == 0 {
+					ready = append(ready, dependentID)
 				}
 			}
 		}
