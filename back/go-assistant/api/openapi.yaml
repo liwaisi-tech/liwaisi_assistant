@@ -1,0 +1,67 @@
+openapi: "3.1.0"
+info:
+  title: Go Assistant API
+  description: API for the Go Assistant microservice health and status monitoring.
+  version: "1.0.0"
+  contact:
+    name: Liwaisi Liwaisi
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Returns the health status of the service and its dependencies.
+      tags:
+        - Health
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "UP"
+                version: "1.0.0"
+                timestamp: "2026-03-03T12:00:00Z"
+                checks:
+                  database: "UP"
+        "503":
+          description: Service is unhealthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "DOWN"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Aggregate health status of the service.
+          enum:
+            - UP
+            - DOWN
+        version:
+          type: string
+          description: Current version of the service.
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of when the health check was performed.
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum:
+              - UP
+              - DOWN
+          description: Health status of individual components.
