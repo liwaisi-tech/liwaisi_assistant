@@ -16,6 +16,8 @@ const (
 // <Instruction, Context, Tools, Model>.
 type SubAgentSpec struct {
 	Name         string                `json:"name"`
+	BuiltIn      bool                  `json:"builtin,omitempty"` // New field
+	Metadata     map[string]string     `json:"metadata,omitempty"` // New field
 	Description  string                `json:"description"`
 	Instruction  string                `json:"instruction"`
 	Context      string                `json:"context"`
