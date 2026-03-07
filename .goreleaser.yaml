@@ -1,0 +1,32 @@
+version: 2
+project_name: liwaisi
+
+builds:
+  - id: liwaisi
+    main: ./back/go-assistant/cmd/cli
+    binary: liwaisi
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    # This matches the pattern expected by scripts/install.sh:
+    # liwaisi_0.1.0-beta.1_linux_amd64.tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- if eq .Os "darwin" }}darwin{{ else if eq .Os "linux" }}linux{{ else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}amd64{{ else if eq .Arch "arm64" }}arm64{{ else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+release:
+  # Enable prerelease flag if the tag contains -beta, -rc, or -alpha
+  prerelease: auto
