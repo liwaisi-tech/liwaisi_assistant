@@ -8,14 +8,22 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/entity"
 )
 
-// Scheduler executes a PlanGraph as a DAG.
-type Scheduler struct{}
+// Scheduler defines the interface for DAG execution.
+type Scheduler interface {
+	Execute(ctx context.Context, graph *entity.PlanGraph) (entity.PlanResult, error)
+}
+
+// DAGScheduler executes a PlanGraph as a DAG.
+type DAGScheduler struct{}
 
 // Execute runs the tasks in the graph, respecting dependencies.
-func (s *Scheduler) Execute(ctx context.Context, graph *entity.PlanGraph) (entity.PlanResult, error) {
+func (s *DAGScheduler) Execute(ctx context.Context, graph *entity.PlanGraph) (entity.PlanResult, error) {
 	if err := s.validate(graph); err != nil {
 		return entity.PlanResult{}, err
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	results := make(map[string]entity.MicroTaskResult)
 	var mu sync.Mutex
@@ -31,12 +39,15 @@ func (s *Scheduler) Execute(ctx context.Context, graph *entity.PlanGraph) (entit
 		wg.Add(1)
 		go func(id string, task *entity.MicroTask) {
 			defer wg.Done()
+			defer func() {
+				// Ensure downstream tasks aren't blocked if this task fails or panics
+				close(done[id])
+			}()
 
 			for _, depID := range task.Dependencies {
 				select {
 				case <-done[depID]:
 				case <-ctx.Done():
-					errChan <- ctx.Err()
 					return
 				}
 			}
@@ -44,7 +55,6 @@ func (s *Scheduler) Execute(ctx context.Context, graph *entity.PlanGraph) (entit
 			mu.Lock()
 			results[id] = entity.MicroTaskResult{TaskID: id, Status: entity.StatusCompleted}
 			mu.Unlock()
-			close(done[id])
 		}(id, task)
 	}
 
@@ -57,7 +67,7 @@ func (s *Scheduler) Execute(ctx context.Context, graph *entity.PlanGraph) (entit
 	}
 }
 
-func (s *Scheduler) validate(graph *entity.PlanGraph) error {
+func (s *DAGScheduler) validate(graph *entity.PlanGraph) error {
 	visited := make(map[string]bool)
 	recStack := make(map[string]bool)
 
