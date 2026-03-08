@@ -37,6 +37,38 @@ make build-cli
 # Binary is at bin/liwaisi
 ```
 
+## Usage
+
+### Interactive chat
+Start a persistent chat session with the assistant:
+
+```bash
+liwaisi chat
+```
+
+### Single query
+Run a one-off query without entering an interactive session:
+
+```bash
+liwaisi ask "What is the capital of France?"
+```
+
+### Built-in Planner
+The `plan` command allows you to execute complex, multi-step tasks by decomposing them into a Directed Acyclic Graph (DAG) of micro-tasks. Independent tasks are executed in parallel, while dependent tasks are run sequentially.
+
+```bash
+# Simple tasks bypass LLM decomposition
+liwaisi plan "say hello"
+
+# Complex tasks are decomposed into a parallel plan
+liwaisi plan "research the 3 best Go concurrency patterns and compare them"
+
+# Use --fail-fast to stop immediately if any task fails
+liwaisi plan "..." --fail-fast
+```
+
+The planner is also available as a built-in subagent that the main assistant can delegate tasks to.
+
 ## Versioning
 
 This project follows [Semantic Versioning 2.0.0](https://semver.org/). During early development, releases use pre-release identifiers (e.g. `v0.1.0-beta.1`) to signal that APIs and capabilities may change.

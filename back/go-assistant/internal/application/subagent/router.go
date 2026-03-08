@@ -1,11 +1,17 @@
 package subagent
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/entity"
 )
+
+// reservedNames lists built-in agent names that cannot be overwritten by users.
+var reservedNames = map[string]bool{
+	"planner": true,
+}
 
 // Router maintains a registry of SubAgentSpec definitions and provides
 // deterministic name-based routing. It is safe for concurrent use.
@@ -22,8 +28,21 @@ func NewRouter() *Router {
 }
 
 // Register adds a SubAgentSpec to the router. If a spec with the same
-// name already exists, it is overwritten.
-func (r *Router) Register(spec *entity.SubAgentSpec) {
+// name already exists and is not a reserved built-in, it is overwritten.
+// Returns an error if the name is reserved for a built-in agent.
+func (r *Router) Register(spec *entity.SubAgentSpec) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if reservedNames[spec.Name] {
+		return fmt.Errorf("subagent router: %q is a reserved built-in name and cannot be overwritten", spec.Name)
+	}
+	r.specs[spec.Name] = *spec
+	return nil
+}
+
+// RegisterBuiltIn unconditionally registers a built-in SubAgentSpec,
+// bypassing the reserved-name guard. Should only be called at startup.
+func (r *Router) RegisterBuiltIn(spec *entity.SubAgentSpec) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs[spec.Name] = *spec

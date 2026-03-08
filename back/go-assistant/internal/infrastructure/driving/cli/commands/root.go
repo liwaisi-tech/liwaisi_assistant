@@ -15,13 +15,14 @@ import (
 
 // Options holds the shared dependencies injected into subcommands.
 type Options struct {
-	Home         *home.Home
-	HealthSvc    input.HealthService
-	AgentFactory func() (input.AgentService, string, error)
-	Memory       *memory.ConversationMemory
-	SessionStore *session.Store
-	EnvStore     *env.Store
-	LogLevel     *slog.LevelVar
+	Home           *home.Home
+	HealthSvc      input.HealthService
+	AgentFactory   func() (input.AgentService, string, error)
+	PlannerFactory func() (input.PlannerService, error)
+	Memory         *memory.ConversationMemory
+	SessionStore   *session.Store
+	EnvStore       *env.Store
+	LogLevel       *slog.LevelVar
 }
 
 // NewRoot constructs the root cobra.Command with all subcommands attached.
@@ -55,6 +56,7 @@ func NewRoot(opts *Options) *cobra.Command {
 		newAskCmd(opts.Home, opts.AgentFactory),
 		newConfigCmd(opts.Home),
 		newEnvCmd(opts.EnvStore),
+		newPlanCmd(opts.PlannerFactory),
 	)
 
 	return root

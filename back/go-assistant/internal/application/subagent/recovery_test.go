@@ -277,7 +277,6 @@ func TestWithRecovery_ParentCancel(t *testing.T) {
 }
 
 func TestWithRecovery_NoGoroutineLeak(t *testing.T) {
-	t.Parallel()
 	cfg := RecoveryConfig{Timeout: time.Second}
 
 	before := runtime.NumGoroutine()

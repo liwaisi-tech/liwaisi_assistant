@@ -12,6 +12,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/configs"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/env"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/memory"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/planner"
 	appservice "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/service"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/session"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/skill"
@@ -156,36 +157,48 @@ func run() error {
 	sessionStore := session.NewStore(sessionsDir, cwd)
 
 	var cachedAgentSvc input.AgentService
+	var cachedPlannerSvc input.PlannerService
 	var cachedModelName string
-	var cachedAgentErr error
-	var agentInitialized bool
+	var cachedErr error
+	var servicesInitialized bool
+
+	servicesFactory := func() (input.AgentService, input.PlannerService, string, error) {
+		if !servicesInitialized {
+			cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr = buildServices(h.Path(home.Workspace), envStore, sharedMemory)
+			servicesInitialized = true
+		}
+		return cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr
+	}
 
 	agentFactory := func() (input.AgentService, string, error) {
-		if !agentInitialized {
-			cachedAgentSvc, cachedModelName, cachedAgentErr = buildAgentService(h.Path(home.Workspace), envStore, sharedMemory)
-			agentInitialized = true
-		}
-		return cachedAgentSvc, cachedModelName, cachedAgentErr
+		agentSvc, _, modelName, err := servicesFactory()
+		return agentSvc, modelName, err
+	}
+
+	plannerFactory := func() (input.PlannerService, error) {
+		_, plannerSvc, _, err := servicesFactory()
+		return plannerSvc, err
 	}
 
 	opts := &commands.Options{
-		Home:         h,
-		HealthSvc:    healthSvc,
-		AgentFactory: agentFactory,
-		Memory:       sharedMemory,
-		SessionStore: sessionStore,
-		EnvStore:     envStore,
-		LogLevel:     logLevel,
+		Home:           h,
+		HealthSvc:      healthSvc,
+		AgentFactory:   agentFactory,
+		PlannerFactory: plannerFactory,
+		Memory:         sharedMemory,
+		SessionStore:   sessionStore,
+		EnvStore:       envStore,
+		LogLevel:       logLevel,
 	}
 
 	return commands.Execute(opts)
 }
 
-func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.ConversationMemory) (input.AgentService, string, error) { //nolint:funlen,cyclop // wiring function
+func buildServices(workspacePath string, envStore *env.Store, mem *memory.ConversationMemory) (input.AgentService, input.PlannerService, string, error) { //nolint:funlen,cyclop // wiring function
 
 	llmCfg, err := configs.LoadLLMConfig()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 
 	llmClient, err := openrouter.NewClient(&openrouter.ClientConfig{
@@ -195,7 +208,7 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 		Timeout: llmCfg.Timeout,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("creating LLM client: %w", err)
+		return nil, nil, "", fmt.Errorf("creating LLM client: %w", err)
 	}
 
 	agentInfo := &tool.AgentInfo{
@@ -221,18 +234,19 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 			"SubAgent delegation via spawn_subagent for specialized tasks",
 			"Dynamic team formation with evaluate_team and create_subagent",
 			"Built-in subagent-creator skill for authoring new subagent definitions",
+			"Built-in planner for decomposing and executing multi-step tasks",
 		},
 		CreatedBy: "Liwaisi Engineering",
 	}
 
 	fileMgmt, err := filemanagement.NewToolSet(workspacePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("initializing file management tools: %w", err)
+		return nil, nil, "", fmt.Errorf("initializing file management tools: %w", err)
 	}
 
 	shellExec, err := shellexec.NewToolSet(workspacePath, shellexec.WithRedactor(envStore.Redactor()))
 	if err != nil {
-		return nil, "", fmt.Errorf("initializing shell execution tools: %w", err)
+		return nil, nil, "", fmt.Errorf("initializing shell execution tools: %w", err)
 	}
 
 	webTools := web.NewToolSet()
@@ -248,7 +262,8 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 	}
 
 	router := subagent.NewRouter()
-	// TODO: resolve different LLM clients per ModelTier when multi-model support lands.
+	router.RegisterBuiltIn(&appservice.PlannerBuiltInSpec)
+
 	clientFactory := func(_ valueobject.ModelTier) (output.LLMClient, string) {
 		return llmClient, llmCfg.Model
 	}
@@ -273,6 +288,8 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 		appservice.WithSubAgentsDir(subagentsDir),
 	}
 
+	subagentSvc := appservice.NewSubAgentService(router, runner, nil, svcOpts...)
+
 	agentCfg := appservice.AgentConfig{
 		Model:             llmCfg.Model,
 		Temperature:       llmCfg.Temperature,
@@ -280,12 +297,18 @@ func buildAgentService(workspacePath string, envStore *env.Store, mem *memory.Co
 		MaxToolIterations: llmCfg.MaxToolIterations,
 	}
 
+	var agentSvc input.AgentService
 	switch llmCfg.ToolLoadingStrategy {
 	case configs.ToolLoadingEager:
-		return buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, router, runner, svcOpts)
+		agentSvc, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
 	default:
-		return buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, router, runner, svcOpts)
+		agentSvc, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
 	}
+
+	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
+	plannerSvc := appservice.NewPlannerService(planner.NewPlanGate(), decomp, subagentSvc)
+
+	return agentSvc, plannerSvc, agentCfg.Model, nil
 }
 
 func buildEagerAgent(
@@ -298,10 +321,8 @@ func buildEagerAgent(
 	envTools *envtool.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
-	router *subagent.Router,
-	runner *subagent.Runner,
-	svcOpts []appservice.SubAgentServiceOption,
-) (input.AgentService, string, error) { //nolint:unparam // error kept for symmetry with buildAgentService caller
+	subagentSvc input.SubAgentService,
+) (svc input.AgentService, model string) {
 	slog.Info("tool loading strategy: eager")
 
 	registry := tool.NewRegistry()
@@ -312,14 +333,12 @@ func buildEagerAgent(
 	envTools.Register(registry)
 	skill.RegisterSkillTools(registry, skillRegistry)
 
-	subagentSvc := appservice.NewSubAgentService(router, runner, registry, svcOpts...)
-	// TODO: wire real SessionIDProvider once session ID is accessible at this layer.
 	subagenttools.RegisterSubAgentTools(registry, subagentSvc, nil)
 
 	agentCfg.SystemPrompt = eagerSystemPrompt + skillRegistry.SystemPromptFragment()
 
-	svc := appservice.NewAgentService(llmClient, agentCfg, registry, mem)
-	return svc, agentCfg.Model, nil
+	svc = appservice.NewAgentService(llmClient, agentCfg, registry, mem)
+	return svc, agentCfg.Model
 }
 
 func buildJITAgent(
@@ -332,10 +351,8 @@ func buildJITAgent(
 	envTools *envtool.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
-	router *subagent.Router,
-	runner *subagent.Runner,
-	svcOpts []appservice.SubAgentServiceOption,
-) (input.AgentService, string, error) { //nolint:unparam // error kept for symmetry with buildAgentService caller
+	subagentSvc input.SubAgentService,
+) (svc input.AgentService, model string) {
 	slog.Info("tool loading strategy: jit")
 
 	catalog := tool.NewCatalog()
@@ -348,16 +365,13 @@ func buildJITAgent(
 		tool.RegisterWhoAmI(ar, agentInfo)
 		tool.RegisterFindToolsOnActive(ar, cat)
 		skill.RegisterFindSkills(ar, skillRegistry)
-
-		subagentSvc := appservice.NewSubAgentService(router, runner, ar, svcOpts...)
-		// TODO: wire real SessionIDProvider once session ID is accessible at this layer.
 		subagenttools.RegisterSubAgentTools(ar, subagentSvc, nil)
 	})
 
 	agentCfg.SystemPrompt = jitSystemPrompt + skillRegistry.SystemPromptFragment()
 
-	svc := appservice.NewAgentService(llmClient, agentCfg, nil, mem,
+	svc = appservice.NewAgentService(llmClient, agentCfg, nil, mem,
 		appservice.WithSessionStore(sessionStore),
 	)
-	return svc, agentCfg.Model, nil
+	return svc, agentCfg.Model
 }
