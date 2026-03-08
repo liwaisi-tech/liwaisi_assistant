@@ -28,6 +28,10 @@ func (m *mockAgentService) Ask(_ context.Context, query string) (string, error) 
 	return fmt.Sprintf("Answer to: %s", query), nil
 }
 
+func (m *mockAgentService) ChatStream(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+	close(outCh)
+}
+
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	th, err := theme.Get("dark")
@@ -504,6 +508,10 @@ func (e *errorAgentService) Chat(_ context.Context, _ string, _ string) (<-chan 
 
 func (e *errorAgentService) Ask(_ context.Context, _ string) (string, error) {
 	return "", e.err
+}
+
+func (e *errorAgentService) ChatStream(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+	close(outCh)
 }
 
 func TestApp_ReadStream_ToolEvent(t *testing.T) {

@@ -45,6 +45,12 @@ fmt:
 	gofmt -w .
 	goimports -w .
 
+## generate: Generate protobuf files
+generate:
+	./protoc-bin/bin/protoc --go_out=. --go_opt=module=github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant \
+		api/proto/agent/v1/agent.proto
+
 ## run: Run the server locally
 run:
 	$(GO) run ./cmd/server

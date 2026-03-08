@@ -47,6 +47,10 @@ func (m *mockAgentService) Ask(_ context.Context, query string) (string, error) 
 	return fmt.Sprintf("Answer to: %s", query), nil
 }
 
+func (m *mockAgentService) ChatStream(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+	close(outCh)
+}
+
 func newTestOpts(t *testing.T) *Options {
 	t.Helper()
 	h, err := home.New(t.TempDir())
