@@ -46,7 +46,7 @@ func main() {
 	fmt.Printf(">> Sending message to server...\n")
 	err = stream.Send(&agentv1.ClientMessage{
 		Payload: &agentv1.ClientMessage_Text{
-			Text: "Hello! Please reply with a short test message.",
+			Text: "Introduce your self in colombian spanish.",
 		},
 	})
 	if err != nil {
