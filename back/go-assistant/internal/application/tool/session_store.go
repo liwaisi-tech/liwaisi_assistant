@@ -3,13 +3,14 @@ package tool
 import (
 	"sync"
 
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/input"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 )
 
 // BootstrapFunc registers bootstrap tools (find_tools, find_skills, who_am_i)
 // into a freshly-created ActiveRegistry. The catalog is passed so the
 // bootstrap function can wire meta-tools that reference it.
-type BootstrapFunc func(ar *ActiveRegistry, catalog *Catalog)
+type BootstrapFunc func(ar *ActiveRegistry, catalog *Catalog, subagentSvc input.SubAgentService)
 
 // SessionRegistryStore maps session IDs to their ActiveRegistry instances.
 // Each session gets an independent ActiveRegistry that starts with only
@@ -19,10 +20,11 @@ type BootstrapFunc func(ar *ActiveRegistry, catalog *Catalog)
 // (short-lived process), this is acceptable. A long-running server mode
 // would need TTL-based eviction or explicit cleanup.
 type SessionRegistryStore struct {
-	mu        sync.RWMutex
-	sessions  map[string]*ActiveRegistry
-	catalog   *Catalog
-	bootstrap BootstrapFunc
+	mu          sync.RWMutex
+	sessions    map[string]*ActiveRegistry
+	catalog     *Catalog
+	bootstrap   BootstrapFunc
+	subagentSvc input.SubAgentService
 }
 
 // NewSessionRegistryStore creates a store that provisions new sessions with
@@ -56,10 +58,18 @@ func (s *SessionRegistryStore) GetOrCreate(sessionID string) *ActiveRegistry {
 
 	ar = NewActiveRegistry(s.catalog)
 	if s.bootstrap != nil {
-		s.bootstrap(ar, s.catalog)
+		s.bootstrap(ar, s.catalog, s.subagentSvc)
 	}
 	s.sessions[sessionID] = ar
 	return ar
+}
+
+// UpdateSubAgentSvc updates the subagent service used for bootstrapping new
+// sessions. Existing sessions are not affected.
+func (s *SessionRegistryStore) UpdateSubAgentSvc(svc input.SubAgentService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subagentSvc = svc
 }
 
 // Remove deletes the session's ActiveRegistry, freeing resources.
@@ -82,6 +92,12 @@ func (s *SessionRegistryStore) Has(sessionID string) bool {
 	defer s.mu.RUnlock()
 	_, ok := s.sessions[sessionID]
 	return ok
+}
+
+// GetExecutor implements SessionExecutorProvider by returning the session's
+// ActiveRegistry. If the session doesn't exist, it is created.
+func (s *SessionRegistryStore) GetExecutor(sessionID string) Executor {
+	return s.GetOrCreate(sessionID)
 }
 
 // LoadCategoryForSession loads a tool category into the given session's

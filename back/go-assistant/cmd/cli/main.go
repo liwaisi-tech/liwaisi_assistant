@@ -289,8 +289,6 @@ func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem 
 		appservice.WithSubAgentsDir(subagentsDir),
 	}
 
-	subagentSvc := appservice.NewSubAgentService(router, runner, nil, svcOpts...)
-
 	agentCfg := appservice.AgentConfig{
 		Model:             llmCfg.Model,
 		Temperature:       llmCfg.Temperature,
@@ -298,12 +296,26 @@ func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem 
 		MaxToolIterations: llmCfg.MaxToolIterations,
 	}
 
+	var baseRegistry tool.SessionExecutorProvider
 	var agentSvc input.AgentService
 	switch llmCfg.ToolLoadingStrategy {
 	case configs.ToolLoadingEager:
-		agentSvc, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
+		var reg *tool.Registry
+		agentSvc, reg = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, nil)
+		baseRegistry = reg
 	default:
-		agentSvc, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
+		var store *tool.SessionRegistryStore
+		agentSvc, store = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, nil)
+		baseRegistry = store
+	}
+
+	subagentSvc := appservice.NewSubAgentService(router, runner, baseRegistry, svcOpts...)
+
+	// Inject subagentSvc into the agent's registry/store.
+	if reg, ok := baseRegistry.(*tool.Registry); ok {
+		subagenttools.RegisterSubAgentTools(reg, subagentSvc, nil)
+	} else if store, ok := baseRegistry.(*tool.SessionRegistryStore); ok {
+		store.UpdateSubAgentSvc(subagentSvc)
 	}
 
 	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
@@ -340,11 +352,11 @@ func buildEagerAgent(
 	envTools *envtool.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
-	subagentSvc input.SubAgentService,
-) (svc input.AgentService, model string) {
+	_ input.SubAgentService, // legacy, kept for signature compatibility during refactor if needed, but not used now
+) (svc input.AgentService, registry *tool.Registry) {
 	slog.Info("tool loading strategy: eager")
 
-	registry := tool.NewRegistry()
+	registry = tool.NewRegistry()
 	tool.RegisterWhoAmI(registry, agentInfo)
 	fileMgmt.Register(registry)
 	shellExec.Register(registry)
@@ -352,12 +364,12 @@ func buildEagerAgent(
 	envTools.Register(registry)
 	skill.RegisterSkillTools(registry, skillRegistry)
 
-	subagenttools.RegisterSubAgentTools(registry, subagentSvc, nil)
+	// subagenttools.RegisterSubAgentTools is now called in buildServices after subagentSvc is created.
 
 	agentCfg.SystemPrompt = eagerSystemPrompt + skillRegistry.SystemPromptFragment()
 
 	svc = appservice.NewAgentService(llmClient, agentCfg, registry, mem)
-	return svc, agentCfg.Model
+	return svc, registry
 }
 
 func buildJITAgent(
@@ -370,8 +382,8 @@ func buildJITAgent(
 	envTools *envtool.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
-	subagentSvc input.SubAgentService,
-) (svc input.AgentService, model string) {
+	_ input.SubAgentService,
+) (svc input.AgentService, store *tool.SessionRegistryStore) {
 	slog.Info("tool loading strategy: jit")
 
 	catalog := tool.NewCatalog()
@@ -380,7 +392,7 @@ func buildJITAgent(
 	catalog.RegisterCategory(webTools.CatalogEntry())
 	catalog.RegisterCategory(envTools.CatalogEntry())
 
-	sessionStore := tool.NewSessionRegistryStore(catalog, func(ar *tool.ActiveRegistry, cat *tool.Catalog) {
+	store = tool.NewSessionRegistryStore(catalog, func(ar *tool.ActiveRegistry, cat *tool.Catalog, subagentSvc input.SubAgentService) {
 		tool.RegisterWhoAmI(ar, agentInfo)
 		tool.RegisterFindToolsOnActive(ar, cat)
 		skill.RegisterFindSkills(ar, skillRegistry)
@@ -390,7 +402,7 @@ func buildJITAgent(
 	agentCfg.SystemPrompt = jitSystemPrompt + skillRegistry.SystemPromptFragment()
 
 	svc = appservice.NewAgentService(llmClient, agentCfg, nil, mem,
-		appservice.WithSessionStore(sessionStore),
+		appservice.WithSessionStore(store),
 	)
-	return svc, agentCfg.Model
+	return svc, store
 }

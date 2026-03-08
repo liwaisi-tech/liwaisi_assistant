@@ -309,3 +309,24 @@ func TestScopedRegistry_ConcurrentWithRegistration(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestScopedRegistry_NilExecutor(t *testing.T) {
+	t.Parallel()
+
+	// A ScopedRegistry with a nil executor should not panic.
+	s := NewScopedRegistry(nil, nil, nil)
+
+	if s.Has() {
+		t.Error("Has() should return false for nil executor")
+	}
+
+	defs := s.Definitions()
+	if len(defs) != 0 {
+		t.Errorf("Definitions() returned %d items, want 0", len(defs))
+	}
+
+	_, err := s.Execute(context.Background(), "any", nil)
+	if err == nil {
+		t.Error("Execute() should return an error for nil executor")
+	}
+}

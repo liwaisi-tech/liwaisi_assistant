@@ -19,7 +19,7 @@ var _ input.SubAgentService = (*subagentService)(nil)
 type subagentService struct {
 	runner       *subagent.Runner
 	router       *subagent.Router
-	executor     tool.Executor
+	executor     tool.SessionExecutorProvider
 	cache        *subagent.Cache
 	registry     *subagent.Registry
 	detector     subagent.TeamDetector
@@ -63,7 +63,7 @@ func WithSubAgentsDir(dir string) SubAgentServiceOption {
 func NewSubAgentService(
 	router *subagent.Router,
 	runner *subagent.Runner,
-	executor tool.Executor,
+	executor tool.SessionExecutorProvider,
 	opts ...SubAgentServiceOption,
 ) input.SubAgentService {
 	s := &subagentService{
@@ -90,11 +90,12 @@ func (s *subagentService) Spawn(
 		return valueobject.SubAgentResult{}, fmt.Errorf("subagent spawn: %w", err)
 	}
 
-	executor := s.scopedExecutor(spec)
+	executor := s.scopedExecutor(parentSessionID, spec)
 
 	result := s.runner.Run(ctx, spec, executor, task, parentSessionID)
 	return result, nil
 }
+
 
 // SpawnParallel runs multiple subagents concurrently and returns all results.
 // Individual failures are captured in each result's Err field; the method
@@ -128,7 +129,7 @@ func (s *subagentService) SpawnParallel(
 				return
 			}
 
-			executor := s.scopedExecutor(spec)
+			executor := s.scopedExecutor(parentSessionID, spec)
 			results[idx] = s.runner.Run(ctx, spec, executor, task, parentSessionID)
 		}(i)
 	}
@@ -216,11 +217,18 @@ func (s *subagentService) CreateAgent(_ context.Context, spec *entity.SubAgentSp
 
 // scopedExecutor creates a ScopedRegistry when the spec has tool restrictions,
 // otherwise returns the parent executor unmodified.
-func (s *subagentService) scopedExecutor(spec *entity.SubAgentSpec) tool.Executor {
-	if !spec.HasToolRestrictions() {
-		return s.executor
+func (s *subagentService) scopedExecutor(parentSessionID string, spec *entity.SubAgentSpec) tool.Executor {
+	if s.executor == nil {
+		return nil
 	}
-	return tool.NewScopedRegistry(s.executor, spec.AllowedTools, spec.DeniedTools)
+	base := s.executor.GetExecutor(parentSessionID)
+	if base == nil {
+		return nil
+	}
+	if !spec.HasToolRestrictions() {
+		return base
+	}
+	return tool.NewScopedRegistry(base, spec.AllowedTools, spec.DeniedTools)
 }
 
 func sortSpecs(specs []entity.SubAgentSpec) {

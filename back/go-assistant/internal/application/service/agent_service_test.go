@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/input"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/output"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 )
@@ -554,7 +555,7 @@ func TestAsk_JITMode_HasTools(t *testing.T) {
 		},
 	})
 
-	sessionStore := tool.NewSessionRegistryStore(catalog, func(ar *tool.ActiveRegistry, _ *tool.Catalog) {
+	sessionStore := tool.NewSessionRegistryStore(catalog, func(ar *tool.ActiveRegistry, _ *tool.Catalog, _ input.SubAgentService) {
 		if err := ar.LoadAll(); err != nil {
 			t.Fatalf("LoadAll: %v", err)
 		}

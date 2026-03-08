@@ -57,6 +57,9 @@ func (s *ScopedRegistry) isAllowed(name string) bool {
 
 // Definitions returns only the tool definitions that pass the scope filter.
 func (s *ScopedRegistry) Definitions() []valueobject.ToolDefinition {
+	if s.executor == nil {
+		return nil
+	}
 	all := s.executor.Definitions()
 	filtered := make([]valueobject.ToolDefinition, 0, len(all))
 	for _, def := range all {
@@ -73,11 +76,17 @@ func (s *ScopedRegistry) Execute(ctx context.Context, name string, args json.Raw
 	if !s.isAllowed(name) {
 		return "", fmt.Errorf("tool %q is not available in this scope", name)
 	}
+	if s.executor == nil {
+		return "", fmt.Errorf("executor is not initialized")
+	}
 	return s.executor.Execute(ctx, name, args)
 }
 
 // Has reports whether any tools pass the scope filter.
 func (s *ScopedRegistry) Has() bool {
+	if s.executor == nil {
+		return false
+	}
 	for _, def := range s.executor.Definitions() {
 		if s.isAllowed(def.Function.Name) {
 			return true
