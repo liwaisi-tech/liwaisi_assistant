@@ -21,6 +21,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
 	envtool "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/env"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/filemanagement"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/osnative"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/shellexec"
 	subagenttools "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/subagent"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool/web"
@@ -44,7 +45,12 @@ const securityPromptSuffix = "NEVER attempt to read, print, echo, or display the
 	"If a command output appears to contain a redacted value like [REDACTED:KEY_NAME], " +
 	"do not attempt to recover or circumvent the redaction."
 
-const eagerSystemPrompt = "You are liwaisi, a helpful AI assistant in the terminal. " +
+const eagerSystemPrompt = "You are liwaisi, an OS-first native Linux/Unix user and a helpful AI assistant in the terminal. " +
+	"Your assigned workspace is your $HOME directory. You are highly proficient in system administration, " +
+	"stream editing (sed/awk), log analysis (head/tail/grep), finding files (find), and ethical exploration. " +
+	"Using the OS commands is your primary and most efficient way to achieve tasks. " +
+	"You operate under the principle of least privilege. You do NOT have sudo access and must not attempt " +
+	"privilege escalation or destructive actions outside your assigned $HOME. " +
 	"Be concise, use markdown formatting when helpful. " +
 	"You have access to file management tools that operate within your workspace directory. " +
 	"All file paths are relative to the workspace root. " +
@@ -78,9 +84,15 @@ const eagerSystemPrompt = "You are liwaisi, a helpful AI assistant in the termin
 	"and want them to take effect without restarting. " +
 	securityPromptSuffix
 
-const jitSystemPrompt = "You are liwaisi, a helpful AI assistant in the terminal. " +
+const jitSystemPrompt = "You are liwaisi, an OS-first native Linux/Unix user and a helpful AI assistant in the terminal. " +
+	"Your assigned workspace is your $HOME directory. You are highly proficient in system administration, " +
+	"stream editing (sed/awk), log analysis (head/tail/grep), finding files (find), and ethical exploration. " +
+	"Using the OS-native tools is your primary and most efficient way to achieve tasks. " +
+	"You operate under the principle of least privilege. You do NOT have sudo access and must not attempt " +
+	"privilege escalation or destructive actions outside your assigned $HOME. " +
 	"Be concise, use markdown formatting when helpful. " +
 	"You start with discovery tools. Use find_tools to load tool categories as needed:\n" +
+	"- osnative: run native OS commands (grep, awk, ps, ping) safely within workspace\n" +
 	"- filemanagement: read, write, search, navigate files in the workspace\n" +
 	"- shellexec: run OS commands (builds, tests, git, scripts)\n" +
 	"- web: fetch web pages as markdown\n" +
@@ -252,6 +264,10 @@ func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem 
 
 	webTools := web.NewToolSet()
 	envTools := envtool.NewToolSet(envStore)
+	osNative, err := osnative.NewToolSet(workspacePath)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("initializing os_native tools: %w", err)
+	}
 
 	skillRegistry := skill.NewRegistry()
 	if err := skillRegistry.LoadEmbedded(builtin.SkillsFS, "."); err != nil {
@@ -301,11 +317,11 @@ func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem 
 	switch llmCfg.ToolLoadingStrategy {
 	case configs.ToolLoadingEager:
 		var reg *tool.Registry
-		agentSvc, reg = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, nil)
+		agentSvc, reg = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, osNative, skillRegistry, mem, nil)
 		baseRegistry = reg
 	default:
 		var store *tool.SessionRegistryStore
-		agentSvc, store = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, nil)
+		agentSvc, store = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, osNative, skillRegistry, mem, nil)
 		baseRegistry = store
 	}
 
@@ -351,6 +367,7 @@ func buildEagerAgent(
 	shellExec *shellexec.ToolSet,
 	webTools *web.ToolSet,
 	envTools *envtool.ToolSet,
+	osNative *osnative.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
 	_ input.SubAgentService, // legacy, kept for signature compatibility during refactor if needed, but not used now
@@ -363,6 +380,7 @@ func buildEagerAgent(
 	shellExec.Register(registry)
 	webTools.Register(registry)
 	envTools.Register(registry)
+	osNative.Register(registry)
 	skill.RegisterSkillTools(registry, skillRegistry)
 
 	// subagenttools.RegisterSubAgentTools is now called in buildServices after subagentSvc is created.
@@ -381,6 +399,7 @@ func buildJITAgent(
 	shellExec *shellexec.ToolSet,
 	webTools *web.ToolSet,
 	envTools *envtool.ToolSet,
+	osNative *osnative.ToolSet,
 	skillRegistry *skill.Registry,
 	mem *memory.ConversationMemory,
 	_ input.SubAgentService,
@@ -392,6 +411,7 @@ func buildJITAgent(
 	catalog.RegisterCategory(shellExec.CatalogEntry())
 	catalog.RegisterCategory(webTools.CatalogEntry())
 	catalog.RegisterCategory(envTools.CatalogEntry())
+	catalog.RegisterCategory(osNative.CatalogEntry())
 
 	store = tool.NewSessionRegistryStore(catalog, func(ar *tool.ActiveRegistry, cat *tool.Catalog, subagentSvc input.SubAgentService) {
 		tool.RegisterWhoAmI(ar, agentInfo)
