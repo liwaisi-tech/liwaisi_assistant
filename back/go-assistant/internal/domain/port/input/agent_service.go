@@ -15,4 +15,7 @@ type AgentService interface {
 	// Ask sends a single query without session context and returns
 	// the complete response.
 	Ask(ctx context.Context, query string) (string, error)
+
+	// ChatStream handles a persistent bidirectional channel with the client.
+	ChatStream(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage)
 }

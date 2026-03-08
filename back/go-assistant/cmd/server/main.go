@@ -8,14 +8,27 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"net/http"
 
+	"github.com/improbable-eng/grpc-web/go/grpcweb"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+
+	agentv1 "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/api/gen/agent/v1"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/configs"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/memory"
 	appservice "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/service"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driven/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driven/persistence/sqlite"
+	agentgrpc "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/grpc"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/grpc/middleware"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/http/handler"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/http/router"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/telemetry"
@@ -23,20 +36,25 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	cfg, err := configs.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	ctx := context.Background()
 
 	telemetryShutdown, err := telemetry.Init(ctx, cfg, version.Version)
 	if err != nil {
-		slog.Error("failed to initialize telemetry", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 
 	if cfg.Telemetry.Enabled {
@@ -48,14 +66,12 @@ func main() {
 
 	// Ensure database directory exists.
 	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o750); err != nil {
-		slog.Error("failed to create database directory", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create database directory: %w", err)
 	}
 
 	db, err := sqlite.NewConnection(cfg.DatabasePath)
 	if err != nil {
-		slog.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer db.Close()
 
@@ -66,11 +82,66 @@ func main() {
 
 	e := router.New(healthHandler, cfg.Telemetry.ServiceName)
 
+	llmCfg, err := configs.LoadLLMConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load LLM config: %w", err)
+	}
+
+	llmClient, err := openrouter.NewClient(&openrouter.ClientConfig{
+		APIKey:  llmCfg.APIKey,
+		BaseURL: llmCfg.BaseURL,
+		Model:   llmCfg.Model,
+		Timeout: llmCfg.Timeout,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create OpenRouter client: %w", err)
+	}
+
+	agentCfg := appservice.AgentConfig{
+		Model:             llmCfg.Model,
+		Temperature:       llmCfg.Temperature,
+		MaxTokens:         llmCfg.MaxTokens,
+		MaxToolIterations: llmCfg.MaxToolIterations,
+		SystemPrompt:      "You are a helpful AI assistant connected via gRPC-Web. You operate in a web environment. Reply concisely.",
+	}
+	mem := memory.NewConversationMemory()
+	registry := tool.NewRegistry()
+	agentSvc := appservice.NewAgentService(llmClient, agentCfg, registry, mem)
+
+	grpcServer := grpc.NewServer(
+		grpc.StreamInterceptor(middleware.AuthInterceptor(nil)),
+	)
+	agentServer := agentgrpc.NewAgentServer(agentSvc)
+	agentv1.RegisterAgentServiceServer(grpcServer, agentServer)
+
+	wrappedGrpc := grpcweb.WrapServer(grpcServer,
+		grpcweb.WithOriginFunc(func(origin string) bool { return true }), // Allow all CORS for demo
+	)
+
+	// Multiplex gRPC-Web, standard gRPC, and REST endpoints.
+	multiplexer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcServer.ServeHTTP(w, r)
+			return
+		}
+		if wrappedGrpc.IsGrpcWebRequest(r) || wrappedGrpc.IsAcceptableGrpcCorsRequest(r) {
+			wrappedGrpc.ServeHTTP(w, r)
+			return
+		}
+		e.ServeHTTP(w, r)
+	})
+
 	// Start server in a goroutine.
+	addr := fmt.Sprintf(":%d", cfg.ServerPort)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           h2c.NewHandler(multiplexer, &http2.Server{}),
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+
 	go func() {
-		addr := fmt.Sprintf(":%d", cfg.ServerPort)
 		slog.Info("starting server", "addr", addr, "version", version.Version)
-		if err := e.Start(addr); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Info("server stopped", "error", err)
 		}
 	}()
@@ -84,13 +155,16 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := e.Shutdown(shutdownCtx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server shutdown error", "error", err)
 	}
+
+	grpcServer.GracefulStop()
 
 	if err := telemetryShutdown.Execute(shutdownCtx); err != nil {
 		slog.Error("telemetry shutdown error", "error", err)
 	}
 
 	slog.Info("server exited gracefully")
+	return nil
 }

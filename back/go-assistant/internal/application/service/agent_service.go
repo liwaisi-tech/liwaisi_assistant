@@ -136,6 +136,39 @@ func (s *agentService) Chat(ctx context.Context, sessionID, userMessage string) 
 	return outCh, nil
 }
 
+// ChatStream handles a persistent bidirectional channel with the client.
+func (s *agentService) ChatStream(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+	defer close(outCh)
+	for {
+		select {
+		case <-ctx.Done():
+			outCh <- valueobject.ServerMessage{Error: ctx.Err(), Done: true}
+			return
+		case msg, ok := <-inCh:
+			if !ok {
+				return
+			}
+			if msg.Text != "" {
+				chunkCh, err := s.Chat(ctx, sessionID, msg.Text)
+				if err != nil {
+					outCh <- valueobject.ServerMessage{Error: err, Done: true}
+					return
+				}
+				for chunk := range chunkCh {
+					switch {
+					case chunk.Err != nil:
+						outCh <- valueobject.ServerMessage{Error: chunk.Err}
+					case chunk.Content != "":
+						outCh <- valueobject.ServerMessage{Chunk: chunk.Content}
+					case chunk.Done:
+						outCh <- valueobject.ServerMessage{Done: true}
+					}
+				}
+			}
+		}
+	}
+}
+
 // chatPipeline runs both the tool loop (Phase 1) and streaming (Phase 2)
 // in sequence, writing all events to outCh. It owns the channel lifecycle.
 func (s *agentService) chatPipeline(
