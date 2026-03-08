@@ -35,10 +35,13 @@ Examples:
 	// Backward compat: if a positional arg is passed without a subcommand,
 	// treat it as "plan create --execute <task>".
 	cmd.Args = cobra.ArbitraryArgs
+	var failFast bool
+	cmd.PersistentFlags().BoolVar(&failFast, "fail-fast", false, "Cancel remaining tasks if one fails")
+
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			// Legacy usage: liwaisi plan "task"
-			return runPlanCreate(cmd, args, plannerFactory, true, false)
+			return runPlanCreate(cmd, args, plannerFactory, true, failFast)
 		}
 		return cmd.Help()
 	}
@@ -56,7 +59,6 @@ Examples:
 
 func newPlanCreateCmd(plannerFactory func() (input.PlannerService, error)) *cobra.Command {
 	var execute bool
-	var failFast bool
 
 	cmd := &cobra.Command{
 		Use:   "create [task]",
@@ -69,12 +71,12 @@ Examples:
   liwaisi plan create "build a REST API with auth" --execute`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			failFast, _ := cmd.Flags().GetBool("fail-fast")
 			return runPlanCreate(cmd, args, plannerFactory, execute, failFast)
 		},
 	}
 
 	cmd.Flags().BoolVar(&execute, "execute", false, "Execute the plan immediately after creation")
-	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "Cancel remaining tasks if one fails (only with --execute)")
 
 	return cmd
 }
@@ -219,8 +221,6 @@ func newPlanListCmd(plannerFactory func() (input.PlannerService, error)) *cobra.
 }
 
 func newPlanExecuteCmd(plannerFactory func() (input.PlannerService, error)) *cobra.Command {
-	var failFast bool
-
 	cmd := &cobra.Command{
 		Use:   "execute [session-id]",
 		Short: "Execute a persisted plan",
@@ -251,6 +251,7 @@ func newPlanExecuteCmd(plannerFactory func() (input.PlannerService, error)) *cob
 			fmt.Fprintf(cmd.OutOrStdout(), "🚀 Executing plan: %s (%d tasks)\n\n", doc.SessionID, len(doc.Graph.Tasks))
 
 			var opts []input.PlannerServiceOption
+			failFast, _ := cmd.Flags().GetBool("fail-fast")
 			if failFast {
 				opts = append(opts, input.WithFailFast())
 			}
@@ -263,8 +264,6 @@ func newPlanExecuteCmd(plannerFactory func() (input.PlannerService, error)) *cob
 			return nil
 		},
 	}
-
-	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "Cancel remaining tasks if one fails")
 
 	return cmd
 }

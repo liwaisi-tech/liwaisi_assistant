@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/planner"
@@ -331,4 +332,51 @@ func TestImprovedPlannerService_ListPlans(t *testing.T) {
 	if len(docs) != 2 {
 		t.Errorf("ListPlans = %d docs, want 2", len(docs))
 	}
+}
+
+func TestImprovedPlannerService_Plan_OverrideFailure(t *testing.T) {
+	fakeLLM := &plannerFakeLLM{
+		responses: []string{
+			`{"needs_team":true,"roles":[{"name":"arch","perspective":"p","instruction":"i"}],"passed":true}`,
+			`[{"id":"t1","description":"d"}]`,
+			`{"score":0.9,"passed":true}`,
+		},
+	}
+
+	// Custom mock that returns a closed plan as if it were active.
+	store := &overrideFailureStore{
+		mockPlanStore: newMockPlanStore(),
+	}
+	closedPlan := entity.NewPlanDocument("old", "task", valueobject.TeamEvaluation{}, nil, 0.9, "")
+	_ = closedPlan.Close()
+	store.docs["old"] = closedPlan
+
+	svc := NewImprovedPlannerService(PlannerServiceDeps{
+		Gate:           planner.NewPlanGate(),
+		Decomposer:     planner.NewDecomposer(fakeLLM, "test"),
+		EnhancedDecomp: planner.NewEnhancedDecomposer(fakeLLM, "test"),
+		TeamAssembler:  planner.NewTeamAssembler(fakeLLM, "test"),
+		Evaluator:      planner.NewPlanEvaluator(fakeLLM, "test"),
+		Store:          store,
+	})
+
+	_, err := svc.Plan(context.Background(), "new", "research and analyze the best way to handle plan overrides in a persistent store")
+	if err == nil {
+		t.Fatal("Plan should fail if active plan override fails")
+	}
+	if !strings.Contains(err.Error(), "overlapping active plan") {
+		t.Errorf("expected 'overlapping active plan' error, got: %v", err)
+	}
+}
+
+type overrideFailureStore struct {
+	*mockPlanStore
+}
+
+func (s *overrideFailureStore) GetActive(_ context.Context) (*entity.PlanDocument, error) {
+	// Return the first plan regardless of state to force override failure.
+	for _, doc := range s.docs {
+		return doc, nil
+	}
+	return nil, nil
 }

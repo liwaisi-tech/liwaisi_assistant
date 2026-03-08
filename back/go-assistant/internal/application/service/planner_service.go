@@ -155,8 +155,8 @@ func (p *plannerService) planWithPipeline(ctx context.Context, sessionID, task s
 			// Plan passes — persist if store available.
 			if p.store != nil {
 				doc := entity.NewPlanDocument(sessionID, task, team, graph, eval.Score, eval.Feedback)
-				if saveErr := p.persistPlan(ctx, doc); saveErr != nil {
-					slog.Warn("planner: failed to persist plan", "error", saveErr)
+				if err := p.persistPlan(ctx, doc); err != nil {
+					return nil, fmt.Errorf("planner: persist plan: %w", err)
 				}
 			}
 			return graph, nil
@@ -173,8 +173,8 @@ func (p *plannerService) planWithPipeline(ctx context.Context, sessionID, task s
 	// After max iterations, use the last graph.
 	if p.store != nil {
 		doc := entity.NewPlanDocument(sessionID, task, team, graph, 0, "max refinement iterations reached")
-		if saveErr := p.persistPlan(ctx, doc); saveErr != nil {
-			slog.Warn("planner: failed to persist plan", "error", saveErr)
+		if err := p.persistPlan(ctx, doc); err != nil {
+			return nil, fmt.Errorf("planner: persist final plan: %w", err)
 		}
 	}
 	return graph, nil
@@ -188,10 +188,11 @@ func (p *plannerService) persistPlan(ctx context.Context, doc *entity.PlanDocume
 		slog.Warn("planner: failed to check active plan", "error", err)
 	}
 	if active != nil {
-		if overrideErr := active.Override(); overrideErr != nil {
-			slog.Warn("planner: override active plan", "error", overrideErr)
-		} else {
-			_ = p.store.Save(ctx, active)
+		if err := active.Override(); err != nil {
+			return fmt.Errorf("overlapping active plan: %w", err)
+		}
+		if err := p.store.Save(ctx, active); err != nil {
+			return fmt.Errorf("persisting overridden plan: %w", err)
 		}
 	}
 

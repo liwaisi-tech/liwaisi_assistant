@@ -221,3 +221,32 @@ func TestFilePlanStore_SaveOverwrite(t *testing.T) {
 		t.Errorf("Task = %q, want 'updated task'", loaded.Task)
 	}
 }
+
+func TestFilePlanStore_Validation(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	badIDs := []string{
+		"../traversal",
+		"sub/dir",
+		"absolute/path",
+		"with\\backslash",
+		"..",
+		"",
+	}
+
+	for _, id := range badIDs {
+		t.Run("Save_"+id, func(t *testing.T) {
+			doc := &entity.PlanDocument{SessionID: id}
+			if err := store.Save(ctx, doc); err == nil {
+				t.Errorf("Save should fail for session ID %q", id)
+			}
+		})
+
+		t.Run("Load_"+id, func(t *testing.T) {
+			if _, err := store.Load(ctx, id); err == nil {
+				t.Errorf("Load should fail for session ID %q", id)
+			}
+		})
+	}
+}

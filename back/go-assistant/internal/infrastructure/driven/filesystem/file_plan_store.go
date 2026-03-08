@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/entity"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/output"
@@ -44,8 +45,8 @@ func NewFilePlanStore(root string) (*FilePlanStore, error) {
 
 // Save persists a PlanDocument as both JSON and Markdown.
 func (s *FilePlanStore) Save(_ context.Context, doc *entity.PlanDocument) error {
-	if doc.SessionID == "" {
-		return fmt.Errorf("plan store: session ID is required")
+	if err := validateSessionID(doc.SessionID); err != nil {
+		return fmt.Errorf("plan store: %w", err)
 	}
 
 	dir := filepath.Join(s.root, plansDirName, doc.SessionID)
@@ -74,6 +75,9 @@ func (s *FilePlanStore) Save(_ context.Context, doc *entity.PlanDocument) error 
 
 // Load retrieves a PlanDocument by session ID.
 func (s *FilePlanStore) Load(_ context.Context, sessionID string) (*entity.PlanDocument, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, fmt.Errorf("plan store: %w", err)
+	}
 	jsonPath := filepath.Join(s.root, plansDirName, sessionID, planFileName)
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
@@ -105,6 +109,9 @@ func (s *FilePlanStore) List(_ context.Context) ([]*entity.PlanDocument, error) 
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
+		}
+		if err := validateSessionID(entry.Name()); err != nil {
+			continue // skip invalid directory names
 		}
 		jsonPath := filepath.Join(dir, entry.Name(), planFileName)
 		data, err := os.ReadFile(jsonPath)
@@ -139,4 +146,15 @@ func (s *FilePlanStore) GetActive(ctx context.Context) (*entity.PlanDocument, er
 		}
 	}
 	return nil, nil
+}
+
+func validateSessionID(id string) error {
+	if id == "" {
+		return fmt.Errorf("session ID is required")
+	}
+	// Basic path traversal protection.
+	if strings.Contains(id, "..") || strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("invalid session ID: %q", id)
+	}
+	return nil
 }
