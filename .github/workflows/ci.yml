@@ -36,6 +36,7 @@ jobs:
           version: latest
           working-directory: back/go-assistant
           args: --timeout=5m
+          install-mode: goinstall
 
       - name: Run Tests with Coverage
         run: make test-coverage
