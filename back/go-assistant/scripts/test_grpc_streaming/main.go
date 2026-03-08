@@ -15,7 +15,7 @@ import (
 
 func main() {
 	// Connect to the local server over h2c (insecure HTTP/2)
-	conn, err := grpc.NewClient("passthrough://localhost:8080",
+	conn, err := grpc.NewClient("localhost:8080",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
