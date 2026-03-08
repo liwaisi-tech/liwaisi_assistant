@@ -96,7 +96,6 @@ func (s *subagentService) Spawn(
 	return result, nil
 }
 
-
 // SpawnParallel runs multiple subagents concurrently and returns all results.
 // Individual failures are captured in each result's Err field; the method
 // itself only returns an error for argument validation failures.

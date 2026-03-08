@@ -312,10 +312,11 @@ func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem 
 	subagentSvc := appservice.NewSubAgentService(router, runner, baseRegistry, svcOpts...)
 
 	// Inject subagentSvc into the agent's registry/store.
-	if reg, ok := baseRegistry.(*tool.Registry); ok {
-		subagenttools.RegisterSubAgentTools(reg, subagentSvc, nil)
-	} else if store, ok := baseRegistry.(*tool.SessionRegistryStore); ok {
-		store.UpdateSubAgentSvc(subagentSvc)
+	switch r := baseRegistry.(type) {
+	case *tool.Registry:
+		subagenttools.RegisterSubAgentTools(r, subagentSvc, nil)
+	case *tool.SessionRegistryStore:
+		r.UpdateSubAgentSvc(subagentSvc)
 	}
 
 	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
