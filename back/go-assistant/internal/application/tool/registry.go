@@ -64,3 +64,9 @@ func (r *Registry) Has() bool {
 	defer r.mu.RUnlock()
 	return len(r.definitions) > 0
 }
+
+// GetExecutor implements SessionExecutorProvider by returning the registry
+// itself, ignoring the session ID.
+func (r *Registry) GetExecutor(_ string) Executor {
+	return r
+}

@@ -29,6 +29,11 @@ type Executor interface {
 	Has() bool
 }
 
+// SessionExecutorProvider allows looking up an executor by session ID.
+type SessionExecutorProvider interface {
+	GetExecutor(sessionID string) Executor
+}
+
 // compile-time checks.
 var (
 	_ Executor  = (*Registry)(nil)

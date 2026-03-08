@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/application/tool"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/input"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 )
 
-func fakeBootstrap(ar *tool.ActiveRegistry, _ *tool.Catalog) {
+func fakeBootstrap(ar *tool.ActiveRegistry, _ *tool.Catalog, _ input.SubAgentService) {
 	ar.Register(testToolDef("who_am_i"), echoHandler("who_am_i"))
 }
 
