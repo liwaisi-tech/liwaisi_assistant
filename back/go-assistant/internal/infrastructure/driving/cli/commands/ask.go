@@ -13,7 +13,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/cli/theme"
 )
 
-func newAskCmd(h *home.Home, agentSvc input.AgentService) *cobra.Command {
+func newAskCmd(h *home.Home, agentFactory func() (input.AgentService, string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ask [query]",
 		Short: "Send a single query and print the response",
@@ -37,6 +37,11 @@ func newAskCmd(h *home.Home, agentSvc input.AgentService) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("no theme available: %w", err)
 				}
+			}
+
+			agentSvc, _, err := agentFactory()
+			if err != nil {
+				return err
 			}
 
 			response, err := agentSvc.Ask(cmd.Context(), query)

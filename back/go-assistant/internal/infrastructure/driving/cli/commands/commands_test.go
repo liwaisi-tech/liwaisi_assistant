@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/entity"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/input"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/cli/home"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/version"
@@ -64,7 +65,9 @@ func newTestOpts(t *testing.T) *Options {
 				Checks:  map[string]valueobject.Status{"database": valueobject.StatusUp},
 			},
 		},
-		AgentSvc: &mockAgentService{},
+		AgentFactory: func() (input.AgentService, string, error) {
+			return &mockAgentService{}, "mock-model", nil
+		},
 	}
 }
 

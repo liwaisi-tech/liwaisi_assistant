@@ -11,7 +11,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
 )
 
-func newPlanCmd(plannerSvc input.PlannerService) *cobra.Command {
+func newPlanCmd(plannerFactory func() (input.PlannerService, error)) *cobra.Command {
 	var failFast bool
 
 	cmd := &cobra.Command{
@@ -37,6 +37,11 @@ Examples:
 			var opts []input.PlannerServiceOption
 			if failFast {
 				opts = append(opts, input.WithFailFast())
+			}
+
+			plannerSvc, err := plannerFactory()
+			if err != nil {
+				return err
 			}
 
 			result, err := plannerSvc.PlanAndExecute(cmd.Context(), sessionID, task, opts...)

@@ -15,7 +15,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/cli/theme"
 )
 
-func newChatCmd(h *home.Home, agentSvc input.AgentService, mem *memory.ConversationMemory, ss *session.Store, modelName string) *cobra.Command { //nolint:funlen // wiring function
+func newChatCmd(h *home.Home, agentFactory func() (input.AgentService, string, error), mem *memory.ConversationMemory, ss *session.Store) *cobra.Command { //nolint:funlen // wiring function
 	cmd := &cobra.Command{
 		Use:   "chat",
 		Short: "Start an interactive chat session",
@@ -49,6 +49,11 @@ func newChatCmd(h *home.Home, agentSvc input.AgentService, mem *memory.Conversat
 			}
 
 			resumeID, _ := cmd.Flags().GetString("resume")
+
+			agentSvc, modelName, err := agentFactory()
+			if err != nil {
+				return err
+			}
 
 			app, err := cli.NewApp(&cli.AppConfig{
 				Theme:           th,

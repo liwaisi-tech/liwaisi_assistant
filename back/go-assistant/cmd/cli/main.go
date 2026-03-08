@@ -152,11 +152,53 @@ func run() error {
 	}
 
 	sharedMemory := memory.NewConversationMemory()
-	workspacePath := h.Path(home.Workspace)
+	cwd, _ := os.Getwd()
+	sessionsDir := filepath.Join(h.Path(home.Data), "sessions")
+	sessionStore := session.NewStore(sessionsDir, cwd)
+
+	var cachedAgentSvc input.AgentService
+	var cachedPlannerSvc input.PlannerService
+	var cachedModelName string
+	var cachedErr error
+	var servicesInitialized bool
+
+	servicesFactory := func() (input.AgentService, input.PlannerService, string, error) {
+		if !servicesInitialized {
+			cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr = buildServices(h.Path(home.Workspace), envStore, sharedMemory)
+			servicesInitialized = true
+		}
+		return cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr
+	}
+
+	agentFactory := func() (input.AgentService, string, error) {
+		agentSvc, _, modelName, err := servicesFactory()
+		return agentSvc, modelName, err
+	}
+
+	plannerFactory := func() (input.PlannerService, error) {
+		_, plannerSvc, _, err := servicesFactory()
+		return plannerSvc, err
+	}
+
+	opts := &commands.Options{
+		Home:           h,
+		HealthSvc:      healthSvc,
+		AgentFactory:   agentFactory,
+		PlannerFactory: plannerFactory,
+		Memory:         sharedMemory,
+		SessionStore:   sessionStore,
+		EnvStore:       envStore,
+		LogLevel:       logLevel,
+	}
+
+	return commands.Execute(opts)
+}
+
+func buildServices(workspacePath string, envStore *env.Store, mem *memory.ConversationMemory) (input.AgentService, input.PlannerService, string, error) { //nolint:funlen,cyclop // wiring function
 
 	llmCfg, err := configs.LoadLLMConfig()
 	if err != nil {
-		return err
+		return nil, nil, "", err
 	}
 
 	llmClient, err := openrouter.NewClient(&openrouter.ClientConfig{
@@ -166,7 +208,7 @@ func run() error {
 		Timeout: llmCfg.Timeout,
 	})
 	if err != nil {
-		return fmt.Errorf("creating LLM client: %w", err)
+		return nil, nil, "", fmt.Errorf("creating LLM client: %w", err)
 	}
 
 	agentInfo := &tool.AgentInfo{
@@ -199,12 +241,12 @@ func run() error {
 
 	fileMgmt, err := filemanagement.NewToolSet(workspacePath)
 	if err != nil {
-		return fmt.Errorf("initializing file management tools: %w", err)
+		return nil, nil, "", fmt.Errorf("initializing file management tools: %w", err)
 	}
 
 	shellExec, err := shellexec.NewToolSet(workspacePath, shellexec.WithRedactor(envStore.Redactor()))
 	if err != nil {
-		return fmt.Errorf("initializing shell execution tools: %w", err)
+		return nil, nil, "", fmt.Errorf("initializing shell execution tools: %w", err)
 	}
 
 	webTools := web.NewToolSet()
@@ -225,7 +267,7 @@ func run() error {
 	clientFactory := func(_ valueobject.ModelTier) (output.LLMClient, string) {
 		return llmClient, llmCfg.Model
 	}
-	memFactory := memory.NewSubAgentMemoryFactory(sharedMemory)
+	memFactory := memory.NewSubAgentMemoryFactory(mem)
 	runner := subagent.NewRunner(clientFactory, memFactory)
 
 	cache := subagent.NewCache(subagent.WithTTL(30 * time.Minute))
@@ -258,31 +300,15 @@ func run() error {
 	var agentSvc input.AgentService
 	switch llmCfg.ToolLoadingStrategy {
 	case configs.ToolLoadingEager:
-		agentSvc, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc)
+		agentSvc, _ = buildEagerAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
 	default:
-		agentSvc, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, sharedMemory, subagentSvc)
+		agentSvc, _ = buildJITAgent(llmClient, agentCfg, agentInfo, fileMgmt, shellExec, webTools, envTools, skillRegistry, mem, subagentSvc)
 	}
-
-	cwd, _ := os.Getwd()
-	sessionsDir := filepath.Join(h.Path(home.Data), "sessions")
-	sessionStore := session.NewStore(sessionsDir, cwd)
 
 	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
 	plannerSvc := appservice.NewPlannerService(planner.NewPlanGate(), decomp, subagentSvc)
 
-	opts := &commands.Options{
-		Home:         h,
-		HealthSvc:    healthSvc,
-		AgentSvc:     agentSvc,
-		PlannerSvc:   plannerSvc,
-		Memory:       sharedMemory,
-		SessionStore: sessionStore,
-		EnvStore:     envStore,
-		ModelName:    llmCfg.Model,
-		LogLevel:     logLevel,
-	}
-
-	return commands.Execute(opts)
+	return agentSvc, plannerSvc, agentCfg.Model, nil
 }
 
 func buildEagerAgent(
