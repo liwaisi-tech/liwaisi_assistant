@@ -27,6 +27,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/input"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/port/output"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/domain/valueobject"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driven/filesystem"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driven/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driven/persistence/sqlite"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/infrastructure/driving/cli/commands"
@@ -164,7 +165,7 @@ func run() error {
 
 	servicesFactory := func() (input.AgentService, input.PlannerService, string, error) {
 		if !servicesInitialized {
-			cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr = buildServices(h.Path(home.Workspace), envStore, sharedMemory)
+			cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr = buildServices(h, h.Path(home.Workspace), envStore, sharedMemory)
 			servicesInitialized = true
 		}
 		return cachedAgentSvc, cachedPlannerSvc, cachedModelName, cachedErr
@@ -194,7 +195,7 @@ func run() error {
 	return commands.Execute(opts)
 }
 
-func buildServices(workspacePath string, envStore *env.Store, mem *memory.ConversationMemory) (input.AgentService, input.PlannerService, string, error) { //nolint:funlen,cyclop // wiring function
+func buildServices(h *home.Home, workspacePath string, envStore *env.Store, mem *memory.ConversationMemory) (input.AgentService, input.PlannerService, string, error) { //nolint:funlen,cyclop // wiring function
 
 	llmCfg, err := configs.LoadLLMConfig()
 	if err != nil {
@@ -306,7 +307,25 @@ func buildServices(workspacePath string, envStore *env.Store, mem *memory.Conver
 	}
 
 	decomp := planner.NewDecomposer(llmClient, llmCfg.Model)
-	plannerSvc := appservice.NewPlannerService(planner.NewPlanGate(), decomp, subagentSvc)
+	teamAssembler := planner.NewTeamAssembler(llmClient, llmCfg.Model)
+	enhancedDecomp := planner.NewEnhancedDecomposer(llmClient, llmCfg.Model)
+	evaluator := planner.NewPlanEvaluator(llmClient, llmCfg.Model)
+
+	plansDir := filepath.Join(h.Path(home.Data), "plans")
+	planStore, err := filesystem.NewFilePlanStore(plansDir)
+	if err != nil {
+		slog.Warn("plan persistence disabled", "error", err)
+	}
+
+	plannerSvc := appservice.NewImprovedPlannerService(appservice.PlannerServiceDeps{
+		Gate:           planner.NewPlanGate(),
+		Decomposer:     decomp,
+		EnhancedDecomp: enhancedDecomp,
+		TeamAssembler:  teamAssembler,
+		Evaluator:      evaluator,
+		SubAgentSvc:    subagentSvc,
+		Store:          planStore,
+	})
 
 	return agentSvc, plannerSvc, agentCfg.Model, nil
 }

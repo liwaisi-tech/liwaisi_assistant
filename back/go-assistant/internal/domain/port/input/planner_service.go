@@ -28,7 +28,7 @@ type PlannerService interface {
 	// Plan decomposes a task into a validated PlanGraph.
 	// For simple tasks the PlanGate returns a single-node graph without
 	// any LLM call. Complex tasks go through the LLM Decomposer.
-	Plan(ctx context.Context, task string) (*entity.PlanGraph, error)
+	Plan(ctx context.Context, sessionID string, task string) (*entity.PlanGraph, error)
 
 	// Execute runs a pre-built PlanGraph, scheduling MicroTasks according
 	// to their dependency order and running independent waves in parallel.
@@ -36,4 +36,13 @@ type PlannerService interface {
 
 	// PlanAndExecute is a convenience method that calls Plan followed by Execute.
 	PlanAndExecute(ctx context.Context, sessionID string, task string, opts ...PlannerServiceOption) (valueobject.PlanResult, error)
+
+	// ShowPlan retrieves a persisted plan by session ID.
+	ShowPlan(ctx context.Context, sessionID string) (*entity.PlanDocument, error)
+
+	// ClosePlan transitions a plan to the closed lifecycle state.
+	ClosePlan(ctx context.Context, sessionID string) error
+
+	// ListPlans returns all persisted plans, ordered by creation time.
+	ListPlans(ctx context.Context) ([]*entity.PlanDocument, error)
 }
