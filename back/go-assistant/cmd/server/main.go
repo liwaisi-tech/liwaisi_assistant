@@ -109,7 +109,7 @@ func run() error {
 	agentSvc := appservice.NewAgentService(llmClient, agentCfg, registry, mem)
 
 	grpcServer := grpc.NewServer(
-		grpc.StreamInterceptor(middleware.AuthInterceptor()),
+		grpc.StreamInterceptor(middleware.AuthInterceptor(nil)),
 	)
 	agentServer := agentgrpc.NewAgentServer(agentSvc)
 	agentv1.RegisterAgentServiceServer(grpcServer, agentServer)

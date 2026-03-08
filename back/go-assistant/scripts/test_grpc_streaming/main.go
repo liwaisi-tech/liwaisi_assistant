@@ -39,7 +39,8 @@ func main() {
 	// Initiate ChatStream
 	stream, err := client.ChatStream(ctx)
 	if err != nil {
-		log.Fatalf("could not start ChatStream: %v", err)
+		log.Printf("could not start ChatStream: %v", err)
+		return
 	}
 
 	// Send a message
@@ -50,7 +51,8 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatalf("failed to send message: %v", err)
+		log.Printf("failed to send message: %v", err)
+		return
 	}
 
 	// Receive the streaming response

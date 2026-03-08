@@ -71,45 +71,57 @@ func (s *AgentServer) ChatStream(stream agentv1.AgentService_ChatStreamServer) e
 		errCh <- nil // Normal graceful exit when outCh is closed.
 	}()
 
-	// Loop for reading incoming Client messages.
-	for {
-		req, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			slog.InfoContext(ctx, "GRPC ChatStream EOF received", "session_id", sessionID)
-			close(inCh)
-			break
-		}
-		if err != nil {
-			slog.ErrorContext(ctx, "GRPC ChatStream Recv error", "error", err)
-			close(inCh)
-			return status.Errorf(codes.Canceled, "stream receive error: %v", err)
-		}
+	recvErrCh := make(chan error, 1)
 
-		var cliMsg valueobject.ClientMessage
-		switch p := req.Payload.(type) {
-		case *agentv1.ClientMessage_Text:
-			cliMsg.Text = p.Text
-		case *agentv1.ClientMessage_ToolResult:
-			cliMsg.ToolResult = &valueobject.ToolResult{
-				ID:     p.ToolResult.Id,
-				Result: p.ToolResult.Result,
+	// Goroutine for reading incoming Client messages.
+	go func() {
+		for {
+			req, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				slog.InfoContext(ctx, "GRPC ChatStream EOF received", "session_id", sessionID)
+				close(inCh)
+				recvErrCh <- nil
+				return
+			}
+			if err != nil {
+				slog.ErrorContext(ctx, "GRPC ChatStream Recv error", "error", err)
+				close(inCh)
+				recvErrCh <- status.Errorf(codes.Canceled, "stream receive error: %v", err)
+				return
+			}
+
+			var cliMsg valueobject.ClientMessage
+			switch p := req.Payload.(type) {
+			case *agentv1.ClientMessage_Text:
+				cliMsg.Text = p.Text
+			case *agentv1.ClientMessage_ToolResult:
+				cliMsg.ToolResult = &valueobject.ToolResult{
+					ID:     p.ToolResult.Id,
+					Result: p.ToolResult.Result,
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				slog.WarnContext(ctx, "GRPC ChatStream context done while receiving", "session_id", sessionID)
+				close(inCh)
+				recvErrCh <- ctx.Err()
+				return
+			case inCh <- cliMsg:
 			}
 		}
+	}()
 
-		select {
-		case <-ctx.Done():
-			slog.WarnContext(ctx, "GRPC ChatStream context done while receiving", "session_id", sessionID)
-			close(inCh)
-			return ctx.Err()
-		case inCh <- cliMsg:
-		}
-	}
-
-	// Wait for the send goroutine to finish or the connection context to be canceled.
+	// Wait for whichever comes first: stream cancellation, server done sending, or client done sending/error.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-errCh:
+		// Server finished sending (outCh closed by agentSvc) or hit a send error.
+		return err
+	case err := <-recvErrCh:
+		// Client disconnected or network error.
+		// Returning here will trigger ctx cancellation for agentSvc.
 		return err
 	}
 }

@@ -65,57 +65,98 @@ func setupBufconnServer(t *testing.T, srv *mygrpc.AgentServer) (agentv1.AgentSer
 }
 
 func TestAgentServer_ChatStream(t *testing.T) {
-	mockSvc := &mockAgentService{
-		chatStreamFunc: func(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
-			defer close(outCh)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case msg, ok := <-inCh:
-					if !ok {
+	t.Run("HappyPath_ClientEOF", func(t *testing.T) {
+		mockSvc := &mockAgentService{
+			chatStreamFunc: func(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+				defer close(outCh)
+				for {
+					select {
+					case <-ctx.Done():
 						return
-					}
-					if msg.Text != "" {
-						outCh <- valueobject.ServerMessage{Chunk: "echo: " + msg.Text}
+					case msg, ok := <-inCh:
+						if !ok {
+							return
+						}
+						if msg.Text != "" {
+							outCh <- valueobject.ServerMessage{Chunk: "echo: " + msg.Text}
+						}
 					}
 				}
-			}
-		},
-	}
+			},
+		}
 
-	agentServer := mygrpc.NewAgentServer(mockSvc)
-	client, cleanup := setupBufconnServer(t, agentServer)
-	defer cleanup()
+		agentServer := mygrpc.NewAgentServer(mockSvc)
+		client, cleanup := setupBufconnServer(t, agentServer)
+		defer cleanup()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	stream, err := client.ChatStream(ctx)
-	if err != nil {
-		t.Fatalf("ChatStream failed: %v", err)
-	}
+		stream, err := client.ChatStream(ctx)
+		if err != nil {
+			t.Fatalf("ChatStream failed: %v", err)
+		}
 
-	err = stream.Send(&agentv1.ClientMessage{
-		Payload: &agentv1.ClientMessage_Text{Text: "hello"},
+		err = stream.Send(&agentv1.ClientMessage{
+			Payload: &agentv1.ClientMessage_Text{Text: "hello"},
+		})
+		if err != nil {
+			t.Fatalf("Send failed: %v", err)
+		}
+
+		resp, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("Recv failed: %v", err)
+		}
+
+		chunk, ok := resp.Payload.(*agentv1.ServerMessage_Chunk)
+		if !ok || chunk.Chunk != "echo: hello" {
+			t.Fatalf("Expected chunk 'echo: hello', got %v", resp.Payload)
+		}
+
+		_ = stream.CloseSend()
+		_, err = stream.Recv()
+		if err != io.EOF {
+			t.Fatalf("Expected EOF, got %v", err)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Send failed: %v", err)
-	}
 
-	resp, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv failed: %v", err)
-	}
+	t.Run("ServerInitiated_Close", func(t *testing.T) {
+		mockSvc := &mockAgentService{
+			chatStreamFunc: func(ctx context.Context, sessionID string, inCh <-chan valueobject.ClientMessage, outCh chan<- valueobject.ServerMessage) {
+				// Server sends one message and then immediately closes outCh without waiting for client EOF.
+				outCh <- valueobject.ServerMessage{Chunk: "done"}
+				close(outCh)
+				// The inCh is drained gracefully when the gRPC server notices the handler returns.
+			},
+		}
 
-	chunk, ok := resp.Payload.(*agentv1.ServerMessage_Chunk)
-	if !ok || chunk.Chunk != "echo: hello" {
-		t.Fatalf("Expected chunk 'echo: hello', got %v", resp.Payload)
-	}
+		agentServer := mygrpc.NewAgentServer(mockSvc)
+		client, cleanup := setupBufconnServer(t, agentServer)
+		defer cleanup()
 
-	_ = stream.CloseSend()
-	_, err = stream.Recv()
-	if err != io.EOF {
-		t.Fatalf("Expected EOF, got %v", err)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		stream, err := client.ChatStream(ctx)
+		if err != nil {
+			t.Fatalf("ChatStream failed: %v", err)
+		}
+
+		// Wait for the "done" message
+		resp, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("Recv failed: %v", err)
+		}
+		chunk, ok := resp.Payload.(*agentv1.ServerMessage_Chunk)
+		if !ok || chunk.Chunk != "done" {
+			t.Fatalf("Expected chunk 'done', got %v", resp.Payload)
+		}
+
+		// Since the server returned, the next Recv should be an EOF.
+		_, err = stream.Recv()
+		if err != io.EOF {
+			t.Fatalf("Expected EOF, got %v", err)
+		}
+	})
 }
