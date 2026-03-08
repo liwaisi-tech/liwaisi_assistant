@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 
 	agentv1 "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/api/gen/agent/v1"
@@ -115,8 +118,12 @@ func run() error {
 		grpcweb.WithOriginFunc(func(origin string) bool { return true }), // Allow all CORS for demo
 	)
 
-	// Multiplex gRPC-Web and REST endpoints.
+	// Multiplex gRPC-Web, standard gRPC, and REST endpoints.
 	multiplexer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcServer.ServeHTTP(w, r)
+			return
+		}
 		if wrappedGrpc.IsGrpcWebRequest(r) || wrappedGrpc.IsAcceptableGrpcCorsRequest(r) {
 			wrappedGrpc.ServeHTTP(w, r)
 			return
@@ -128,7 +135,7 @@ func run() error {
 	addr := fmt.Sprintf(":%d", cfg.ServerPort)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           multiplexer,
+		Handler:           h2c.NewHandler(multiplexer, &http2.Server{}),
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 
