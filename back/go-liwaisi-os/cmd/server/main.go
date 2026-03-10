@@ -31,6 +31,9 @@ func main() {
 func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	// TODO: Initialize OTEL TracerProvider and Exporter (e.g., OTLP or stdout)
+	// to prevent traces from being silently dropped into a noop tracer.
+
 	cfg, err := configs.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -48,6 +51,9 @@ func run() error {
 		Addr:              addr,
 		Handler:           e,
 		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 
 	go func() {

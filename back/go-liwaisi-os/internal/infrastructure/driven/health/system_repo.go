@@ -16,6 +16,8 @@ func NewSystemRepository() output.HealthRepository {
 }
 
 func (s *systemRepo) CheckHealth(ctx context.Context) error {
-	// For now, always healthy as we just test if the API responds
+	// TODO: For now, always healthy as we just test if the API responds.
+	// In the future, verify core Linux utilities (bash, sed, grep) exist in PATH
+	// and that the workspace is writable to consider the OS-agent truly healthy.
 	return nil
 }

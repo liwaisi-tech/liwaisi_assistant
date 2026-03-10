@@ -54,4 +54,3 @@ func TestHealthService_GetHealth(t *testing.T) {
 		})
 	}
 }
-

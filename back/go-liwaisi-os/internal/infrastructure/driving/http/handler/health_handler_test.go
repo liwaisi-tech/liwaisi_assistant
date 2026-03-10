@@ -76,7 +76,8 @@ func TestHealthHandler_GetHealth(t *testing.T) {
 			mockSvcErr:     errors.New("internal error"),
 			expectedStatus: http.StatusServiceUnavailable,
 			expectedBody: response.HealthResponse{
-				Status: "DOWN",
+				Status:  "DOWN",
+				Version: "unknown",
 			},
 		},
 	}
@@ -104,7 +105,7 @@ func TestHealthHandler_GetHealth(t *testing.T) {
 			assert.NoError(t, err)
 
 			assert.Equal(t, tt.expectedBody.Status, body.Status)
-			
+
 			if tt.expectedBody.Version != "" {
 				assert.Equal(t, tt.expectedBody.Version, body.Version)
 			}
@@ -119,4 +120,3 @@ func TestHealthHandler_GetHealth(t *testing.T) {
 		})
 	}
 }
-

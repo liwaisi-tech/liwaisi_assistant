@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -29,7 +30,9 @@ func (h *HealthHandler) GetHealth(c echo.Context) error {
 	if err != nil {
 		slog.ErrorContext(c.Request().Context(), "health check failed", "error", err)
 		return c.JSON(http.StatusServiceUnavailable, response.HealthResponse{
-			Status: "DOWN",
+			Status:    "DOWN",
+			Version:   "unknown",
+			Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
