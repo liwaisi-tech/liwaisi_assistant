@@ -37,7 +37,7 @@ func run() error {
 	}
 
 	// Wire dependencies
-	healthRepo := health.NewMockRepository()
+	healthRepo := health.NewSystemRepository()
 	healthSvc := appservice.NewHealthService(healthRepo, version)
 	healthHandler := handler.NewHealthHandler(healthSvc)
 

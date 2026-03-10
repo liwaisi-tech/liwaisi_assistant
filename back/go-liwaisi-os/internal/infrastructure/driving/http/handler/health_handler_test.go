@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,23 +9,14 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-liwaisi-os/internal/domain/entity"
+	inputmocks "github.com/liwaisi-tech/liwaisi_assistant/back/go-liwaisi-os/internal/domain/port/input/mocks"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-liwaisi-os/internal/domain/valueobject"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-liwaisi-os/pkg/response"
 )
-
-// mockHealthService implements input.HealthService for testing.
-type mockHealthService struct {
-	getHealthFunc func(ctx context.Context) (*entity.Health, error)
-}
-
-func (m *mockHealthService) GetHealth(ctx context.Context) (*entity.Health, error) {
-	if m.getHealthFunc != nil {
-		return m.getHealthFunc(ctx)
-	}
-	return nil, nil
-}
 
 func TestHealthHandler_GetHealth(t *testing.T) {
 	t.Parallel()
@@ -100,45 +90,33 @@ func TestHealthHandler_GetHealth(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 
-			svc := &mockHealthService{
-				getHealthFunc: func(ctx context.Context) (*entity.Health, error) {
-					return tt.mockSvcResult, tt.mockSvcErr
-				},
-			}
+			svcMock := inputmocks.NewHealthService(t)
+			svcMock.On("GetHealth", mock.Anything).Return(tt.mockSvcResult, tt.mockSvcErr)
 
-			h := NewHealthHandler(svc)
-			if err := h.GetHealth(c); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			h := NewHealthHandler(svcMock)
+			err := h.GetHealth(c)
 
-			if rec.Code != tt.expectedStatus {
-				t.Errorf("expected status %d, got %d", tt.expectedStatus, rec.Code)
-			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedStatus, rec.Code)
 
 			var body response.HealthResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("failed to unmarshal response: %v", err)
-			}
+			err = json.Unmarshal(rec.Body.Bytes(), &body)
+			assert.NoError(t, err)
 
-			if body.Status != tt.expectedBody.Status {
-				t.Errorf("expected status %s, got %s", tt.expectedBody.Status, body.Status)
+			assert.Equal(t, tt.expectedBody.Status, body.Status)
+			
+			if tt.expectedBody.Version != "" {
+				assert.Equal(t, tt.expectedBody.Version, body.Version)
 			}
-
-			if tt.expectedBody.Version != "" && body.Version != tt.expectedBody.Version {
-				t.Errorf("expected version %s, got %s", tt.expectedBody.Version, body.Version)
+			if tt.expectedBody.Timestamp != "" {
+				assert.Equal(t, tt.expectedBody.Timestamp, body.Timestamp)
 			}
-
-			if tt.expectedBody.Timestamp != "" && body.Timestamp != tt.expectedBody.Timestamp {
-				t.Errorf("expected timestamp %s, got %s", tt.expectedBody.Timestamp, body.Timestamp)
-			}
-
 			if tt.expectedBody.Checks != nil {
 				for k, v := range tt.expectedBody.Checks {
-					if body.Checks[k] != v {
-						t.Errorf("expected check %s to be %s, got %s", k, v, body.Checks[k])
-					}
+					assert.Equal(t, v, body.Checks[k])
 				}
 			}
 		})
 	}
 }
+
