@@ -1,4 +1,4 @@
-version: 1
+version: 2
 project_name: liwaisi
 
 builds:
@@ -13,11 +13,14 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/version.Version={{ .Version }}
+      - -X github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/version.GitCommit={{ .Commit }}
+      - -X github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/version.BuildTime={{ .Date }}
 
 archives:
   - format: tar.gz
-    # This matches the pattern expected by scripts/install.sh:
-    # liwaisi_0.1.0-beta.1_linux_amd64.tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -28,5 +31,4 @@ checksum:
   name_template: 'checksums.txt'
 
 release:
-  # Enable prerelease flag if the tag contains -beta, -rc, or -alpha
   prerelease: auto

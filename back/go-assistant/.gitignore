@@ -1,6 +1,15 @@
+# Build artifacts
 bin/
+
+# Coverage reports
 coverage.out
 coverage.html
-data/
-*.db
-protoc-bin/
+
+# Environment files
+.env
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp

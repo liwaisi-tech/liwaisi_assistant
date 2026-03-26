@@ -44,6 +44,9 @@ linters-settings:
     require-specific: true
   misspell:
     locale: US
+    extra-words:
+      - typo: "Coloured"
+        correction: "Coloured"
   goimports:
     local-prefixes: github.com/liwaisi-tech/liwaisi_assistant
 
@@ -54,17 +57,5 @@ issues:
         - gosec
         - unparam
         - gocritic
-    - path: scripts/
-      linters:
-        - gosec
-        - unparam
-    - path: ".*_generated\\.go$"
-      linters:
-        - errcheck
-        - gosimple
-        - govet
-        - ineffassign
-        - staticcheck
-        - unused
   max-issues-per-linter: 50
   max-same-issues: 5

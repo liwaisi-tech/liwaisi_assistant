@@ -1,91 +1,55 @@
-# go-assistant Makefile
-BINARY_NAME := go-assistant
-CLI_BINARY_NAME := liwaisi
-BIN_DIR := bin
+BINARY_NAME := liwaisi
+BIN_DIR     := bin
 COVERAGE_FILE := coverage.out
 COVERAGE_HTML := coverage.html
-GO := go
-GO_FLAGS := -race
-LINT := golangci-lint
-DOCKER_COMPOSE := docker compose
-VERSION ?= dev
-GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
-BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO          := go
+GO_FLAGS    := -race
+LINT        := golangci-lint
+VERSION     ?= dev
+GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+BUILD_TIME  := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION_PKG := github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/version
-LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).GitCommit=$(GIT_COMMIT) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
+LDFLAGS     := -s -w \
+    -X $(VERSION_PKG).Version=$(VERSION) \
+    -X $(VERSION_PKG).GitCommit=$(GIT_COMMIT) \
+    -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
 
 .DEFAULT_GOAL := help
 
-.PHONY: build build-cli test test-coverage lint fmt run run-cli clean deps docker-build docker-up docker-down goreleaser-snapshot help
+.PHONY: build test test-coverage lint fmt clean deps help
 
-## build: Build the server binary to bin/go-assistant
+## build: Build the CLI binary
 build:
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/server
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/cli
 
-## build-cli: Build the CLI binary to bin/liwaisi
-build-cli:
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(CLI_BINARY_NAME) ./cmd/cli
-
-## test: Run all tests with race detection and coverage
+## test: Run all tests with race detection
 test:
 	$(GO) test $(GO_FLAGS) -cover -count=1 ./...
 
-## test-coverage: Generate HTML coverage report
+## test-coverage: Generate coverage report (used by CI)
 test-coverage:
 	$(GO) test $(GO_FLAGS) -coverprofile=$(COVERAGE_FILE) -count=1 ./...
 	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
-	@echo "Coverage report generated: $(COVERAGE_HTML)"
 
 ## lint: Run golangci-lint
 lint:
 	$(LINT) run
 
-## fmt: Format code with gofmt and goimports
+## fmt: Format code
 fmt:
 	gofmt -w .
-	goimports -w .
 
-## generate: Generate protobuf files
-generate:
-	./protoc-bin/bin/protoc --go_out=. --go_opt=module=github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant \
-		--go-grpc_out=. --go-grpc_opt=module=github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant \
-		api/proto/agent/v1/agent.proto
-
-## run: Run the server locally
-run:
-	$(GO) run ./cmd/server
-
-## run-cli: Run the CLI locally (use ARGS to pass subcommands, e.g. make run-cli ARGS="ask 'hello'")
-run-cli:
-	$(GO) run ./cmd/cli $(if $(ARGS),$(ARGS),chat)
-
-## clean: Remove build artifacts and coverage files
+## clean: Remove build artifacts
 clean:
 	rm -rf $(BIN_DIR)/
 	rm -f $(COVERAGE_FILE) $(COVERAGE_HTML)
 
-## deps: Download and tidy dependencies
+## deps: Download and tidy dependencies (used by CI)
 deps:
 	$(GO) mod download
 	$(GO) mod tidy
 
-## docker-build: Build Docker image via docker compose
-docker-build:
-	$(DOCKER_COMPOSE) -f ../../docker-compose.yml build
-
-## docker-up: Start containers in detached mode
-docker-up:
-	$(DOCKER_COMPOSE) -f ../../docker-compose.yml up -d
-
-## docker-down: Stop and remove containers
-docker-down:
-	$(DOCKER_COMPOSE) -f ../../docker-compose.yml down
-
-## goreleaser-snapshot: Test GoReleaser build locally (no publish)
-goreleaser-snapshot:
-	goreleaser release --snapshot --clean
-
-## help: Show this help message
+## help: Show available targets
 help:
 	@echo "Usage: make [target]"
 	@echo ""
