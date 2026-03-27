@@ -21,12 +21,13 @@ type fireResult struct {
 //  2. Set State=Running
 //  3. Loop:
 //     a. Check context cancellation
-//     b. Collect firable transitions (sorted by ID, NodeKindObserver excluded)
-//     c. If none firable: check IsComplete -> Completed, else -> Deadlock
-//     d. For each firable: re-check CanFire, consume tokens, launch goroutine
-//     e. wg.Wait() for all goroutines
-//     f. Process errors: ErrorPlace routing or CPN failure
-//     g. Repeat
+//     b. drainObservers — deposit event tokens from sub-CPN buses (Block 13)
+//     c. Collect firable transitions (sorted by ID, NodeKindObserver excluded)
+//     d. If none firable: check IsComplete -> Completed, else -> Deadlock
+//     e. For each firable: re-check CanFire, consume tokens, launch goroutine
+//     f. wg.Wait() for all goroutines
+//     g. Process errors: ErrorPlace routing or CPN failure
+//     h. Repeat
 //
 // NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10), and NodeKindSubNet (Block 12) are dispatched. Other kinds return ErrInvalidNodeKind.
 func (c *CPN) Run(ctx context.Context) error {
@@ -47,6 +48,10 @@ func (c *CPN) Run(ctx context.Context) error {
 			return ErrTimeout
 		default:
 		}
+
+		// REQ-011 (Block 13): Drain observer events before collecting firable.
+		// Observer-deposited tokens may enable downstream transitions.
+		drainObservers(ctx, c)
 
 		// REQ-005: Collect firable transitions (exclude Observer).
 		firable := c.collectFirable()

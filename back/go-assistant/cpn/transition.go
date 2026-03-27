@@ -79,6 +79,17 @@ type Transition struct {
 	// Takes precedence over SubNet when both are set.
 	// Only meaningful when Kind == NodeKindSubNet.
 	SubNetFactory func() *CPN
+
+	// ObservedCPNID restricts this observer to events from a specific sub-CPN.
+	// Empty string means observe all sub-CPNs in the parent's group.
+	// Only meaningful when Kind == NodeKindObserver.
+	ObservedCPNID string
+
+	// EventFilter is an optional predicate for event-level filtering.
+	// When non-nil, only events for which EventFilter returns true trigger the observer.
+	// When nil, all events (passing ObservedCPNID check) are accepted.
+	// Only meaningful when Kind == NodeKindObserver.
+	EventFilter func(e Event) bool
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.
