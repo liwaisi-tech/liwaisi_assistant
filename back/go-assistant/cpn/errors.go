@@ -103,8 +103,8 @@ var ErrPayloadTooLarge = errors.New("OpenRouter 413: payload too large")
 // ErrUnprocessableEntity is returned for OpenRouter HTTP 422 responses.
 var ErrUnprocessableEntity = errors.New("OpenRouter 422: unprocessable entity")
 
-// ErrEdgeTimeout is returned for OpenRouter HTTP 504 responses.
-var ErrEdgeTimeout = errors.New("OpenRouter 504: edge timeout")
+// ErrEdgeTimeout is returned for OpenRouter HTTP 524 responses.
+var ErrEdgeTimeout = errors.New("OpenRouter 524: edge timeout")
 
-// ErrProviderOverloaded is returned for OpenRouter HTTP 503 responses.
-var ErrProviderOverloaded = errors.New("OpenRouter 503: provider overloaded")
+// ErrProviderOverloaded is returned for OpenRouter HTTP 529 responses.
+var ErrProviderOverloaded = errors.New("OpenRouter 529: provider overloaded")
