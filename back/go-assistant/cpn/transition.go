@@ -43,6 +43,11 @@ type Transition struct {
 	// Initialized by the CPN when Retry.CircuitBreaker is configured.
 	cbState *CircuitBreakerState
 
+	// SystemPrompt is the static system prompt for NodeKindLLM transitions.
+	// Assembled into T1 tier by BuildContext.
+	// Should not change between calls — dynamic prompts make behavior unpredictable.
+	SystemPrompt string
+
 	// ToolName is the name of the tool this transition invokes.
 	// Only meaningful when Kind == NodeKindTool.
 	ToolName string
