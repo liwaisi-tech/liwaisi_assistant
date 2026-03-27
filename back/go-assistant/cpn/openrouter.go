@@ -60,7 +60,7 @@ type LLMResponse struct {
 	Content string
 
 	// ToolCalls contains any tool invocations requested by the LLM.
-	ToolCalls []LLMToolCall
+	ToolCalls []*LLMToolCall
 
 	// InputTokens is the number of prompt tokens consumed.
 	InputTokens int
@@ -359,7 +359,7 @@ func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
 		resp.Content = msg.Content
 
 		for _, tc := range msg.ToolCalls {
-			resp.ToolCalls = append(resp.ToolCalls, LLMToolCall{
+			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
 				ID:        tc.ID,
 				ToolName:  tc.Function.Name,
 				Arguments: json.RawMessage(tc.Function.Arguments),
