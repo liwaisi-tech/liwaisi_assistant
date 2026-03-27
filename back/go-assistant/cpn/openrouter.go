@@ -36,7 +36,7 @@ type LLMRequest struct {
 	Model string
 
 	// Messages is the conversation history including system prompt.
-	Messages []LLMMessage
+	Messages []*LLMMessage
 
 	// MaxTokens is the hard cap for the completion.
 	MaxTokens int

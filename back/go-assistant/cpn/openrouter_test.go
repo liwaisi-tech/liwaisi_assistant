@@ -75,7 +75,7 @@ func TestOpenRouterClient_Complete_Success(t *testing.T) {
 
 	resp, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-default-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 		SessionID: "sess-1",
 	})
@@ -129,7 +129,7 @@ func TestOpenRouterClient_Complete_ToolCalls(t *testing.T) {
 
 	resp, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-default-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Weather?"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Weather?"}},
 		MaxTokens: 100,
 		SessionID: "sess-tc",
 	})
@@ -182,7 +182,7 @@ func TestOpenRouterClient_Complete_ServerErrors(t *testing.T) {
 
 			_, err := client.Complete(context.Background(), &LLMRequest{
 				Model:     "test-model",
-				Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+				Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 				MaxTokens: 10,
 				SessionID: "sess-err",
 			})
@@ -205,7 +205,7 @@ func TestOpenRouterClient_Complete_RateLimit(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-rl",
 	})
@@ -227,7 +227,7 @@ func TestOpenRouterClient_Complete_ContextCanceled(t *testing.T) {
 
 	_, err := client.Complete(ctx, &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 	})
 	if err == nil {
@@ -245,7 +245,7 @@ func TestOpenRouterClient_Complete_MalformedJSON(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-bad",
 	})
@@ -265,7 +265,7 @@ func TestOpenRouterClient_Complete_APIKeyInHeader(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-auth",
 	})
@@ -288,7 +288,7 @@ func TestOpenRouterClient_Complete_SessionIdHeader(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-42",
 	})
@@ -311,7 +311,7 @@ func TestOpenRouterClient_Complete_NoSessionIdWhenEmpty(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 	})
 	if err != nil {
@@ -329,7 +329,7 @@ func TestOpenRouterClient_Complete_RecordsToLedger(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-ledger",
 	})
@@ -361,7 +361,7 @@ func TestOpenRouterClient_Complete_NoRecordOnError(t *testing.T) {
 
 	_, _ = client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-record",
 	})
@@ -385,7 +385,7 @@ func TestOpenRouterClient_Complete_ModelResolution(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "classifier",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-resolve",
 	})
@@ -411,7 +411,7 @@ func TestOpenRouterClient_Complete_DefaultModel(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "", // empty — should use DefaultModel
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-default",
 	})
@@ -436,7 +436,7 @@ func TestOpenRouterClient_Complete_ResponseFormat(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:       "test-model",
-		Messages:    []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:    []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens:   10,
 		ResponseFmt: "json_object",
 		SessionID:   "sess-fmt",
@@ -465,7 +465,7 @@ func TestOpenRouterClient_Complete_ToolsInBody(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		Tools: []LLMTool{{
 			Name:        "get_weather",
@@ -506,7 +506,7 @@ func TestOpenRouterClient_EstimateCost_KnownModel(t *testing.T) {
 
 	cost, err := client.EstimateCost(&LLMRequest{
 		Model:     "google/gemini-2.0-flash-001",
-		Messages:  []LLMMessage{{Role: "user", Content: strings.Repeat("a", 400)}},
+		Messages:  []*LLMMessage{{Role: "user", Content: strings.Repeat("a", 400)}},
 		MaxTokens: 100,
 	})
 	if err != nil {
@@ -524,7 +524,7 @@ func TestOpenRouterClient_EstimateCost_UnknownModel(t *testing.T) {
 
 	cost, err := client.EstimateCost(&LLMRequest{
 		Model:     "unknown/model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 	})
 	if err != nil {
@@ -616,7 +616,7 @@ func TestOpenRouterClient_Complete_NoUsageField(t *testing.T) {
 
 	resp, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-usage",
 	})
@@ -644,7 +644,7 @@ func TestOpenRouterClient_Complete_NoChoices(t *testing.T) {
 
 	resp, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-choices",
 	})
@@ -663,7 +663,7 @@ func TestOpenRouterClient_Complete_DoesNotMutateRequest(t *testing.T) {
 
 	req := &LLMRequest{
 		Model:     "classifier",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-mutate",
 	}
@@ -690,7 +690,7 @@ func TestOpenRouterClient_Complete_HTTPMethodPOST(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &LLMRequest{
 		Model:     "test-model",
-		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-method",
 	})
