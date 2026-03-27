@@ -686,7 +686,7 @@ func TestDispatch_NodeKindTool(t *testing.T) {
 }
 
 func TestDispatch_UnsupportedKinds(t *testing.T) {
-	kinds := []NodeKind{NodeKindObserver, NodeKindHITL}
+	kinds := []NodeKind{NodeKindObserver}
 
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "x"}}
