@@ -73,6 +73,10 @@ var ErrBudgetExceeded = errors.New("token or cost budget exceeded")
 // proposed action.
 var ErrHITLRejected = errors.New("human rejected proposed action")
 
+// ErrHITLMisconfigured is returned when a NodeKindHITL transition has
+// nil HITLConfig or nil Channel.
+var ErrHITLMisconfigured = errors.New("HITL transition misconfigured")
+
 // ErrHITLMaxRevisions is returned when a HITL revision loop exceeds
 // the maximum allowed iterations.
 var ErrHITLMaxRevisions = errors.New("HITL revision loop exceeded max iterations")

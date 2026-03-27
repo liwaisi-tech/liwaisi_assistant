@@ -3,6 +3,7 @@ package cpn
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // CPN is the universal agent type.
@@ -35,6 +36,16 @@ type CPN struct {
 	// Group manages this CPN's sub-CPNs (ephemeral team).
 	// Nil for leaf CPNs that do not spawn sub-nets.
 	Group *GroupAgent
+
+	// EventSink receives events emitted by this CPN.
+	// Called synchronously by emit(). Nil means events are only sent to EventEmitter.
+	// Decouples from concrete event bus (CON-004).
+	EventSink func(Event)
+
+	// GroupNotifier is called on state changes that affect group membership.
+	// Nil means no group coordination (standalone CPN or testing).
+	// Implemented by GroupAgent (Block 11).
+	GroupNotifier GroupNotifier
 
 	// EventEmitter is the channel where this CPN's events are sent.
 	// Read by the parent CPN's observer transitions and GroupAgent.Deliver.
@@ -122,21 +133,42 @@ func (c *CPN) TerminalPlaces() []*Place {
 	return terminals
 }
 
-// emit sends an event to this CPN's EventEmitter channel.
-// Non-blocking: if the channel is full, the event is silently dropped.
-// Stamps CPNID, CPNDepth, CPNRole on the event before sending.
-// No-op if EventEmitter is nil.
+// emit sends an event, stamping CPN identity and timestamp.
+// REQ-012: Stamps CPNID, CPNDepth, CPNRole, SessionID, Timestamp on the event.
+// Calls EventSink synchronously (if non-nil), then sends to EventEmitter (non-blocking).
+// No-op if both EventSink and EventEmitter are nil.
 func (c *CPN) emit(e *Event) {
-	if c.EventEmitter == nil {
-		return
-	}
 	e.CPNID = c.ID
 	e.CPNDepth = c.Depth
 	e.CPNRole = c.Role
-	select {
-	case c.EventEmitter <- *e:
-	default:
+	e.SessionID = c.SessionID
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now()
 	}
+
+	if c.EventSink != nil {
+		c.EventSink(*e)
+	}
+
+	if c.EventEmitter != nil {
+		select {
+		case c.EventEmitter <- *e:
+		default:
+		}
+	}
+}
+
+// switchModeToCentaurian sets Mode to ModeCentaurian and emits EventModeSwitch.
+// REQ-013: Called when a human token enters a SpaceComputation place via HITL.
+func (c *CPN) switchModeToCentaurian() {
+	c.mu.Lock()
+	c.Mode = ModeCentaurian
+	c.mu.Unlock()
+
+	c.emit(&Event{
+		Type:    EventModeSwitch,
+		Payload: ModeCentaurian,
+	})
 }
 
 // registerSubNetBus registers a child's event bus channel for observer draining.

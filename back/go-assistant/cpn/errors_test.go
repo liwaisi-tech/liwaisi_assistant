@@ -15,7 +15,7 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		// v1.1
 		ErrValidationFailed, ErrCircuitOpen, ErrRateLimited,
 		ErrProviderUnavailable, ErrBudgetExceeded, ErrHITLRejected,
-		ErrHITLMaxRevisions,
+		ErrHITLMisconfigured, ErrHITLMaxRevisions,
 		// v1.2
 		ErrBadRequest, ErrUnauthorized, ErrInsufficientCredits,
 		ErrForbidden, ErrNotFound, ErrRequestTimeout, ErrPayloadTooLarge,
@@ -23,8 +23,8 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		// v1.3
 		ErrToolCallLoopExceeded, ErrDisallowedTool,
 	}
-	if len(sentinels) != 30 {
-		t.Fatalf("expected 30 sentinel errors, got %d — update this test when adding errors", len(sentinels))
+	if len(sentinels) != 31 {
+		t.Fatalf("expected 31 sentinel errors, got %d — update this test when adding errors", len(sentinels))
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
@@ -59,6 +59,7 @@ func TestSentinelErrors_WrapCorrectly(t *testing.T) {
 		{"ErrProviderUnavailable", ErrProviderUnavailable},
 		{"ErrBudgetExceeded", ErrBudgetExceeded},
 		{"ErrHITLRejected", ErrHITLRejected},
+		{"ErrHITLMisconfigured", ErrHITLMisconfigured},
 		{"ErrHITLMaxRevisions", ErrHITLMaxRevisions},
 		// v1.2
 		{"ErrBadRequest", ErrBadRequest},

@@ -80,6 +80,10 @@ type Transition struct {
 	// Only meaningful when Kind == NodeKindSubNet.
 	SubNetFactory func() *CPN
 
+	// HITLConfig holds per-transition HITL configuration.
+	// Only meaningful when Kind == NodeKindHITL. Nil for other kinds.
+	HITLConfig *HITLConfig
+
 	// ObservedCPNID restricts this observer to events from a specific sub-CPN.
 	// Empty string means observe all sub-CPNs in the parent's group.
 	// Only meaningful when Kind == NodeKindObserver.

@@ -50,8 +50,6 @@ func (ve *ValidationErrors) Unwrap() []error {
 // problems found if invalid. Use errors.Is() to check for specific sentinel errors.
 //
 // Iteration order is deterministic (transitions sorted by ID).
-//
-// TODO(block-14): validate HITL transitions when HITLConfig type is available.
 func Validate(places map[string]*Place, transitions map[string]*Transition) error {
 	if len(transitions) == 0 {
 		return nil
@@ -72,9 +70,13 @@ func Validate(places map[string]*Place, transitions map[string]*Transition) erro
 		errs = append(errs, arcErrs...)
 
 		// Skip space violation check if this transition already has invalid arcs (GUD-002).
-		if len(arcErrs) == 0 {
+		// GUD-001: NodeKindHITL is exempt — HITL is the sanctioned space bridge.
+		if len(arcErrs) == 0 && tr.Kind != NodeKindHITL {
 			errs = append(errs, checkSpaceViolations(tr, places)...)
 		}
+
+		// REQ-018: Validate HITL transitions have proper configuration.
+		errs = append(errs, checkHITLConfig(tr)...)
 	}
 
 	if len(errs) == 0 {
@@ -108,6 +110,25 @@ func checkArcReferences(t *Transition, places map[string]*Place) []error {
 		}
 	}
 
+	return errs
+}
+
+// checkHITLConfig validates that NodeKindHITL transitions have proper configuration.
+// REQ-018: HITLConfig must be non-nil and Channel must be non-nil.
+func checkHITLConfig(t *Transition) []error {
+	if t.Kind != NodeKindHITL {
+		return nil
+	}
+	var errs []error
+	if t.HITLConfig == nil {
+		errs = append(errs, fmt.Errorf("%w: transition %s has nil HITLConfig",
+			ErrHITLMisconfigured, t.ID))
+		return errs // Channel check is meaningless without config.
+	}
+	if t.HITLConfig.Channel == nil {
+		errs = append(errs, fmt.Errorf("%w: transition %s has nil HITLConfig.Channel",
+			ErrHITLMisconfigured, t.ID))
+	}
 	return errs
 }
 
