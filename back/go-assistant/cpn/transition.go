@@ -1,0 +1,81 @@
+package cpn
+
+// Transition represents a CPN transition — a unit of computation that fires
+// when its input places contain tokens and its guard condition is satisfied.
+//
+// This struct is extended incrementally by later blocks. Block 3 defines
+// the core identity and firing rule fields. Fields for retry, LLM, validation,
+// sub-nets, observers, and HITL are added in their respective blocks.
+type Transition struct {
+	// ID is the unique identifier for this transition within the CPN.
+	ID string
+
+	// Kind classifies the transition's behavior when it fires.
+	// See NodeKind constants: NodeKindTool, NodeKindLLM, etc.
+	Kind NodeKind
+
+	// InputPlaces lists the IDs of places this transition reads from.
+	// CanFire checks that all input places have at least one token.
+	InputPlaces []string
+
+	// OutputPlaces lists the IDs of places this transition writes to
+	// after successful execution.
+	OutputPlaces []string
+
+	// ErrorPlace is the fallback output place for error tokens.
+	// Used by the executor when retry is exhausted (Block 4+).
+	// Empty string means no error routing — failure propagates.
+	ErrorPlace string
+
+	// Guard is an optional predicate evaluated on the aggregated tokens
+	// from all input places. If nil, the transition fires whenever all
+	// input places have tokens. Guards should be pure functions with
+	// no side effects.
+	Guard func(tokens []*Token) bool
+}
+
+// NewTransition creates a Transition with the given identity and arc configuration.
+// Guard and ErrorPlace can be set after construction via direct field assignment.
+func NewTransition(id string, kind NodeKind, inputPlaces, outputPlaces []string) *Transition {
+	return &Transition{
+		ID:           id,
+		Kind:         kind,
+		InputPlaces:  inputPlaces,
+		OutputPlaces: outputPlaces,
+	}
+}
+
+// CanFire returns true if all input places have at least one token
+// and the guard condition (if set) is satisfied.
+//
+// Returns false if:
+//   - InputPlaces is empty
+//   - Any input place ID is not found in the places map
+//   - Any input place has zero tokens
+//   - The Guard function returns false
+//
+// CanFire does not modify any place state — it uses Peek (read-only).
+// Safe for concurrent calls (Place.Peek is mutex-protected).
+func (t *Transition) CanFire(places map[string]*Place) bool {
+	if len(t.InputPlaces) == 0 {
+		return false
+	}
+
+	var tokens []*Token
+	for _, pid := range t.InputPlaces {
+		p, ok := places[pid]
+		if !ok {
+			return false
+		}
+		ts, ok := p.Peek()
+		if !ok {
+			return false
+		}
+		tokens = append(tokens, ts...)
+	}
+
+	if t.Guard != nil {
+		return t.Guard(tokens)
+	}
+	return true
+}
