@@ -24,10 +24,10 @@ type fireResult struct {
 //     b. drainObservers — deposit event tokens from sub-CPN buses (Block 13)
 //     c. Collect firable transitions (sorted by ID, NodeKindObserver excluded)
 //     d. If none firable: check IsComplete -> Completed, else -> Deadlock
-//     d. For each firable: re-check CanFire, consume tokens, launch goroutine
-//     e. wg.Wait() for all goroutines
-//     f. Process errors: ErrorPlace routing or CPN failure
-//     g. Repeat
+//     e. For each firable: re-check CanFire, consume tokens, launch goroutine
+//     f. wg.Wait() for all goroutines
+//     g. Process errors: ErrorPlace routing or CPN failure
+//     h. Repeat
 //
 // NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10), and NodeKindSubNet (Block 12) are dispatched. Other kinds return ErrInvalidNodeKind.
 func (c *CPN) Run(ctx context.Context) error {

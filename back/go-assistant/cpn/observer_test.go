@@ -345,6 +345,31 @@ func TestDrainObservers_MultipleOutputPlaces(t *testing.T) {
 	}
 }
 
+func TestDrainObservers_ClosedBusWithPendingEvents(t *testing.T) {
+	obs := makeObserver("obs:all", []string{"P:OBS"})
+
+	places := map[string]*Place{
+		"P:OBS": NewPlace("P:OBS", ColorEvent, SpaceObservation),
+	}
+	transitions := map[string]*Transition{"obs:all": obs}
+
+	// Buffer two events then close — simulates a child that finished.
+	bus := make(chan Event, 4)
+	bus <- makeEvent(EventTransitionFired, "child-1")
+	bus <- makeEvent(EventSubNetCompleted, "child-1")
+	close(bus)
+
+	cpn := NewCPN("parent", "root", 0, ModeMAS, "sess-1", places, transitions)
+	cpn.subNetBuses = map[string]<-chan Event{"child-1": bus}
+
+	// Must not panic on closed channel; must drain all buffered events.
+	drainObservers(context.Background(), cpn)
+
+	if places["P:OBS"].Len() != 2 {
+		t.Fatalf("P:OBS token count = %d, want 2", places["P:OBS"].Len())
+	}
+}
+
 // --- Integration Test ---
 
 func TestCPN_Run_WithObserver(t *testing.T) {
