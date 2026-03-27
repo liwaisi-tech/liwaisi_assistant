@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultContextWindowSize is the default number of conversational turns
@@ -98,16 +99,20 @@ func estimateTokens(systemPrompt string, messages []LLMMessage) int {
 // CompressSubNetSummary generates a RoleObserver message summarizing
 // a completed sub-CPN's output. Called when a sub-CPN reaches StateCompleted.
 // The returned Message should be appended to the parent CPN's History.
-func CompressSubNetSummary(childID, childRole string, childDepth int, outputTokens []Token) Message {
+func CompressSubNetSummary(childID, childRole string, childDepth int, outputTokens []Token) (Message, error) {
+	id, err := newUUID()
+	if err != nil {
+		return Message{}, fmt.Errorf("compress sub-net summary: %w", err)
+	}
 	return Message{
-		ID:        newUUID(),
+		ID:        id,
 		Role:      RoleObserver,
 		Content:   formatSummary(childRole, childDepth, outputTokens),
 		CPNID:     childID,
 		CPNRole:   childRole,
 		CPNDepth:  childDepth,
 		Timestamp: time.Now(),
-	}
+	}, nil
 }
 
 // formatSummary generates a text summary from a child CPN's output tokens.
@@ -133,14 +138,20 @@ func formatSummary(childRole string, childDepth int, outputTokens []Token) strin
 	s := b.String()
 	if len(s) > 500 {
 		s = s[:500]
+		// Ensure we don't cut a multi-byte UTF-8 rune.
+		for s != "" && !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
 	}
 	return s
 }
 
 // newUUID generates a UUID v4 string using crypto/rand.
-func newUUID() string {
+func newUUID() (string, error) {
 	var uuid [16]byte
-	_, _ = rand.Read(uuid[:])
+	if _, err := rand.Read(uuid[:]); err != nil {
+		return "", fmt.Errorf("generate UUID: %w", err)
+	}
 
 	// Set version 4.
 	uuid[6] = (uuid[6] & 0x0f) | 0x40
@@ -148,5 +159,5 @@ func newUUID() string {
 	uuid[8] = (uuid[8] & 0x3f) | 0x80
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
 }

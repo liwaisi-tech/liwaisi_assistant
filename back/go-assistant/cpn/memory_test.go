@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ── Test Helpers ─────────────────────────────────────────────────────────────
@@ -277,7 +278,10 @@ func TestCompressSubNetSummary_CreatesObserverMessage(t *testing.T) {
 		{Payload: "result-1"},
 		{Payload: "result-2"},
 	}
-	msg := CompressSubNetSummary("child-1", "analyzer", 1, tokens)
+	msg, err := CompressSubNetSummary("child-1", "analyzer", 1, tokens)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if msg.Role != RoleObserver {
 		t.Errorf("expected RoleObserver, got %q", msg.Role)
@@ -286,7 +290,10 @@ func TestCompressSubNetSummary_CreatesObserverMessage(t *testing.T) {
 
 func TestCompressSubNetSummary_SetsMetadata(t *testing.T) {
 	tokens := []Token{{Payload: "data"}}
-	msg := CompressSubNetSummary("child-42", "planner", 2, tokens)
+	msg, err := CompressSubNetSummary("child-42", "planner", 2, tokens)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if msg.CPNID != "child-42" {
 		t.Errorf("CPNID = %q, want %q", msg.CPNID, "child-42")
@@ -300,7 +307,10 @@ func TestCompressSubNetSummary_SetsMetadata(t *testing.T) {
 }
 
 func TestCompressSubNetSummary_HasUUID(t *testing.T) {
-	msg := CompressSubNetSummary("c1", "role", 0, nil)
+	msg, err := CompressSubNetSummary("c1", "role", 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if msg.ID == "" {
 		t.Error("expected non-empty ID")
@@ -313,7 +323,10 @@ func TestCompressSubNetSummary_HasUUID(t *testing.T) {
 
 func TestCompressSubNetSummary_HasTimestamp(t *testing.T) {
 	before := time.Now().Add(-time.Second)
-	msg := CompressSubNetSummary("c1", "role", 0, nil)
+	msg, err := CompressSubNetSummary("c1", "role", 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	after := time.Now().Add(time.Second)
 
 	if msg.Timestamp.Before(before) || msg.Timestamp.After(after) {
@@ -323,7 +336,10 @@ func TestCompressSubNetSummary_HasTimestamp(t *testing.T) {
 
 func TestCompressSubNetSummary_ContentUsesFormatSummary(t *testing.T) {
 	tokens := []Token{{Payload: "hello"}, {Payload: "world"}}
-	msg := CompressSubNetSummary("c1", "worker", 1, tokens)
+	msg, err := CompressSubNetSummary("c1", "worker", 1, tokens)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if !strings.Contains(msg.Content, "hello") || !strings.Contains(msg.Content, "world") {
 		t.Errorf("content should contain payload data, got %q", msg.Content)
@@ -360,6 +376,22 @@ func TestFormatSummary_TruncatesLongContent(t *testing.T) {
 	}
 }
 
+func TestFormatSummary_TruncatesValidUTF8(t *testing.T) {
+	// Each token payload is a 4-byte emoji repeated to fill space.
+	tokens := make([]Token, 50)
+	for i := range tokens {
+		tokens[i] = Token{Payload: strings.Repeat("\U0001F600", 10)} // 😀 = 4 bytes each
+	}
+	s := formatSummary("worker", 2, tokens)
+
+	if len(s) > 500 {
+		t.Errorf("expected summary <= 500 chars, got %d", len(s))
+	}
+	if !utf8.ValidString(s) {
+		t.Errorf("truncated summary is not valid UTF-8")
+	}
+}
+
 func TestFormatSummary_EmptyTokens(t *testing.T) {
 	s := formatSummary("worker", 1, nil)
 	if s == "" {
@@ -373,7 +405,10 @@ func TestFormatSummary_EmptyTokens(t *testing.T) {
 // ── newUUID Tests ────────────────────────────────────────────────────────────
 
 func TestNewUUID_Format(t *testing.T) {
-	id := newUUID()
+	id, err := newUUID()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	if !uuidRE.MatchString(id) {
 		t.Errorf("UUID %q does not match v4 format", id)
@@ -383,7 +418,10 @@ func TestNewUUID_Format(t *testing.T) {
 func TestNewUUID_Unique(t *testing.T) {
 	seen := make(map[string]struct{}, 100)
 	for i := 0; i < 100; i++ {
-		id := newUUID()
+		id, err := newUUID()
+		if err != nil {
+			t.Fatalf("unexpected error on iteration %d: %v", i, err)
+		}
 		if _, dup := seen[id]; dup {
 			t.Fatalf("duplicate UUID on iteration %d: %s", i, id)
 		}
@@ -392,7 +430,10 @@ func TestNewUUID_Unique(t *testing.T) {
 }
 
 func TestNewUUID_Version4(t *testing.T) {
-	id := newUUID()
+	id, err := newUUID()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	// Version nibble is char at index 14 (0-indexed).
 	if id[14] != '4' {
 		t.Errorf("expected version 4 at position 14, got %c", id[14])
