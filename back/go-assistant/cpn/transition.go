@@ -69,6 +69,16 @@ type Transition struct {
 	// ValidateConfig holds per-transition validation configuration.
 	// Only meaningful when Kind == NodeKindValidate. Nil for other kinds.
 	ValidateConfig *ValidateConfig
+
+	// SubNet is a static CPN topology template (for crystallized/reusable flows).
+	// Used when SubNetFactory is nil. cloneCPN creates a fresh instance per firing.
+	// Only meaningful when Kind == NodeKindSubNet.
+	SubNet *CPN
+
+	// SubNetFactory creates a new CPN instance per firing (prototype + fork).
+	// Takes precedence over SubNet when both are set.
+	// Only meaningful when Kind == NodeKindSubNet.
+	SubNetFactory func() *CPN
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.

@@ -137,11 +137,29 @@ func (c *CPN) Run(ctx context.Context) error {
 }
 
 // checkCompletionOrDeadlock returns nil if the CPN is complete, or ErrDeadlock otherwise.
+// If child goroutines are still active (SubNet), waits for them to deposit tokens
+// before declaring deadlock — children may produce tokens that unblock the parent.
 func (c *CPN) checkCompletionOrDeadlock() error {
 	if c.IsComplete() {
 		c.setState(StateCompleted)
 		return nil
 	}
+
+	// If children are still running, wait for them — they may deposit output tokens.
+	if c.activeChildren.Load() > 0 {
+		c.childWg.Wait()
+		// Re-check after children have completed and deposited tokens.
+		if c.IsComplete() {
+			c.setState(StateCompleted)
+			return nil
+		}
+		// Children are done but parent is still not complete.
+		// Check if parent was set to failed by a child.
+		if c.getState() == StateFailed {
+			return c.Error
+		}
+	}
+
 	c.setFailed(ErrDeadlock)
 	return ErrDeadlock
 }
@@ -189,7 +207,7 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) erro
 	case NodeKindValidate:
 		return fireValidate(ctx, t, c, consumed)
 	case NodeKindSubNet:
-		return fmt.Errorf("%w: SubNet dispatch not implemented", ErrInvalidNodeKind)
+		return fireSubNet(ctx, t, c, consumed)
 	case NodeKindObserver:
 		return fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
 	case NodeKindHITL:
