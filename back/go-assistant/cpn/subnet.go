@@ -147,7 +147,16 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 
 		// REQ-009: Compress summary and append to parent history.
 		summary, summaryErr := CompressSubNetSummary(child.ID, child.Role, child.Depth, outputTokens)
-		if summaryErr == nil {
+		if summaryErr != nil {
+			parent.emit(&Event{
+				Type:           EventSubNetFailed,
+				SessionID:      parent.SessionID,
+				TransitionID:   t.ID,
+				TransitionKind: NodeKindSubNet,
+				Payload:        fmt.Errorf("compress summary: %w", summaryErr),
+				Timestamp:      time.Now(),
+			})
+		} else {
 			parent.mu.Lock()
 			parent.History = append(parent.History, summary)
 			parent.mu.Unlock()
@@ -188,6 +197,7 @@ func cloneCPN(prototype *CPN) (*CPN, error) {
 		State:       StateIdle,
 		Places:      places,
 		Transitions: prototype.Transitions,
+		LLMClient:   prototype.LLMClient,
 	}, nil
 }
 

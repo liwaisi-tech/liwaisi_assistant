@@ -28,7 +28,7 @@ type fireResult struct {
 //     f. Process errors: ErrorPlace routing or CPN failure
 //     g. Repeat
 //
-// NodeKindTool (Block 6), NodeKindLLM (Block 9), and NodeKindValidate (Block 10) are dispatched. Other kinds return ErrInvalidNodeKind.
+// NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10), and NodeKindSubNet (Block 12) are dispatched. Other kinds return ErrInvalidNodeKind.
 func (c *CPN) Run(ctx context.Context) error {
 	// REQ-003: Validate before entering the loop.
 	if err := Validate(c.Places, c.Transitions); err != nil {
@@ -146,6 +146,9 @@ func (c *CPN) checkCompletionOrDeadlock() error {
 	}
 
 	// If children are still running, wait for them — they may deposit output tokens.
+	// Blocks until ALL children finish, even if one already set parent to failed.
+	// This ensures no goroutine leaks. Callers who need faster failure
+	// propagation should use context cancellation.
 	if c.activeChildren.Load() > 0 {
 		c.childWg.Wait()
 		// Re-check after children have completed and deposited tokens.
@@ -156,7 +159,7 @@ func (c *CPN) checkCompletionOrDeadlock() error {
 		// Children are done but parent is still not complete.
 		// Check if parent was set to failed by a child.
 		if c.getState() == StateFailed {
-			return c.Error
+			return c.getError()
 		}
 	}
 
@@ -197,7 +200,7 @@ func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 }
 
 // dispatch routes a transition to the correct fire function based on Kind.
-// NodeKindTool (Block 6), NodeKindLLM (Block 9), and NodeKindValidate (Block 10) are implemented.
+// NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10), and NodeKindSubNet (Block 12) are implemented.
 func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
 	switch t.Kind {
 	case NodeKindTool:

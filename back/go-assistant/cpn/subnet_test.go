@@ -501,6 +501,28 @@ func TestCloneCPN_OriginalUnmodified(t *testing.T) {
 	}
 }
 
+func TestCloneCPN_NilPrototype(t *testing.T) {
+	_, err := cloneCPN(nil)
+	if err == nil {
+		t.Fatal("cloneCPN(nil) should return error")
+	}
+}
+
+// --- fireSubNet edge case tests ---
+
+func TestFireSubNet_NilFactory(t *testing.T) {
+	parent := makeSubNetParent(func() *CPN { return nil })
+	seedParent(t, parent, "hello")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := waitForParent(ctx, parent)
+	if err == nil {
+		t.Fatal("expected error for nil factory return")
+	}
+}
+
 // --- injectTokens Unit Tests ---
 
 func TestInjectTokens_SingleSource(t *testing.T) {

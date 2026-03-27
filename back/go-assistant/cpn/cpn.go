@@ -95,6 +95,14 @@ func (c *CPN) getState() State {
 	return c.State
 }
 
+// getError returns the CPN error under read lock.
+// Pairs with setFailed which writes Error under write lock.
+func (c *CPN) getError() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Error
+}
+
 // TerminalPlaces returns places not referenced as inputs to any transition.
 // These are the "output" places of the CPN.
 func (c *CPN) TerminalPlaces() []*Place {
