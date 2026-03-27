@@ -108,3 +108,13 @@ var ErrEdgeTimeout = errors.New("OpenRouter 524: edge timeout")
 
 // ErrProviderOverloaded is returned for OpenRouter HTTP 529 responses.
 var ErrProviderOverloaded = errors.New("OpenRouter 529: provider overloaded")
+
+// ── v1.3 Block 9 — fireLLM Errors ───────────────────────────────────────────
+
+// ErrToolCallLoopExceeded is returned when the agentic tool-call loop
+// exceeds MaxToolCallIterations without producing final content.
+var ErrToolCallLoopExceeded = errors.New("tool call loop exceeded max iterations")
+
+// ErrDisallowedTool is returned when the LLM requests a tool not in
+// the transition's LLMTools allowlist.
+var ErrDisallowedTool = errors.New("LLM requested disallowed tool")

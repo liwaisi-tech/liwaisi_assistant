@@ -20,9 +20,11 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		ErrBadRequest, ErrUnauthorized, ErrInsufficientCredits,
 		ErrForbidden, ErrNotFound, ErrRequestTimeout, ErrPayloadTooLarge,
 		ErrUnprocessableEntity, ErrEdgeTimeout, ErrProviderOverloaded,
+		// v1.3
+		ErrToolCallLoopExceeded, ErrDisallowedTool,
 	}
-	if len(sentinels) != 28 {
-		t.Fatalf("expected 28 sentinel errors, got %d — update this test when adding errors", len(sentinels))
+	if len(sentinels) != 30 {
+		t.Fatalf("expected 30 sentinel errors, got %d — update this test when adding errors", len(sentinels))
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
@@ -69,6 +71,9 @@ func TestSentinelErrors_WrapCorrectly(t *testing.T) {
 		{"ErrUnprocessableEntity", ErrUnprocessableEntity},
 		{"ErrEdgeTimeout", ErrEdgeTimeout},
 		{"ErrProviderOverloaded", ErrProviderOverloaded},
+		// v1.3
+		{"ErrToolCallLoopExceeded", ErrToolCallLoopExceeded},
+		{"ErrDisallowedTool", ErrDisallowedTool},
 	}
 	for _, tt := range sentinels {
 		t.Run(tt.name, func(t *testing.T) {

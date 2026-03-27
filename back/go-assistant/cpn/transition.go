@@ -57,6 +57,14 @@ type Transition struct {
 	// Returns a result token deposited into OutputPlaces.
 	// Only used when Kind == NodeKindTool.
 	Executor func(ctx context.Context, in Token) (Token, error)
+
+	// LLMConfig holds per-transition model selection and budget.
+	// Only meaningful when Kind == NodeKindLLM. Nil for other kinds.
+	LLMConfig *LLMConfig
+
+	// LLMTools lists Transition IDs (in the same CPN) the LLM may invoke as tools.
+	// Only meaningful when Kind == NodeKindLLM.
+	LLMTools []string
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.
