@@ -12,10 +12,10 @@ import (
 // ── Test Helpers ─────────────────────────────────────────────────────────────
 
 // makeHistory creates a history with N observer + M raw messages.
-func makeHistory(observers, raws int) []Message {
-	h := make([]Message, 0, observers+raws)
+func makeHistory(observers, raws int) []*Message {
+	h := make([]*Message, 0, observers+raws)
 	for i := 0; i < observers; i++ {
-		h = append(h, Message{
+		h = append(h, &Message{
 			ID: fmt.Sprintf("obs-%d", i), Role: RoleObserver,
 			Content: fmt.Sprintf("summary %d", i), CPNRole: fmt.Sprintf("worker-%d", i),
 		})
@@ -25,7 +25,7 @@ func makeHistory(observers, raws int) []Message {
 		if i%2 == 1 {
 			role = RoleAssistant
 		}
-		h = append(h, Message{
+		h = append(h, &Message{
 			ID: fmt.Sprintf("raw-%d", i), Role: role,
 			Content: fmt.Sprintf("message %d", i),
 		})
@@ -123,7 +123,7 @@ func TestBuildContext_ObserverBeforeRaw(t *testing.T) {
 }
 
 func TestBuildContext_ObserverFormat(t *testing.T) {
-	history := []Message{
+	history := []*Message{
 		{ID: "o1", Role: RoleObserver, Content: "analyzed repo", CPNRole: "repo-analyzer"},
 	}
 	ctx := BuildContext("sys", history, 10)
@@ -138,7 +138,7 @@ func TestBuildContext_ObserverFormat(t *testing.T) {
 }
 
 func TestBuildContext_ObserverRole(t *testing.T) {
-	history := []Message{
+	history := []*Message{
 		{ID: "o1", Role: RoleObserver, Content: "summary", CPNRole: "worker"},
 	}
 	ctx := BuildContext("sys", history, 10)
@@ -180,13 +180,16 @@ func TestBuildContext_TokenEstimate(t *testing.T) {
 
 func TestBuildContext_DoesNotModifyHistory(t *testing.T) {
 	history := makeHistory(2, 10)
-	original := make([]Message, len(history))
-	copy(original, history)
+	type snapshot struct{ ID, Content string }
+	original := make([]snapshot, len(history))
+	for i, m := range history {
+		original[i] = snapshot{m.ID, m.Content}
+	}
 
 	BuildContext("sys", history, 3)
 
-	for i := range history {
-		if history[i].ID != original[i].ID || history[i].Content != original[i].Content {
+	for i, m := range history {
+		if m.ID != original[i].ID || m.Content != original[i].Content {
 			t.Fatalf("BuildContext modified history at index %d", i)
 		}
 	}
@@ -195,7 +198,7 @@ func TestBuildContext_DoesNotModifyHistory(t *testing.T) {
 // ── filterRaw Tests ──────────────────────────────────────────────────────────
 
 func TestFilterRaw_ExcludesObserver(t *testing.T) {
-	history := []Message{
+	history := []*Message{
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleObserver, Content: "summary"},
 		{Role: RoleAssistant, Content: "hello"},
@@ -214,7 +217,7 @@ func TestFilterRaw_EmptyHistory(t *testing.T) {
 }
 
 func TestFilterRaw_PreservesOrder(t *testing.T) {
-	history := []Message{
+	history := []*Message{
 		{ID: "1", Role: RoleUser, Content: "a"},
 		{ID: "2", Role: RoleAssistant, Content: "b"},
 		{ID: "3", Role: RoleUser, Content: "c"},

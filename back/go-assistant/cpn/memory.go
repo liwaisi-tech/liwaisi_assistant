@@ -34,7 +34,7 @@ type ContextWindow struct {
 //
 // Messages are ordered: T2 observers first, then T3 raw messages.
 // Does not modify the history slice.
-func BuildContext(systemPrompt string, history []Message, contextWindowSize int) ContextWindow {
+func BuildContext(systemPrompt string, history []*Message, contextWindowSize int) ContextWindow {
 	// T2: collect all observer messages.
 	var observers []*LLMMessage
 	for _, m := range history {
@@ -76,8 +76,8 @@ func BuildContext(systemPrompt string, history []Message, contextWindowSize int)
 }
 
 // filterRaw returns only RoleUser and RoleAssistant messages from history.
-func filterRaw(history []Message) []Message {
-	result := make([]Message, 0, len(history))
+func filterRaw(history []*Message) []*Message {
+	result := make([]*Message, 0, len(history))
 	for _, m := range history {
 		if m.Role == RoleUser || m.Role == RoleAssistant {
 			result = append(result, m)
@@ -99,12 +99,12 @@ func estimateTokens(systemPrompt string, messages []*LLMMessage) int {
 // CompressSubNetSummary generates a RoleObserver message summarizing
 // a completed sub-CPN's output. Called when a sub-CPN reaches StateCompleted.
 // The returned Message should be appended to the parent CPN's History.
-func CompressSubNetSummary(childID, childRole string, childDepth int, outputTokens []Token) (Message, error) {
+func CompressSubNetSummary(childID, childRole string, childDepth int, outputTokens []Token) (*Message, error) {
 	id, err := newUUID()
 	if err != nil {
-		return Message{}, fmt.Errorf("compress sub-net summary: %w", err)
+		return nil, fmt.Errorf("compress sub-net summary: %w", err)
 	}
-	return Message{
+	return &Message{
 		ID:        id,
 		Role:      RoleObserver,
 		Content:   formatSummary(childRole, childDepth, outputTokens),
