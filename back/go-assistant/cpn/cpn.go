@@ -1,6 +1,9 @@
 package cpn
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // CPN is the universal agent type.
 // At Depth=0: root coordinator. At Depth=1: domain coordinator. At Depth=2+: worker.
@@ -37,6 +40,18 @@ type CPN struct {
 	// Read by the parent CPN's observer transitions and GroupAgent.Deliver.
 	// Nil if this CPN is not a sub-CPN.
 	EventEmitter chan<- Event
+
+	// subNetBuses maps child CPN IDs to their event bus channels.
+	// Used by Observer transitions (Block 13) to drain child events.
+	subNetBuses map[string]<-chan Event
+	subNetMu    sync.Mutex
+
+	// childWg tracks active child goroutines for graceful shutdown.
+	childWg sync.WaitGroup
+
+	// activeChildren counts running child goroutines.
+	// Used by Run to avoid false deadlock when children are still producing tokens.
+	activeChildren atomic.Int32
 
 	mu sync.RWMutex
 }
@@ -80,6 +95,14 @@ func (c *CPN) getState() State {
 	return c.State
 }
 
+// getError returns the CPN error under read lock.
+// Pairs with setFailed which writes Error under write lock.
+func (c *CPN) getError() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Error
+}
+
 // TerminalPlaces returns places not referenced as inputs to any transition.
 // These are the "output" places of the CPN.
 func (c *CPN) TerminalPlaces() []*Place {
@@ -97,6 +120,34 @@ func (c *CPN) TerminalPlaces() []*Place {
 		}
 	}
 	return terminals
+}
+
+// emit sends an event to this CPN's EventEmitter channel.
+// Non-blocking: if the channel is full, the event is silently dropped.
+// Stamps CPNID, CPNDepth, CPNRole on the event before sending.
+// No-op if EventEmitter is nil.
+func (c *CPN) emit(e *Event) {
+	if c.EventEmitter == nil {
+		return
+	}
+	e.CPNID = c.ID
+	e.CPNDepth = c.Depth
+	e.CPNRole = c.Role
+	select {
+	case c.EventEmitter <- *e:
+	default:
+	}
+}
+
+// registerSubNetBus registers a child's event bus channel for observer draining.
+// Lazy-initializes the subNetBuses map. Thread-safe.
+func (c *CPN) registerSubNetBus(childID string, bus <-chan Event) {
+	c.subNetMu.Lock()
+	defer c.subNetMu.Unlock()
+	if c.subNetBuses == nil {
+		c.subNetBuses = make(map[string]<-chan Event)
+	}
+	c.subNetBuses[childID] = bus
 }
 
 // IsComplete returns true when ALL terminal places have at least one token.
