@@ -219,6 +219,9 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) erro
 	case NodeKindSubNet:
 		return fireSubNet(ctx, t, c, consumed)
 	case NodeKindHITL:
+		if t.HITLConfig != nil && t.HITLConfig.RevisionLoop {
+			return fireHITLWithRevision(ctx, t, c, consumed)
+		}
 		return fireHITL(ctx, t, c, consumed)
 	case NodeKindObserver:
 		return fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
