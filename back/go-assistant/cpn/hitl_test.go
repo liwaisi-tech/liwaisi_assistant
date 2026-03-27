@@ -67,10 +67,10 @@ type eventCollector struct {
 	events []Event
 }
 
-func (ec *eventCollector) sink(e Event) {
+func (ec *eventCollector) sink(e *Event) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
-	ec.events = append(ec.events, e)
+	ec.events = append(ec.events, *e)
 }
 
 func (ec *eventCollector) getEvents() []Event {
@@ -107,7 +107,7 @@ func TestFireHITL_BlocksUntilInput(t *testing.T) {
 
 	// Monitor state changes to detect StateWaiting.
 	ec := &eventCollector{}
-	c.EventSink = func(e Event) {
+	c.EventSink = func(e *Event) {
 		ec.sink(e)
 		if e.Type == EventHITLRequested {
 			close(waiting)

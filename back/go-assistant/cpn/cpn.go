@@ -40,7 +40,7 @@ type CPN struct {
 	// EventSink receives events emitted by this CPN.
 	// Called synchronously by emit(). Nil means events are only sent to EventEmitter.
 	// Decouples from concrete event bus (CON-004).
-	EventSink func(Event)
+	EventSink func(*Event)
 
 	// GroupNotifier is called on state changes that affect group membership.
 	// Nil means no group coordination (standalone CPN or testing).
@@ -147,7 +147,7 @@ func (c *CPN) emit(e *Event) {
 	}
 
 	if c.EventSink != nil {
-		c.EventSink(*e)
+		c.EventSink(e)
 	}
 
 	if c.EventEmitter != nil {
