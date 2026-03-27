@@ -3,6 +3,7 @@ package cpn
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 // testPlaceWithTokens creates a Place and deposits n tokens into it.
@@ -281,6 +282,59 @@ func TestTransition_CanFire_ConcurrentWithDeposit(t *testing.T) {
 	// After all deposits, place should have 1 (seed) + n tokens
 	if p.Len() != n+1 {
 		t.Fatalf("Len = %d, want %d", p.Len(), n+1)
+	}
+}
+
+func TestTransition_CanFire_CircuitBreakerOpen(t *testing.T) {
+	cfg := &CircuitBreakerConfig{FailureThreshold: 1, OpenDuration: 5 * time.Second}
+	cb := NewCircuitBreakerState(cfg)
+	now := time.Now()
+	cb.nowFunc = func() time.Time { return now }
+	cb.RecordFailure() // trips
+
+	tr := NewTransition("T1", NodeKindTool, []string{"P1"}, []string{"P2"})
+	tr.SetCircuitBreaker(cb)
+
+	places := map[string]*Place{
+		"P1": testPlaceWithTokens("P1", ColorString, SpaceSurface, 1),
+	}
+
+	if tr.CanFire(places) {
+		t.Fatal("CanFire() = true, want false when circuit breaker is open")
+	}
+	if tr.CircuitBreaker() != cb {
+		t.Fatal("CircuitBreaker() should return the set state")
+	}
+}
+
+func TestTransition_CanFire_CircuitBreakerClosed(t *testing.T) {
+	cfg := &CircuitBreakerConfig{FailureThreshold: 5, OpenDuration: 5 * time.Second}
+	cb := NewCircuitBreakerState(cfg)
+
+	tr := NewTransition("T1", NodeKindTool, []string{"P1"}, []string{"P2"})
+	tr.SetCircuitBreaker(cb)
+
+	places := map[string]*Place{
+		"P1": testPlaceWithTokens("P1", ColorString, SpaceSurface, 1),
+	}
+
+	if !tr.CanFire(places) {
+		t.Fatal("CanFire() = false, want true when circuit breaker is closed")
+	}
+}
+
+func TestTransition_CanFire_NilCircuitBreaker(t *testing.T) {
+	tr := NewTransition("T1", NodeKindTool, []string{"P1"}, []string{"P2"})
+
+	places := map[string]*Place{
+		"P1": testPlaceWithTokens("P1", ColorString, SpaceSurface, 1),
+	}
+
+	if !tr.CanFire(places) {
+		t.Fatal("CanFire() = false, want true when no circuit breaker set")
+	}
+	if tr.CircuitBreaker() != nil {
+		t.Fatal("CircuitBreaker() should be nil by default")
 	}
 }
 
