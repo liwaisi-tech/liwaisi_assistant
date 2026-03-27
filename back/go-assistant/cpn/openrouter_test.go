@@ -3,6 +3,7 @@ package cpn
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,7 +175,7 @@ func TestOpenRouterClient_Complete_ServerErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.want.Error(), func(t *testing.T) {
+		t.Run(fmt.Sprintf("status_%d", tt.status), func(t *testing.T) {
 			_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.status)
 			})
@@ -652,5 +653,51 @@ func TestOpenRouterClient_Complete_NoChoices(t *testing.T) {
 	}
 	if resp.Content != "" {
 		t.Errorf("Content = %q, want empty", resp.Content)
+	}
+}
+
+// ── Complete: Does Not Mutate Request ────────────────────────────────────────
+
+func TestOpenRouterClient_Complete_DoesNotMutateRequest(t *testing.T) {
+	_, client := mockOpenRouterServer(t, successHandler)
+
+	req := &LLMRequest{
+		Model:     "classifier",
+		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+		SessionID: "sess-mutate",
+	}
+
+	_, err := client.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	// Model must remain "classifier", not resolved to "google/gemini-2.0-flash-001".
+	if req.Model != "classifier" {
+		t.Errorf("req.Model was mutated to %q, want %q", req.Model, "classifier")
+	}
+}
+
+// ── Complete: HTTP Method is POST ────────────────────────────────────────────
+
+func TestOpenRouterClient_Complete_HTTPMethodPOST(t *testing.T) {
+	var gotMethod string
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		successHandler(w, r)
+	})
+
+	_, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "test-model",
+		Messages:  []LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+		SessionID: "sess-method",
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("HTTP method = %q, want %q", gotMethod, http.MethodPost)
 	}
 }

@@ -161,9 +161,12 @@ func (c *OpenRouterClient) String() string {
 // Complete sends a request to the LLM and returns the response.
 func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
 	resolvedModel := c.resolveModel(req.Model)
-	req.Model = resolvedModel
 
-	body, err := buildRequestBody(req)
+	// Build a shallow copy with the resolved model to avoid mutating the caller's request.
+	resolved := *req
+	resolved.Model = resolvedModel
+
+	body, err := buildRequestBody(&resolved)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("build request body: %w", err)
 	}
@@ -288,6 +291,7 @@ func buildRequestBody(req *LLMRequest) ([]byte, error) {
 		body.Temperature = &t
 	}
 
+	body.Messages = make([]chatMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		body.Messages = append(body.Messages, chatMessage{
 			Role:    m.Role,
@@ -450,9 +454,15 @@ func (l *TokenLedger) Record(sessionID string, in, out int, costUSD float64) {
 	rec.LastUpdated = time.Now()
 }
 
-// Get returns the session record, or nil for unknown sessions.
+// Get returns a snapshot of the session record, or nil for unknown sessions.
+// The returned value is a copy — safe to read without holding any lock.
 func (l *TokenLedger) Get(sessionID string) *SessionTokenRecord {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.records[sessionID]
+	rec, ok := l.records[sessionID]
+	if !ok {
+		return nil
+	}
+	cp := *rec
+	return &cp
 }
