@@ -86,18 +86,19 @@ func (g *GroupAgent) Deregister(id string) {
 // NonActive → Active when State is Running or Idle.
 // No-op if the ID is not found or the state doesn't match a transition.
 // Thread-safe (write lock).
+//
+// Precondition: the caller must ensure c.State is not concurrently mutated during this call.
 func (g *GroupAgent) SwitchCMP(id string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	// Check active → nonActive.
-	for i, c := range g.active {
+	for _, c := range g.active {
 		if c.ID == id {
 			if !isActiveState(c.State) {
 				g.active = filterCPNs(g.active, func(x *CPN) bool {
 					return x.ID != id
 				})
-				_ = i // used only for the match
 				g.nonActive = append(g.nonActive, c)
 			}
 			return
