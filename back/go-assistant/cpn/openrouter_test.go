@@ -467,7 +467,7 @@ func TestOpenRouterClient_Complete_ToolsInBody(t *testing.T) {
 		Model:     "test-model",
 		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
-		Tools: []LLMTool{{
+		Tools: []*LLMTool{{
 			Name:        "get_weather",
 			Description: "Get weather for a city",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),

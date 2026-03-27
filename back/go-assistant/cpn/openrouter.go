@@ -45,7 +45,7 @@ type LLMRequest struct {
 	Temperature float64
 
 	// Tools lists the tools available to the LLM for this request.
-	Tools []LLMTool
+	Tools []*LLMTool
 
 	// ResponseFmt is "json_object" when structured JSON output is required.
 	ResponseFmt string
@@ -302,7 +302,7 @@ func buildRequestBody(req *LLMRequest) ([]byte, error) {
 	for _, tool := range req.Tools {
 		body.Tools = append(body.Tools, chatTool{
 			Type:     "function",
-			Function: chatFunction(tool),
+			Function: chatFunction(*tool),
 		})
 	}
 
