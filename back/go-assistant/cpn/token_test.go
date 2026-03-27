@@ -13,6 +13,7 @@ func TestToken_IsHumanOrigin(t *testing.T) {
 		{"both human and hitl", &Token{Color: ColorHuman, OriginKind: NodeKindHITL}, true},
 		{"neither", &Token{Color: ColorString, OriginKind: NodeKindLLM}, false},
 		{"zero value", &Token{}, false},
+		{"nil token", nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

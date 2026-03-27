@@ -38,6 +38,9 @@ type Token struct {
 // IsHumanOrigin returns true if this token was produced by a HITL transition
 // or carries human-provided content. Used by Centaurian guard functions.
 func (t *Token) IsHumanOrigin() bool {
+	if t == nil {
+		return false
+	}
 	return t.Color == ColorHuman || t.OriginKind == NodeKindHITL
 }
 

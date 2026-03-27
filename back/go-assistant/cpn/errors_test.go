@@ -21,6 +21,9 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		ErrForbidden, ErrNotFound, ErrRequestTimeout, ErrPayloadTooLarge,
 		ErrUnprocessableEntity, ErrEdgeTimeout, ErrProviderOverloaded,
 	}
+	if len(sentinels) != 28 {
+		t.Fatalf("expected 28 sentinel errors, got %d — update this test when adding errors", len(sentinels))
+	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
 			if i != j && errors.Is(a, b) {
