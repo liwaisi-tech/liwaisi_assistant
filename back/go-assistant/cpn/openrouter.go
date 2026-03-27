@@ -250,7 +250,7 @@ type chatCompletionRequest struct {
 	Messages       []*chatMessage      `json:"messages"`
 	MaxTokens      int                 `json:"max_tokens"`
 	Temperature    *float64            `json:"temperature,omitempty"`
-	Tools          []chatTool          `json:"tools,omitempty"`
+	Tools          []*chatTool         `json:"tools,omitempty"`
 	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	SessionID      string              `json:"session_id,omitempty"`
 }
@@ -300,7 +300,7 @@ func buildRequestBody(req *LLMRequest) ([]byte, error) {
 	}
 
 	for _, tool := range req.Tools {
-		body.Tools = append(body.Tools, chatTool{
+		body.Tools = append(body.Tools, &chatTool{
 			Type:     "function",
 			Function: chatFunction(*tool),
 		})
