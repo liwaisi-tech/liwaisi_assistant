@@ -32,10 +32,7 @@ type fireResult struct {
 func (c *CPN) Run(ctx context.Context) error {
 	// REQ-003: Validate before entering the loop.
 	if err := Validate(c.Places, c.Transitions); err != nil {
-		c.setState(StateFailed)
-		c.mu.Lock()
-		c.Error = err
-		c.mu.Unlock()
+		c.setFailed(err)
 		return err
 	}
 
@@ -46,10 +43,7 @@ func (c *CPN) Run(ctx context.Context) error {
 		// REQ-015: Check context cancellation.
 		select {
 		case <-ctx.Done():
-			c.setState(StateFailed)
-			c.mu.Lock()
-			c.Error = ErrTimeout
-			c.mu.Unlock()
+			c.setFailed(ErrTimeout)
 			return ErrTimeout
 		default:
 		}
@@ -59,15 +53,7 @@ func (c *CPN) Run(ctx context.Context) error {
 
 		// REQ-014: No firable transitions.
 		if len(firable) == 0 {
-			if c.IsComplete() {
-				c.setState(StateCompleted)
-				return nil
-			}
-			c.setState(StateFailed)
-			c.mu.Lock()
-			c.Error = ErrDeadlock
-			c.mu.Unlock()
-			return ErrDeadlock
+			return c.checkCompletionOrDeadlock()
 		}
 
 		// REQ-020: Sort firable by ID for deterministic behavior.
@@ -92,15 +78,7 @@ func (c *CPN) Run(ctx context.Context) error {
 
 		if len(firings) == 0 {
 			// All became unfirable after re-check.
-			if c.IsComplete() {
-				c.setState(StateCompleted)
-				return nil
-			}
-			c.setState(StateFailed)
-			c.mu.Lock()
-			c.Error = ErrDeadlock
-			c.mu.Unlock()
-			return ErrDeadlock
+			return c.checkCompletionOrDeadlock()
 		}
 
 		// PAT-003: WaitGroup + error channel.
@@ -144,10 +122,7 @@ func (c *CPN) Run(ctx context.Context) error {
 						Timestamp:   time.Now(),
 					}
 					if depErr := ep.Deposit(errToken); depErr != nil {
-						c.setState(StateFailed)
-						c.mu.Lock()
-						c.Error = fmt.Errorf("error place deposit failed: %w", depErr)
-						c.mu.Unlock()
+						c.setFailed(fmt.Errorf("error place deposit failed: %w", depErr))
 						return c.Error
 					}
 					continue
@@ -155,13 +130,20 @@ func (c *CPN) Run(ctx context.Context) error {
 			}
 
 			// REQ-011: No ErrorPlace — CPN fails.
-			c.setState(StateFailed)
-			c.mu.Lock()
-			c.Error = fr.err
-			c.mu.Unlock()
+			c.setFailed(fr.err)
 			return fr.err
 		}
 	}
+}
+
+// checkCompletionOrDeadlock returns nil if the CPN is complete, or ErrDeadlock otherwise.
+func (c *CPN) checkCompletionOrDeadlock() error {
+	if c.IsComplete() {
+		c.setState(StateCompleted)
+		return nil
+	}
+	c.setFailed(ErrDeadlock)
+	return ErrDeadlock
 }
 
 // collectFirable returns transitions that can fire, excluding observers.
@@ -183,11 +165,13 @@ func (c *CPN) collectFirable() []*Transition {
 func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 	tokens := make([]Token, 0, len(placeIDs))
 	for _, pid := range placeIDs {
-		p := places[pid]
+		p, ok := places[pid]
+		if !ok {
+			continue // Defensive: Validate + CanFire should prevent this.
+		}
 		t, err := p.Consume()
 		if err != nil {
-			// Should not happen — CanFire was checked. Defensive.
-			continue
+			continue // Defensive: CanFire was checked before consuming.
 		}
 		tokens = append(tokens, *t)
 	}

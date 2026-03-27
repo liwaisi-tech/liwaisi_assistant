@@ -45,6 +45,15 @@ func (c *CPN) setState(s State) {
 	c.State = s
 }
 
+// setFailed atomically sets State=StateFailed and Error under a single write lock.
+// Prevents concurrent readers from observing StateFailed with a nil Error.
+func (c *CPN) setFailed(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.State = StateFailed
+	c.Error = err
+}
+
 // getState returns the CPN state under read lock.
 func (c *CPN) getState() State {
 	c.mu.RLock()
