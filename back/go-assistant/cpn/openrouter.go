@@ -247,7 +247,7 @@ func (c *OpenRouterClient) resolveModel(model string) string {
 // chatCompletionRequest is the OpenAI-compatible request body.
 type chatCompletionRequest struct {
 	Model          string              `json:"model"`
-	Messages       []chatMessage       `json:"messages"`
+	Messages       []*chatMessage      `json:"messages"`
 	MaxTokens      int                 `json:"max_tokens"`
 	Temperature    *float64            `json:"temperature,omitempty"`
 	Tools          []chatTool          `json:"tools,omitempty"`
@@ -291,9 +291,9 @@ func buildRequestBody(req *LLMRequest) ([]byte, error) {
 		body.Temperature = &t
 	}
 
-	body.Messages = make([]chatMessage, 0, len(req.Messages))
+	body.Messages = make([]*chatMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		body.Messages = append(body.Messages, chatMessage{
+		body.Messages = append(body.Messages, &chatMessage{
 			Role:    m.Role,
 			Content: m.Content,
 		})
