@@ -28,7 +28,7 @@ type fireResult struct {
 //     f. Process errors: ErrorPlace routing or CPN failure
 //     g. Repeat
 //
-// NodeKindTool (Block 6) and NodeKindLLM (Block 9) are dispatched. Other kinds return ErrInvalidNodeKind.
+// NodeKindTool (Block 6), NodeKindLLM (Block 9), and NodeKindValidate (Block 10) are dispatched. Other kinds return ErrInvalidNodeKind.
 func (c *CPN) Run(ctx context.Context) error {
 	// REQ-003: Validate before entering the loop.
 	if err := Validate(c.Places, c.Transitions); err != nil {
@@ -179,7 +179,7 @@ func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 }
 
 // dispatch routes a transition to the correct fire function based on Kind.
-// NodeKindTool (Block 6) and NodeKindLLM (Block 9) are implemented.
+// NodeKindTool (Block 6), NodeKindLLM (Block 9), and NodeKindValidate (Block 10) are implemented.
 func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
 	switch t.Kind {
 	case NodeKindTool:
@@ -187,7 +187,7 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) erro
 	case NodeKindLLM:
 		return fireLLM(ctx, t, c, consumed)
 	case NodeKindValidate:
-		return fmt.Errorf("%w: Validate dispatch not implemented", ErrInvalidNodeKind)
+		return fireValidate(ctx, t, c, consumed)
 	case NodeKindSubNet:
 		return fmt.Errorf("%w: SubNet dispatch not implemented", ErrInvalidNodeKind)
 	case NodeKindObserver:

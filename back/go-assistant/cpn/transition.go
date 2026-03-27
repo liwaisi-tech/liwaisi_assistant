@@ -65,6 +65,10 @@ type Transition struct {
 	// LLMTools lists Transition IDs (in the same CPN) the LLM may invoke as tools.
 	// Only meaningful when Kind == NodeKindLLM.
 	LLMTools []string
+
+	// ValidateConfig holds per-transition validation configuration.
+	// Only meaningful when Kind == NodeKindValidate. Nil for other kinds.
+	ValidateConfig *ValidateConfig
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.
