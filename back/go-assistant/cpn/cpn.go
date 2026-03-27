@@ -19,6 +19,16 @@ type CPN struct {
 
 	SessionID string
 
+	// LLMClient is the LLM API client shared by all LLM transitions.
+	LLMClient LLMClient
+
+	// History holds the conversation history for context assembly.
+	History []*Message
+
+	// ContextWindowSize is the max conversational turns for the sliding window.
+	// Default: DefaultContextWindowSize (10).
+	ContextWindowSize int
+
 	mu sync.RWMutex
 }
 
