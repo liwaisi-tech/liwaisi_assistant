@@ -241,7 +241,7 @@ func TestEstimateTokens_EmptyInput(t *testing.T) {
 
 func TestEstimateTokens_Approximation(t *testing.T) {
 	// 40 chars → ~10 tokens + 4 overhead = 14 per message.
-	msgs := []LLMMessage{
+	msgs := []*LLMMessage{
 		{Role: "user", Content: strings.Repeat("a", 40)},
 	}
 	est := estimateTokens("", msgs)
@@ -261,7 +261,7 @@ func TestEstimateTokens_IncludesSystemPrompt(t *testing.T) {
 
 func TestEstimateTokens_CombinedPromptAndMessages(t *testing.T) {
 	prompt := strings.Repeat("x", 40) // 40/4 = 10
-	msgs := []LLMMessage{
+	msgs := []*LLMMessage{
 		{Role: "user", Content: strings.Repeat("a", 20)}, // 20/4 + 4 = 9
 	}
 	est := estimateTokens(prompt, msgs)

@@ -19,7 +19,7 @@ type ContextWindow struct {
 	SystemPrompt string
 
 	// Messages is the assembled message list: T2 observers + T3 raw window.
-	Messages []LLMMessage
+	Messages []*LLMMessage
 
 	// InputTokenEstimate is the rough token count for budget checking.
 	InputTokenEstimate int
@@ -36,10 +36,10 @@ type ContextWindow struct {
 // Does not modify the history slice.
 func BuildContext(systemPrompt string, history []Message, contextWindowSize int) ContextWindow {
 	// T2: collect all observer messages.
-	var observers []LLMMessage
+	var observers []*LLMMessage
 	for _, m := range history {
 		if m.Role == RoleObserver {
-			observers = append(observers, LLMMessage{
+			observers = append(observers, &LLMMessage{
 				Role:    "assistant",
 				Content: fmt.Sprintf("[Summary from %s]: %s", m.CPNRole, m.Content),
 			})
@@ -48,15 +48,15 @@ func BuildContext(systemPrompt string, history []Message, contextWindowSize int)
 
 	// T3: sliding window of raw messages.
 	raw := filterRaw(history)
-	var window []LLMMessage
+	var window []*LLMMessage
 	if contextWindowSize > 0 {
 		limit := contextWindowSize * 2
 		if len(raw) > limit {
 			raw = raw[len(raw)-limit:]
 		}
-		window = make([]LLMMessage, 0, len(raw))
+		window = make([]*LLMMessage, 0, len(raw))
 		for _, m := range raw {
-			window = append(window, LLMMessage{
+			window = append(window, &LLMMessage{
 				Role:    string(m.Role),
 				Content: m.Content,
 			})
@@ -64,7 +64,7 @@ func BuildContext(systemPrompt string, history []Message, contextWindowSize int)
 	}
 
 	// Assemble: T2 then T3.
-	messages := make([]LLMMessage, 0, len(observers)+len(window))
+	messages := make([]*LLMMessage, 0, len(observers)+len(window))
 	messages = append(messages, observers...)
 	messages = append(messages, window...)
 
@@ -88,7 +88,7 @@ func filterRaw(history []Message) []Message {
 
 // estimateTokens returns a rough token count for budget checking.
 // Uses len(content)/4 as the char-to-token ratio, plus 4 tokens overhead per message.
-func estimateTokens(systemPrompt string, messages []LLMMessage) int {
+func estimateTokens(systemPrompt string, messages []*LLMMessage) int {
 	tokens := len(systemPrompt) / 4
 	for _, m := range messages {
 		tokens += len(m.Content)/4 + 4
