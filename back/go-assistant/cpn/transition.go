@@ -32,6 +32,24 @@ type Transition struct {
 	// input places have tokens. Guards should be pure functions with
 	// no side effects.
 	Guard func(tokens []*Token) bool
+
+	// Retry configures retry behavior when this transition's execution fails.
+	// If nil, no retry — a single failure is final.
+	Retry *RetryPolicy
+
+	// cbState holds the runtime circuit breaker state.
+	// Initialized by the CPN when Retry.CircuitBreaker is configured.
+	cbState *CircuitBreakerState
+}
+
+// SetCircuitBreaker sets the runtime circuit breaker state.
+func (t *Transition) SetCircuitBreaker(cb *CircuitBreakerState) {
+	t.cbState = cb
+}
+
+// CircuitBreaker returns the circuit breaker state, or nil.
+func (t *Transition) CircuitBreaker() *CircuitBreakerState {
+	return t.cbState
 }
 
 // NewTransition creates a Transition with the given identity and arc configuration.
@@ -57,6 +75,11 @@ func NewTransition(id string, kind NodeKind, inputPlaces, outputPlaces []string)
 // CanFire does not modify any place state — it uses Peek (read-only).
 // Safe for concurrent calls (Place.Peek is mutex-protected).
 func (t *Transition) CanFire(places map[string]*Place) bool {
+	// Circuit breaker check (Block 4).
+	if t.cbState != nil && !t.cbState.Allow() {
+		return false
+	}
+
 	if len(t.InputPlaces) == 0 {
 		return false
 	}
