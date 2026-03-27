@@ -19,7 +19,7 @@ type Place struct {
 
 	// Tokens holds the current token buffer. Exported per spec.
 	// Direct access is NOT thread-safe — use Deposit/Consume/Peek/Len.
-	Tokens []Token
+	Tokens []*Token
 
 	mu sync.Mutex
 }
@@ -59,21 +59,21 @@ func (p *Place) Deposit(t *Token) error {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.Tokens = append(p.Tokens, *t)
+	p.Tokens = append(p.Tokens, t)
 	return nil
 }
 
 // Consume removes and returns the oldest token (FIFO).
 // Returns ErrEmptyPlace if no tokens are available.
 // Thread-safe.
-func (p *Place) Consume() (Token, error) {
+func (p *Place) Consume() (*Token, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.Tokens) == 0 {
-		return Token{}, ErrEmptyPlace
+		return nil, ErrEmptyPlace
 	}
 	t := p.Tokens[0]
-	p.Tokens[0] = Token{} // allow GC of consumed token
+	p.Tokens[0] = nil // allow GC of consumed token
 	p.Tokens = p.Tokens[1:]
 	return t, nil
 }
@@ -82,13 +82,13 @@ func (p *Place) Consume() (Token, error) {
 // Returns (nil, false) if the place is empty.
 // The returned slice is safe to read without synchronization.
 // Thread-safe.
-func (p *Place) Peek() ([]Token, bool) {
+func (p *Place) Peek() ([]*Token, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.Tokens) == 0 {
 		return nil, false
 	}
-	cp := make([]Token, len(p.Tokens))
+	cp := make([]*Token, len(p.Tokens))
 	copy(cp, p.Tokens)
 	return cp, true
 }

@@ -138,9 +138,12 @@ func TestPlace_Consume_FIFO(t *testing.T) {
 
 func TestPlace_Consume_EmptyPlace(t *testing.T) {
 	p := NewPlace("empty", ColorString, SpaceSurface)
-	_, err := p.Consume()
+	got, err := p.Consume()
 	if !errors.Is(err, ErrEmptyPlace) {
 		t.Fatalf("expected ErrEmptyPlace, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil token on empty consume, got %v", got)
 	}
 }
 
@@ -176,16 +179,15 @@ func TestPlace_Peek_ReturnsCopy(t *testing.T) {
 		t.Fatalf("Peek len = %d, want 1", len(got))
 	}
 
-	// Mutate returned slice
-	got[0] = Token{Color: ColorJSON, Space: SpaceObservation, Payload: "mutated"}
+	// Replacing a pointer in the returned slice must not affect the place
+	got[0] = &Token{Color: ColorJSON, Space: SpaceObservation, Payload: "replaced"}
 
-	// Re-peek should be unchanged
 	got2, ok := p.Peek()
 	if !ok {
 		t.Fatal("second Peek returned false")
 	}
 	if got2[0].Payload != "original" {
-		t.Fatalf("Peek returned mutated data: %v", got2[0].Payload)
+		t.Fatalf("Peek returned replaced pointer: %v", got2[0].Payload)
 	}
 }
 
@@ -264,7 +266,7 @@ func TestPlace_Concurrent_DepositConsume(t *testing.T) {
 	}
 
 	// Consume n tokens concurrently
-	consumed := make(chan Token, n)
+	consumed := make(chan *Token, n)
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func() {
@@ -325,7 +327,7 @@ func TestPlace_Concurrent_MultipleConsumers(t *testing.T) {
 	}
 
 	// Multiple consumers compete
-	results := make(chan Token, total)
+	results := make(chan *Token, total)
 	errs := make(chan error, total)
 	var wg sync.WaitGroup
 
