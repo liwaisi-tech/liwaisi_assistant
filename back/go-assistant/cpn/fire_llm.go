@@ -103,6 +103,8 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	}
 
 	// Step 5: Deposit output token.
+	// Output color is determined by REQ-012. Output places MUST have
+	// matching Color (ColorArtifact or ColorJSON for RequireJSON).
 	outputColor := inferOutputColor(t.LLMConfig.RequireJSON)
 	result := Token{
 		Color:       outputColor,
@@ -136,6 +138,17 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 	allowed := make(map[string]bool, len(t.LLMTools))
 	for _, id := range t.LLMTools {
 		allowed[id] = true
+	}
+
+	// Pre-build tool schemas (static for the loop).
+	loopTools := make([]*LLMTool, 0, len(t.LLMTools))
+	for _, toolID := range t.LLMTools {
+		toolTrans, ok := c.Transitions[toolID]
+		if !ok {
+			continue
+		}
+		schema := buildToolSchema(toolTrans)
+		loopTools = append(loopTools, &schema)
 	}
 
 	for i := range MaxToolCallIterations {
@@ -204,17 +217,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			SessionID:   c.SessionID,
 		}
 
-		// Include tools in re-call so LLM can call more tools.
-		var tools []*LLMTool
-		for _, toolID := range t.LLMTools {
-			toolTrans, ok := c.Transitions[toolID]
-			if !ok {
-				continue
-			}
-			schema := buildToolSchema(toolTrans)
-			tools = append(tools, &schema)
-		}
-		req.Tools = tools
+		req.Tools = loopTools
 
 		if t.LLMConfig.RequireJSON {
 			req.ResponseFmt = "json_object"
@@ -253,6 +256,8 @@ func formatTokenPayload(consumed []Token) string {
 }
 
 // buildToolSchema converts a NodeKindTool transition to an LLMTool.
+// NOTE: Parameters is intentionally omitted — Transition does not carry
+// tool schema yet. A ToolSchema field will be added in a future block.
 func buildToolSchema(tool *Transition) LLMTool {
 	return LLMTool{
 		Name:        tool.ToolName,

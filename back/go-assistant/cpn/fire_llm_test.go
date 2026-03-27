@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -185,11 +186,12 @@ func TestFireLLM_BudgetZero_NoBudgetCheck(t *testing.T) {
 }
 
 func TestFireLLM_ToolCallDispatched(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
+	var secondCallMessages []*LLMMessage
 	mock := &mockLLMClient{
 		completeFunc: func(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
-			callCount++
-			if callCount == 1 {
+			count := callCount.Add(1)
+			if count == 1 {
 				// First call: request a tool call.
 				return LLMResponse{
 					ToolCalls: []*LLMToolCall{
@@ -197,7 +199,8 @@ func TestFireLLM_ToolCallDispatched(t *testing.T) {
 					},
 				}, nil
 			}
-			// Second call: return final content.
+			// Second call: capture messages and return final content.
+			secondCallMessages = req.Messages
 			return LLMResponse{Content: "final answer"}, nil
 		},
 	}
@@ -242,6 +245,20 @@ func TestFireLLM_ToolCallDispatched(t *testing.T) {
 	tokens, _ := output.Peek()
 	if tokens[0].Payload != "final answer" {
 		t.Errorf("expected 'final answer', got %v", tokens[0].Payload)
+	}
+
+	// Verify tool result was sent back to LLM in the second call.
+	foundToolResult := false
+	for _, msg := range secondCallMessages {
+		if msg.Role == "tool" && msg.ToolResult != nil {
+			if strings.Contains(msg.ToolResult.Content, "search results") {
+				foundToolResult = true
+				break
+			}
+		}
+	}
+	if !foundToolResult {
+		t.Error("tool result should have been sent back to LLM in second call")
 	}
 }
 
@@ -315,12 +332,12 @@ func TestFireLLM_DisallowedTool(t *testing.T) {
 }
 
 func TestFireLLM_ToolExecutorError_PassedToLLM(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	var secondCallMessages []*LLMMessage
 	mock := &mockLLMClient{
 		completeFunc: func(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
-			callCount++
-			if callCount == 1 {
+			count := callCount.Add(1)
+			if count == 1 {
 				return LLMResponse{
 					ToolCalls: []*LLMToolCall{
 						{ID: "tc-1", ToolName: "failing_tool", Arguments: json.RawMessage(`{}`)},
