@@ -1,5 +1,7 @@
 package cpn
 
+import "context"
+
 // Transition represents a CPN transition — a unit of computation that fires
 // when its input places contain tokens and its guard condition is satisfied.
 //
@@ -40,6 +42,16 @@ type Transition struct {
 	// cbState holds the runtime circuit breaker state.
 	// Initialized by the CPN when Retry.CircuitBreaker is configured.
 	cbState *CircuitBreakerState
+
+	// ToolName is the name of the tool this transition invokes.
+	// Only meaningful when Kind == NodeKindTool.
+	ToolName string
+
+	// Executor is called when this tool transition fires.
+	// Receives context and the first consumed input token.
+	// Returns a result token deposited into OutputPlaces.
+	// Only used when Kind == NodeKindTool.
+	Executor func(ctx context.Context, in Token) (Token, error)
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.
