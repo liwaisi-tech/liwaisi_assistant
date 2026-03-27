@@ -29,6 +29,15 @@ type CPN struct {
 	// Default: DefaultContextWindowSize (10).
 	ContextWindowSize int
 
+	// Group manages this CPN's sub-CPNs (ephemeral team).
+	// Nil for leaf CPNs that do not spawn sub-nets.
+	Group *GroupAgent
+
+	// EventEmitter is the channel where this CPN's events are sent.
+	// Read by the parent CPN's observer transitions and GroupAgent.Deliver.
+	// Nil if this CPN is not a sub-CPN.
+	EventEmitter chan<- Event
+
 	mu sync.RWMutex
 }
 
