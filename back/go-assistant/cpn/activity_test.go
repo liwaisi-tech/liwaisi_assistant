@@ -3,6 +3,7 @@ package cpn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -235,6 +236,24 @@ func TestActivityClient_Fetch_HTTPError(t *testing.T) {
 	_, err := client.Fetch(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for 401 response")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestActivityClient_Fetch_HTTPError_500(t *testing.T) {
+	_, client := mockActivityServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal"}`))
+	})
+
+	_, err := client.Fetch(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+	if !errors.Is(err, ErrProviderUnavailable) {
+		t.Errorf("expected ErrProviderUnavailable, got %v", err)
 	}
 }
 

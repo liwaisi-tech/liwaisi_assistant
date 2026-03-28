@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -90,18 +91,23 @@ type activityResponse struct {
 // Fetch retrieves activity for the last 30 completed UTC days.
 // date: optional YYYY-MM-DD filter; empty string = all 30 days.
 func (c *ActivityClient) Fetch(ctx context.Context, date string) ([]ActivityRecord, error) {
-	url := c.BaseURL + "/activity"
+	u, err := url.Parse(c.BaseURL + "/activity")
+	if err != nil {
+		return nil, fmt.Errorf("activity: parse base URL: %w", err)
+	}
 	if date != "" {
-		url += "?date=" + date
+		q := u.Query()
+		q.Set("date", date)
+		u.RawQuery = q.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("activity: build request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -109,13 +115,15 @@ func (c *ActivityClient) Fetch(ctx context.Context, date string) ([]ActivityReco
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Cap body read at 1 MB to prevent OOM from misbehaving servers.
+	const maxBodySize = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, fmt.Errorf("activity: read body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("activity: unexpected status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("activity: status %d: %w", resp.StatusCode, mapHTTPStatusToError(resp.StatusCode))
 	}
 
 	var envelope activityResponse
