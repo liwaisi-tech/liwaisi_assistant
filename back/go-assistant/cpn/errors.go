@@ -122,3 +122,12 @@ var ErrToolCallLoopExceeded = errors.New("tool call loop exceeded max iterations
 // ErrDisallowedTool is returned when the LLM requests a tool not in
 // the transition's LLMTools allowlist.
 var ErrDisallowedTool = errors.New("LLM requested disallowed tool")
+
+// ── v1.4 Block 17 — Session Errors ─────────────────────────────────────────
+
+// ErrSessionClosed is returned when operations are attempted on a closed session.
+var ErrSessionClosed = errors.New("session is closed")
+
+// ErrHITLAlreadyRegistered is returned when a HITL channel is registered
+// for a transition ID that already has one.
+var ErrHITLAlreadyRegistered = errors.New("HITL channel already registered for transition")
