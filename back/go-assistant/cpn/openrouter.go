@@ -969,8 +969,9 @@ func mapHTTPStatusToError(status int) error {
 
 // TokenLedger tracks per-session token usage and cost. Thread-safe.
 type TokenLedger struct {
-	records map[string]*SessionTokenRecord
-	mu      sync.RWMutex
+	records     map[string]*SessionTokenRecord
+	dailyTotals map[string]float64 // date (YYYY-MM-DD) → authoritative USD from /activity
+	mu          sync.RWMutex
 }
 
 // SessionTokenRecord accumulates usage for one session.
@@ -988,7 +989,8 @@ type SessionTokenRecord struct {
 // NewTokenLedger creates an initialized TokenLedger.
 func NewTokenLedger() *TokenLedger {
 	return &TokenLedger{
-		records: make(map[string]*SessionTokenRecord),
+		records:     make(map[string]*SessionTokenRecord),
+		dailyTotals: make(map[string]float64),
 	}
 }
 
@@ -1041,6 +1043,21 @@ func (l *TokenLedger) RecordWithCache(sessionID string, in, out, cacheRead, cach
 	rec.TotalCostUSD += costUSD
 	rec.Calls++
 	rec.LastUpdated = time.Now()
+}
+
+// SetDailyTotal stores the authoritative daily cost from /activity. Thread-safe.
+func (l *TokenLedger) SetDailyTotal(date string, totalUSD float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.dailyTotals[date] = totalUSD
+}
+
+// GetDailyTotal returns the authoritative daily cost, or (0, false) if not synced.
+func (l *TokenLedger) GetDailyTotal(date string) (float64, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	total, ok := l.dailyTotals[date]
+	return total, ok
 }
 
 // ── OpenRouter Retry Policy ─────────────────────────────────────────────────
