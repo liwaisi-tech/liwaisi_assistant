@@ -720,7 +720,10 @@ func TestBuildMessagesBody_SystemExtracted(t *testing.T) {
 		Endpoint:  EndpointMessages,
 	}
 
-	body := buildMessagesBody(req)
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -766,7 +769,10 @@ func TestBuildMessagesBody_ThinkingBlockSignature(t *testing.T) {
 		Endpoint:  EndpointMessages,
 	}
 
-	body := buildMessagesBody(req)
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -806,7 +812,10 @@ func TestBuildMessagesBody_ExtendedThinking(t *testing.T) {
 		Reasoning: &ReasoningConfig{BudgetTokens: 10000},
 	}
 
-	body := buildMessagesBody(req)
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -837,7 +846,10 @@ func TestBuildMessagesBody_CacheControl(t *testing.T) {
 		Cache:     &CacheControlConfig{TTL: "5m"},
 	}
 
-	body := buildMessagesBody(req)
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -865,7 +877,10 @@ func TestBuildCompletionsBody_FallbackModels(t *testing.T) {
 		FallbackModels: []string{"anthropic/claude-haiku-4-5-20251001", "google/gemini-2.0-flash-001"},
 	}
 
-	body := buildCompletionsBody(req)
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -894,7 +909,10 @@ func TestBuildCompletionsBody_Reasoning(t *testing.T) {
 		Reasoning: &ReasoningConfig{Effort: "high", Summary: "auto"},
 	}
 
-	body := buildCompletionsBody(req)
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -926,7 +944,10 @@ func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
 		},
 	}
 
-	body := buildCompletionsBody(req)
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -946,6 +967,99 @@ func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
 }
 
 // ── Format Functions ────────────────────────────────────────────────────────
+
+func TestFormatChatMessages_ToolResult(t *testing.T) {
+	msgs := []*LLMMessage{
+		{Role: "user", Content: "What's the weather?"},
+		{
+			Role:    "assistant",
+			Content: "",
+			ToolCall: &LLMToolCall{
+				ID:        "call-1",
+				ToolName:  "get_weather",
+				Arguments: json.RawMessage(`{"city":"Lima"}`),
+			},
+		},
+		{
+			Role: "tool",
+			ToolResult: &LLMToolResult{
+				ToolCallID: "call-1",
+				Content:    "Sunny, 25°C",
+			},
+		},
+	}
+
+	formatted := formatChatMessages(msgs)
+	if len(formatted) != 3 {
+		t.Fatalf("len = %d, want 3", len(formatted))
+	}
+
+	// Assistant message should have tool_calls.
+	assistantMsg := formatted[1]
+	tcs, ok := assistantMsg["tool_calls"].([]map[string]any)
+	if !ok || len(tcs) == 0 {
+		t.Fatal("assistant message missing tool_calls")
+	}
+	if tcs[0]["id"] != "call-1" {
+		t.Errorf("tool_call id = %v, want call-1", tcs[0]["id"])
+	}
+
+	// Tool result message should have role "tool" and tool_call_id.
+	toolMsg := formatted[2]
+	if toolMsg["role"] != "tool" {
+		t.Errorf("tool msg role = %v, want tool", toolMsg["role"])
+	}
+	if toolMsg["tool_call_id"] != "call-1" {
+		t.Errorf("tool_call_id = %v, want call-1", toolMsg["tool_call_id"])
+	}
+	if toolMsg["content"] != "Sunny, 25°C" {
+		t.Errorf("content = %v, want 'Sunny, 25°C'", toolMsg["content"])
+	}
+}
+
+func TestBuildMessagesBody_WithTools(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "user", Content: "Use the tool"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+		Tools: []*LLMTool{{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+		}},
+		ToolChoice: "auto",
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Tools should use input_schema (Anthropic format).
+	tools, ok := parsed["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatal("tools missing from messages body")
+	}
+	tool, _ := tools[0].(map[string]any)
+	if _, ok := tool["input_schema"]; !ok {
+		t.Error("tool missing input_schema in messages body")
+	}
+	if _, ok := tool["parameters"]; ok {
+		t.Error("tool should not have parameters in messages body (Anthropic uses input_schema)")
+	}
+
+	// ToolChoice should be serialized.
+	if parsed["tool_choice"] != "auto" {
+		t.Errorf("tool_choice = %v, want auto", parsed["tool_choice"])
+	}
+}
 
 func TestFormatAnthropicTools_InputSchema(t *testing.T) {
 	tools := []*LLMTool{{
@@ -1334,6 +1448,54 @@ func TestTokenLedger_RecordWithCache(t *testing.T) {
 	}
 	if rec.Calls != 2 {
 		t.Errorf("Calls = %d, want 2", rec.Calls)
+	}
+}
+
+// ── Complete: RecordWithCache Integration ────────────────────────────────────
+
+func TestComplete_MessagesEndpoint_RecordsCacheTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "Cached!"},
+			},
+			"model":       "anthropic/claude-sonnet-4-6",
+			"stop_reason": "end_turn",
+			"usage": map[string]any{
+				"input_tokens":                10,
+				"output_tokens":               5,
+				"cache_read_input_tokens":     300,
+				"cache_creation_input_tokens": 150,
+				"total_cost":                  0.002,
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewOpenRouterClient("test-key", "test-model")
+	client.BaseURL = srv.URL
+
+	_, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-cache-ledger",
+		Endpoint:  EndpointMessages,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	rec := client.TokenLedger.Get("sess-cache-ledger")
+	if rec == nil {
+		t.Fatal("expected ledger record")
+	}
+	if rec.CacheReadTokens != 300 {
+		t.Errorf("CacheReadTokens = %d, want 300", rec.CacheReadTokens)
+	}
+	if rec.CacheCreationTokens != 150 {
+		t.Errorf("CacheCreationTokens = %d, want 150", rec.CacheCreationTokens)
 	}
 }
 

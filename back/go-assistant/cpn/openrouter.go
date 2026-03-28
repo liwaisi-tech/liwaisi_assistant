@@ -82,9 +82,6 @@ type LLMRequest struct {
 
 	// Cache configures prompt caching.
 	Cache *CacheControlConfig
-
-	// TraceID is a distributed trace identifier.
-	TraceID string
 }
 
 // LLMResponse is the output from LLMClient.Complete().
@@ -305,14 +302,18 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 
 	var body []byte
 	var endpoint string
+	var buildErr error
 
 	switch resolved.Endpoint {
 	case EndpointMessages:
-		body = buildMessagesBody(&resolved)
+		body, buildErr = buildMessagesBody(&resolved)
 		endpoint = c.BaseURL + "/messages"
 	default: // EndpointChat or empty
-		body = buildCompletionsBody(&resolved)
+		body, buildErr = buildCompletionsBody(&resolved)
 		endpoint = c.BaseURL + "/chat/completions"
+	}
+	if buildErr != nil {
+		return LLMResponse{}, fmt.Errorf("build request body: %w", buildErr)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -353,7 +354,12 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 	}
 
 	if req.SessionID != "" {
-		c.TokenLedger.Record(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens, llmResp.CostUSD)
+		if llmResp.CacheReadTokens > 0 || llmResp.CacheCreationTokens > 0 {
+			c.TokenLedger.RecordWithCache(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens,
+				llmResp.CacheReadTokens, llmResp.CacheCreationTokens, llmResp.CostUSD)
+		} else {
+			c.TokenLedger.Record(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens, llmResp.CostUSD)
+		}
 	}
 
 	return llmResp, nil
@@ -607,7 +613,7 @@ func formatTrace(t *TraceConfig) map[string]any {
 // ── Body Builders ───────────────────────────────────────────────────────────
 
 // buildCompletionsBody produces OpenAI-compatible JSON for /chat/completions.
-func buildCompletionsBody(req *LLMRequest) []byte {
+func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
 	body := map[string]any{
 		"model":      req.Model,
 		"messages":   formatChatMessages(req.Messages),
@@ -622,6 +628,9 @@ func buildCompletionsBody(req *LLMRequest) []byte {
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = formatChatTools(req.Tools)
+	}
+	if req.ToolChoice != "" {
+		body["tool_choice"] = req.ToolChoice
 	}
 
 	// Response format.
@@ -680,12 +689,11 @@ func buildCompletionsBody(req *LLMRequest) []byte {
 		body["cache_control"] = map[string]string{"type": "ephemeral"}
 	}
 
-	data, _ := json.Marshal(body)
-	return data
+	return json.Marshal(body)
 }
 
 // buildMessagesBody produces Anthropic-native JSON for /messages.
-func buildMessagesBody(req *LLMRequest) []byte {
+func buildMessagesBody(req *LLMRequest) ([]byte, error) {
 	body := map[string]any{
 		"model":      req.Model,
 		"max_tokens": req.MaxTokens,
@@ -725,6 +733,9 @@ func buildMessagesBody(req *LLMRequest) []byte {
 	if len(req.Tools) > 0 {
 		body["tools"] = formatAnthropicTools(req.Tools)
 	}
+	if req.ToolChoice != "" {
+		body["tool_choice"] = req.ToolChoice
+	}
 
 	// Extended thinking for messages endpoint.
 	if req.Reasoning != nil && req.Reasoning.BudgetTokens > 0 {
@@ -753,8 +764,7 @@ func buildMessagesBody(req *LLMRequest) []byte {
 		body["plugins"] = formatPlugins(req.Plugins)
 	}
 
-	data, _ := json.Marshal(body)
-	return data
+	return json.Marshal(body)
 }
 
 // ── Response Parsing ─────────────────────────────────────────────────────────
@@ -867,7 +877,11 @@ func parseMessagesResponse(body io.Reader) (LLMResponse, error) {
 	for _, block := range apiResp.Content {
 		switch block.Type {
 		case "text":
-			resp.Content = block.Text
+			if resp.Content != "" {
+				resp.Content += block.Text
+			} else {
+				resp.Content = block.Text
+			}
 		case "thinking":
 			resp.ThinkingBlocks = append(resp.ThinkingBlocks, ThinkingBlock{
 				Thinking:  block.Thinking,
@@ -1008,6 +1022,17 @@ func (l *TokenLedger) RecordWithCache(sessionID string, in, out, cacheRead, cach
 
 // ── OpenRouter Retry Policy ─────────────────────────────────────────────────
 
+// openRouterPermanentErrors lists errors that should never be retried.
+var openRouterPermanentErrors = []error{
+	ErrBadRequest,
+	ErrUnauthorized,
+	ErrInsufficientCredits,
+	ErrForbidden,
+	ErrNotFound,
+	ErrPayloadTooLarge,
+	ErrUnprocessableEntity,
+}
+
 // OpenRouterRetryOn classifies errors as permanent (no retry) or transient (retry).
 // Returns false for context errors and client-side 4xx errors.
 // Returns true for transient errors (408, 429, 5xx, 524, 529).
@@ -1022,16 +1047,7 @@ func OpenRouterRetryOn(err error, _ int) bool {
 	}
 
 	// Permanent client errors — never retry.
-	permanentErrors := []error{
-		ErrBadRequest,
-		ErrUnauthorized,
-		ErrInsufficientCredits,
-		ErrForbidden,
-		ErrNotFound,
-		ErrPayloadTooLarge,
-		ErrUnprocessableEntity,
-	}
-	for _, pe := range permanentErrors {
+	for _, pe := range openRouterPermanentErrors {
 		if errors.Is(err, pe) {
 			return false
 		}
