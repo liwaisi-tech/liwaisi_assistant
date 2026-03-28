@@ -776,3 +776,242 @@ func TestFireTool_NoConsumedTokens(t *testing.T) {
 		t.Fatal("fireTool() error = nil, want error for empty consumed")
 	}
 }
+
+// --- Block 18: Metrics Integration Tests ---
+
+// stubCostProvider implements CostProvider for testing.
+type stubCostProvider struct {
+	cost float64
+}
+
+func (s *stubCostProvider) SessionCostUSD(_ string) float64 { return s.cost }
+
+func TestCPN_Run_RecordsMetrics(t *testing.T) {
+	recorder := NewMetricsRecorder()
+	c := buildSimpleCPN(echoTool(func(p any) any {
+		return strings.ToUpper(p.(string))
+	}))
+	c.Metrics = recorder
+	c.Cost = &stubCostProvider{cost: 0.03}
+
+	err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	records := recorder.Records()
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+
+	rec := records[0]
+	if rec.CPNID != "cpn-test" {
+		t.Errorf("CPNID = %q, want %q", rec.CPNID, "cpn-test")
+	}
+	if rec.CPNRole != "worker" {
+		t.Errorf("CPNRole = %q, want %q", rec.CPNRole, "worker")
+	}
+	if rec.CPNDepth != 2 {
+		t.Errorf("CPNDepth = %d, want 2", rec.CPNDepth)
+	}
+	if rec.SessionID != "sess-1" {
+		t.Errorf("SessionID = %q, want %q", rec.SessionID, "sess-1")
+	}
+	if !rec.Success {
+		t.Error("Success = false, want true")
+	}
+	if rec.TransitionsFired != 1 {
+		t.Errorf("TransitionsFired = %d, want 1", rec.TransitionsFired)
+	}
+	if rec.LLMCallCount != 0 {
+		t.Errorf("LLMCallCount = %d, want 0 (tool transition)", rec.LLMCallCount)
+	}
+	if rec.TotalCostUSD != 0.03 {
+		t.Errorf("TotalCostUSD = %f, want 0.03", rec.TotalCostUSD)
+	}
+	if rec.TokensProduced != 1 {
+		t.Errorf("TokensProduced = %d, want 1", rec.TokensProduced)
+	}
+	if rec.Duration <= 0 {
+		t.Errorf("Duration = %v, want > 0", rec.Duration)
+	}
+	if rec.StartedAt.IsZero() {
+		t.Error("StartedAt is zero")
+	}
+	if rec.CompletedAt.IsZero() {
+		t.Error("CompletedAt is zero")
+	}
+}
+
+func TestCPN_Run_NoMetrics_NoPanic(t *testing.T) {
+	c := buildSimpleCPN(identityTool())
+	// c.Metrics is nil — should not panic.
+
+	err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if c.State != StateCompleted {
+		t.Fatalf("State = %q, want %q", c.State, StateCompleted)
+	}
+}
+
+func TestCPN_Run_FailedExecution_Records(t *testing.T) {
+	recorder := NewMetricsRecorder()
+
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorString, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "x"})
+
+	tr := NewTransition("T:FAIL", NodeKindTool, []string{"P:IN"}, []string{"P:OUT"})
+	tr.Executor = alwaysFailTool()
+
+	transitions := map[string]*Transition{"T:FAIL": tr}
+	c := NewCPN("cpn-fail", "worker", 1, ModeMAS, "sess-fail", places, transitions)
+	c.Metrics = recorder
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run() error = nil, want error")
+	}
+
+	records := recorder.Records()
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+
+	rec := records[0]
+	if rec.Success {
+		t.Error("Success = true, want false")
+	}
+	if rec.CPNID != "cpn-fail" {
+		t.Errorf("CPNID = %q, want %q", rec.CPNID, "cpn-fail")
+	}
+}
+
+func TestCPN_Run_Timeout_RecordsMetrics(t *testing.T) {
+	recorder := NewMetricsRecorder()
+
+	places := map[string]*Place{
+		"P:IN": NewPlace("P:IN", ColorString, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "x"})
+
+	// Circular: output goes back to input so the CPN never completes.
+	tr := NewTransition("T:LOOP", NodeKindTool, []string{"P:IN"}, []string{"P:IN"})
+	tr.Executor = identityTool()
+
+	transitions := map[string]*Transition{"T:LOOP": tr}
+	c := NewCPN("cpn-timeout", "worker", 0, ModeMAS, "sess-to", places, transitions)
+	c.Metrics = recorder
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := c.Run(ctx)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("Run() error = %v, want ErrTimeout", err)
+	}
+
+	records := recorder.Records()
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+
+	rec := records[0]
+	if rec.Success {
+		t.Error("Success = true, want false (timeout)")
+	}
+	if rec.TransitionsFired < 1 {
+		t.Errorf("TransitionsFired = %d, want >= 1 (looped before timeout)", rec.TransitionsFired)
+	}
+}
+
+func TestCPN_Run_NilCost_DefaultsZero(t *testing.T) {
+	recorder := NewMetricsRecorder()
+	c := buildSimpleCPN(identityTool())
+	c.Metrics = recorder
+	// c.Cost is nil — cost should default to 0.
+
+	err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	records := recorder.Records()
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	if records[0].TotalCostUSD != 0.0 {
+		t.Errorf("TotalCostUSD = %f, want 0.0 (nil CostProvider)", records[0].TotalCostUSD)
+	}
+}
+
+func TestCPN_Run_MultipleTransitions_RecordsMetrics(t *testing.T) {
+	recorder := NewMetricsRecorder()
+
+	// P:IN -> T:A -> P:MID -> T:B -> P:OUT (linear chain, 2 transitions)
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:MID": NewPlace("P:MID", ColorString, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorString, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "a"})
+
+	tA := NewTransition("T:A", NodeKindTool, []string{"P:IN"}, []string{"P:MID"})
+	tA.Executor = identityTool()
+
+	tB := NewTransition("T:B", NodeKindTool, []string{"P:MID"}, []string{"P:OUT"})
+	tB.Executor = identityTool()
+
+	transitions := map[string]*Transition{"T:A": tA, "T:B": tB}
+	c := NewCPN("cpn-chain", "worker", 0, ModeMAS, "sess-chain", places, transitions)
+	c.Metrics = recorder
+
+	err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	records := recorder.Records()
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+
+	rec := records[0]
+	if rec.TransitionsFired != 2 {
+		t.Errorf("TransitionsFired = %d, want 2", rec.TransitionsFired)
+	}
+	if rec.TokensProduced != 2 {
+		t.Errorf("TokensProduced = %d, want 2", rec.TokensProduced)
+	}
+}
+
+func TestCPN_Run_ValidationFails_RecordsMetrics(t *testing.T) {
+	recorder := NewMetricsRecorder()
+
+	// Invalid topology: output references non-existent place.
+	places := map[string]*Place{
+		"P:IN": NewPlace("P:IN", ColorString, SpaceSurface),
+	}
+	tr := NewTransition("T:A", NodeKindTool, []string{"P:IN"}, []string{"P:MISSING"})
+	tr.Executor = identityTool()
+
+	transitions := map[string]*Transition{"T:A": tr}
+	c := NewCPN("cpn-val", "w", 0, ModeMAS, "s", places, transitions)
+	c.Metrics = recorder
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run() error = nil, want validation error")
+	}
+
+	// Validation failure happens before tracker is created, so no record.
+	// The defer still runs but tracker is nil, so no panic and no record.
+	records := recorder.Records()
+	if len(records) != 0 {
+		t.Errorf("records len = %d, want 0 (validation failure before tracker)", len(records))
+	}
+}
