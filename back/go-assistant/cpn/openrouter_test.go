@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // ── Test Helper ──────────────────────────────────────────────────────────────
@@ -699,5 +700,1104 @@ func TestOpenRouterClient_Complete_HTTPMethodPOST(t *testing.T) {
 	}
 	if gotMethod != http.MethodPost {
 		t.Errorf("HTTP method = %q, want %q", gotMethod, http.MethodPost)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Block 19: Dual Endpoints, v1.2 LLMConfig, Format Functions, Retry Policy
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Body Builders: Messages Endpoint ────────────────────────────────────────
+
+func TestBuildMessagesBody_SystemExtracted(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "system", Content: "You are a helpful assistant."},
+			{Role: "user", Content: "Hello"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// System prompt must be at top-level.
+	sys, ok := parsed["system"]
+	if !ok {
+		t.Fatal("system field missing from messages body")
+	}
+	if sysStr, ok := sys.(string); !ok || sysStr != "You are a helpful assistant." {
+		t.Errorf("system = %v, want %q", sys, "You are a helpful assistant.")
+	}
+
+	// Messages must NOT contain system role.
+	msgs, _ := parsed["messages"].([]any)
+	for _, m := range msgs {
+		msg, _ := m.(map[string]any)
+		if msg["role"] == "system" {
+			t.Error("messages array must not contain system messages")
+		}
+	}
+}
+
+func TestBuildMessagesBody_ThinkingBlockSignature(t *testing.T) {
+	// Signature with special chars that must be preserved byte-for-byte.
+	signature := "aBc123+/=XyZ_sig-test!@#$%^&*()"
+
+	req := &LLMRequest{
+		Model: "anthropic/claude-opus-4-6",
+		Messages: []*LLMMessage{
+			{Role: "user", Content: "Think about this"},
+			{
+				Role:    "assistant",
+				Content: "Here is my answer",
+				ThinkingContent: &ThinkingBlock{
+					Thinking:  "Let me think...",
+					Signature: signature,
+				},
+			},
+		},
+		MaxTokens: 200,
+		Endpoint:  EndpointMessages,
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	msgs, _ := parsed["messages"].([]any)
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
+	}
+
+	// Second message (assistant) should have thinking block content.
+	assistantMsg, _ := msgs[1].(map[string]any)
+	content, _ := assistantMsg["content"].([]any)
+	if len(content) == 0 {
+		t.Fatal("assistant message content blocks empty")
+	}
+
+	thinkingBlock, _ := content[0].(map[string]any)
+	if thinkingBlock["type"] != "thinking" {
+		t.Errorf("first block type = %v, want thinking", thinkingBlock["type"])
+	}
+	if thinkingBlock["thinking"] != "Let me think..." {
+		t.Errorf("thinking = %v, want %q", thinkingBlock["thinking"], "Let me think...")
+	}
+	gotSig, _ := thinkingBlock["signature"].(string)
+	if gotSig != signature {
+		t.Errorf("signature not preserved: got %q, want %q", gotSig, signature)
+	}
+}
+
+func TestBuildMessagesBody_ExtendedThinking(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "anthropic/claude-opus-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Think deeply"}},
+		MaxTokens: 500,
+		Endpoint:  EndpointMessages,
+		Reasoning: &ReasoningConfig{BudgetTokens: 10000},
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	thinking, ok := parsed["thinking"].(map[string]any)
+	if !ok {
+		t.Fatal("thinking field missing")
+	}
+	if thinking["type"] != "enabled" {
+		t.Errorf("thinking.type = %v, want enabled", thinking["type"])
+	}
+	budget, _ := thinking["budget_tokens"].(float64)
+	if int(budget) != 10000 {
+		t.Errorf("thinking.budget_tokens = %v, want 10000", budget)
+	}
+}
+
+func TestBuildMessagesBody_CacheControl(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "system", Content: "You are a helpful assistant."},
+			{Role: "user", Content: "Hi"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+		Cache:     &CacheControlConfig{TTL: "5m"},
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// System prompt should be array with cache_control.
+	sys, ok := parsed["system"].([]any)
+	if !ok {
+		t.Fatal("system should be an array when caching is enabled")
+	}
+	sysBlock, _ := sys[0].(map[string]any)
+	cc, _ := sysBlock["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+}
+
+// ── Body Builders: Completions Endpoint ─────────────────────────────────────
+
+func TestBuildCompletionsBody_FallbackModels(t *testing.T) {
+	req := &LLMRequest{
+		Model:          "anthropic/claude-sonnet-4-6",
+		Messages:       []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens:      100,
+		FallbackModels: []string{"anthropic/claude-haiku-4-5-20251001", "google/gemini-2.0-flash-001"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	models, ok := parsed["models"].([]any)
+	if !ok {
+		t.Fatal("models field missing")
+	}
+	if len(models) != 3 {
+		t.Fatalf("models len = %d, want 3", len(models))
+	}
+	if models[0] != "anthropic/claude-sonnet-4-6" {
+		t.Errorf("models[0] = %v, want primary model", models[0])
+	}
+	if models[1] != "anthropic/claude-haiku-4-5-20251001" {
+		t.Errorf("models[1] = %v, want first fallback", models[1])
+	}
+}
+
+func TestBuildCompletionsBody_Reasoning(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		MaxTokens: 100,
+		Reasoning: &ReasoningConfig{Effort: "high", Summary: "auto"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := parsed["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("reasoning field missing")
+	}
+	if reasoning["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Errorf("reasoning.summary = %v, want auto", reasoning["summary"])
+	}
+}
+
+func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
+	strict := true
+	req := &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		JSONSchema: &JSONSchemaConfig{
+			Name:        "my_schema",
+			Description: "A test schema",
+			Schema:      json.RawMessage(`{"type":"object"}`),
+			Strict:      &strict,
+		},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	rf, ok := parsed["response_format"].(map[string]any)
+	if !ok {
+		t.Fatal("response_format missing")
+	}
+	if rf["type"] != "json_schema" {
+		t.Errorf("response_format.type = %v, want json_schema", rf["type"])
+	}
+	js, _ := rf["json_schema"].(map[string]any)
+	if js["name"] != "my_schema" {
+		t.Errorf("json_schema.name = %v, want my_schema", js["name"])
+	}
+}
+
+func TestBuildCompletionsBody_ReasoningAllFields(t *testing.T) {
+	enabled := true
+	exclude := false
+	req := &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		MaxTokens: 100,
+		Reasoning: &ReasoningConfig{
+			Effort:    "high",
+			Summary:   "auto",
+			MaxTokens: 2000,
+			Enabled:   &enabled,
+			Exclude:   &exclude,
+		},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := parsed["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("reasoning field missing")
+	}
+	if reasoning["effort"] != "high" {
+		t.Errorf("effort = %v, want high", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Errorf("summary = %v, want auto", reasoning["summary"])
+	}
+	maxTok, _ := reasoning["max_tokens"].(float64)
+	if int(maxTok) != 2000 {
+		t.Errorf("max_tokens = %v, want 2000", maxTok)
+	}
+	if reasoning["enabled"] != true {
+		t.Errorf("enabled = %v, want true", reasoning["enabled"])
+	}
+	if reasoning["exclude"] != false {
+		t.Errorf("exclude = %v, want false", reasoning["exclude"])
+	}
+}
+
+func TestComplete_ChatEndpoint_CacheTokensParsing(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "Cached chat response.",
+				},
+			}},
+			"usage": map[string]any{
+				"prompt_tokens":     100,
+				"completion_tokens": 20,
+				"cost":              0.003,
+				"prompt_tokens_details": map[string]any{
+					"cached_tokens":      400,
+					"cache_write_tokens": 100,
+				},
+			},
+			"model": "test-model",
+		})
+	})
+
+	resp, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-chat-cache",
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if resp.CacheReadTokens != 400 {
+		t.Errorf("CacheReadTokens = %d, want 400", resp.CacheReadTokens)
+	}
+	if resp.CacheCreationTokens != 100 {
+		t.Errorf("CacheCreationTokens = %d, want 100", resp.CacheCreationTokens)
+	}
+	if resp.CostUSD != 0.003 {
+		t.Errorf("CostUSD = %f, want 0.003", resp.CostUSD)
+	}
+
+	// Verify ledger also got cache tokens.
+	rec := client.TokenLedger.Get("sess-chat-cache")
+	if rec == nil {
+		t.Fatal("expected ledger record")
+	}
+	if rec.CacheReadTokens != 400 {
+		t.Errorf("ledger CacheReadTokens = %d, want 400", rec.CacheReadTokens)
+	}
+}
+
+func TestBuildCompletionsBody_CacheControlWithTTL(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Cache:     &CacheControlConfig{TTL: "1h"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cc, ok := parsed["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatal("cache_control field missing")
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+	if cc["ttl"] != "1h" {
+		t.Errorf("cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+}
+
+func TestBuildMessagesBody_CacheControlWithTTL(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "user", Content: "Hi"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+		Cache:     &CacheControlConfig{TTL: "1h"},
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// System prompt cache_control should include TTL.
+	sys, _ := parsed["system"].([]any)
+	if len(sys) == 0 {
+		t.Fatal("system should be an array when caching is enabled")
+	}
+	sysBlock, _ := sys[0].(map[string]any)
+	cc, _ := sysBlock["cache_control"].(map[string]any)
+	if cc["ttl"] != "1h" {
+		t.Errorf("system cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+
+	// User message cache_control should also include TTL.
+	msgs, _ := parsed["messages"].([]any)
+	for _, m := range msgs {
+		msg, _ := m.(map[string]any)
+		if msg["role"] == "user" {
+			ucc, ok := msg["cache_control"].(map[string]any)
+			if !ok {
+				t.Error("user message missing cache_control")
+				continue
+			}
+			if ucc["ttl"] != "1h" {
+				t.Errorf("user cache_control.ttl = %v, want 1h", ucc["ttl"])
+			}
+		}
+	}
+}
+
+// ── Format Functions ────────────────────────────────────────────────────────
+
+func TestFormatChatMessages_ToolResult(t *testing.T) {
+	msgs := []*LLMMessage{
+		{Role: "user", Content: "What's the weather?"},
+		{
+			Role:    "assistant",
+			Content: "",
+			ToolCall: &LLMToolCall{
+				ID:        "call-1",
+				ToolName:  "get_weather",
+				Arguments: json.RawMessage(`{"city":"Lima"}`),
+			},
+		},
+		{
+			Role: "tool",
+			ToolResult: &LLMToolResult{
+				ToolCallID: "call-1",
+				Content:    "Sunny, 25°C",
+			},
+		},
+	}
+
+	formatted := formatChatMessages(msgs)
+	if len(formatted) != 3 {
+		t.Fatalf("len = %d, want 3", len(formatted))
+	}
+
+	// Assistant message should have tool_calls.
+	assistantMsg := formatted[1]
+	tcs, ok := assistantMsg["tool_calls"].([]map[string]any)
+	if !ok || len(tcs) == 0 {
+		t.Fatal("assistant message missing tool_calls")
+	}
+	if tcs[0]["id"] != "call-1" {
+		t.Errorf("tool_call id = %v, want call-1", tcs[0]["id"])
+	}
+
+	// Tool result message should have role "tool" and tool_call_id.
+	toolMsg := formatted[2]
+	if toolMsg["role"] != "tool" {
+		t.Errorf("tool msg role = %v, want tool", toolMsg["role"])
+	}
+	if toolMsg["tool_call_id"] != "call-1" {
+		t.Errorf("tool_call_id = %v, want call-1", toolMsg["tool_call_id"])
+	}
+	if toolMsg["content"] != "Sunny, 25°C" {
+		t.Errorf("content = %v, want 'Sunny, 25°C'", toolMsg["content"])
+	}
+}
+
+func TestBuildMessagesBody_WithTools(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "user", Content: "Use the tool"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+		Tools: []*LLMTool{{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+		}},
+		ToolChoice: "auto",
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Tools should use input_schema (Anthropic format).
+	tools, ok := parsed["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatal("tools missing from messages body")
+	}
+	tool, _ := tools[0].(map[string]any)
+	if _, ok := tool["input_schema"]; !ok {
+		t.Error("tool missing input_schema in messages body")
+	}
+	if _, ok := tool["parameters"]; ok {
+		t.Error("tool should not have parameters in messages body (Anthropic uses input_schema)")
+	}
+
+	// ToolChoice should be serialized.
+	if parsed["tool_choice"] != "auto" {
+		t.Errorf("tool_choice = %v, want auto", parsed["tool_choice"])
+	}
+}
+
+func TestFormatAnthropicTools_InputSchema(t *testing.T) {
+	tools := []*LLMTool{{
+		Name:        "get_weather",
+		Description: "Get weather",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+	}}
+
+	formatted := formatAnthropicTools(tools)
+	if len(formatted) != 1 {
+		t.Fatalf("len = %d, want 1", len(formatted))
+	}
+
+	tool := formatted[0]
+	if _, ok := tool["input_schema"]; !ok {
+		t.Error("input_schema missing from Anthropic tool format")
+	}
+	if _, ok := tool["parameters"]; ok {
+		t.Error("parameters should NOT be present in Anthropic tool format")
+	}
+}
+
+func TestFormatChatTools_Parameters(t *testing.T) {
+	tools := []*LLMTool{{
+		Name:        "get_weather",
+		Description: "Get weather",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}}
+
+	formatted := formatChatTools(tools)
+	if len(formatted) != 1 {
+		t.Fatalf("len = %d, want 1", len(formatted))
+	}
+
+	fn, _ := formatted[0]["function"].(map[string]any)
+	if _, ok := fn["parameters"]; !ok {
+		t.Error("parameters missing from chat tool format")
+	}
+	if _, ok := fn["input_schema"]; ok {
+		t.Error("input_schema should NOT be present in chat tool format")
+	}
+}
+
+func TestFormatProviderConfig_ZDR(t *testing.T) {
+	p := &ProviderConfig{
+		ZDR:            true,
+		DataCollection: "allow", // Should be overridden by ZDR.
+	}
+
+	formatted := formatProviderConfig(p)
+	dc, ok := formatted["data_collection"]
+	if !ok {
+		t.Fatal("data_collection missing")
+	}
+	if dc != "deny" {
+		t.Errorf("data_collection = %v, want deny (ZDR enforcement)", dc)
+	}
+}
+
+func TestFormatProviderConfig_AllFields(t *testing.T) {
+	af := false
+	p := &ProviderConfig{
+		Order:             []string{"openai", "anthropic"},
+		Only:              []string{"openai"},
+		Ignore:            []string{"google"},
+		AllowFallbacks:    &af,
+		Sort:              "price",
+		MaxPrice:          &ProviderMaxPrice{Prompt: "0.01", Completion: "0.02"},
+		DataCollection:    "allow",
+		RequireParameters: true,
+	}
+
+	formatted := formatProviderConfig(p)
+	if formatted["sort"] != "price" {
+		t.Errorf("sort = %v, want price", formatted["sort"])
+	}
+	if formatted["data_collection"] != "allow" {
+		t.Errorf("data_collection = %v, want allow", formatted["data_collection"])
+	}
+	if formatted["require_parameters"] != true {
+		t.Error("require_parameters missing or false")
+	}
+	order, _ := formatted["order"].([]string)
+	if len(order) != 2 {
+		t.Errorf("order len = %d, want 2", len(order))
+	}
+	mp, _ := formatted["max_price"].(map[string]string)
+	if mp["prompt"] != "0.01" {
+		t.Errorf("max_price.prompt = %v, want 0.01", mp["prompt"])
+	}
+}
+
+func TestFormatPlugins(t *testing.T) {
+	plugins := []PluginConfig{"auto-router", "moderation", "web"}
+
+	formatted := formatPlugins(plugins)
+	if len(formatted) != 3 {
+		t.Fatalf("len = %d, want 3", len(formatted))
+	}
+	if formatted[0] != "auto-router" {
+		t.Errorf("plugins[0] = %q, want auto-router", formatted[0])
+	}
+	if formatted[1] != "moderation" {
+		t.Errorf("plugins[1] = %q, want moderation", formatted[1])
+	}
+	if formatted[2] != "web" {
+		t.Errorf("plugins[2] = %q, want web", formatted[2])
+	}
+}
+
+func TestFormatPlugins_InBody(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Plugins:   []PluginConfig{"auto-router", "web"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	plugins, ok := parsed["plugins"].([]any)
+	if !ok {
+		t.Fatal("plugins field missing or wrong type")
+	}
+	if len(plugins) != 2 {
+		t.Fatalf("plugins len = %d, want 2", len(plugins))
+	}
+	// Must be strings, not objects.
+	if plugins[0] != "auto-router" {
+		t.Errorf("plugins[0] = %v, want auto-router", plugins[0])
+	}
+	if plugins[1] != "web" {
+		t.Errorf("plugins[1] = %v, want web", plugins[1])
+	}
+}
+
+func TestFormatTrace(t *testing.T) {
+	tr := &TraceConfig{
+		TraceID:        "trace-1",
+		TraceName:      "my-trace",
+		SpanName:       "my-span",
+		GenerationName: "gen-1",
+		ParentSpanID:   "parent-1",
+	}
+
+	formatted := formatTrace(tr)
+	if formatted["trace_id"] != "trace-1" {
+		t.Errorf("trace_id = %v, want trace-1", formatted["trace_id"])
+	}
+	if formatted["trace_name"] != "my-trace" {
+		t.Errorf("trace_name = %v, want my-trace", formatted["trace_name"])
+	}
+	if formatted["span_name"] != "my-span" {
+		t.Errorf("span_name = %v, want my-span", formatted["span_name"])
+	}
+	if formatted["generation_name"] != "gen-1" {
+		t.Errorf("generation_name = %v, want gen-1", formatted["generation_name"])
+	}
+	if formatted["parent_span_id"] != "parent-1" {
+		t.Errorf("parent_span_id = %v, want parent-1", formatted["parent_span_id"])
+	}
+}
+
+// ── Dual Routing ────────────────────────────────────────────────────────────
+
+func TestComplete_RoutesToChatEndpoint(t *testing.T) {
+	var gotPath string
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		successHandler(w, r)
+	})
+
+	_, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+		SessionID: "sess-chat",
+		Endpoint:  EndpointChat,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if gotPath != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", gotPath)
+	}
+}
+
+func TestComplete_RoutesToMessagesEndpoint(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "Hello!"},
+			},
+			"model":       "anthropic/claude-sonnet-4-6",
+			"stop_reason": "end_turn",
+			"usage": map[string]any{
+				"input_tokens":  10,
+				"output_tokens": 5,
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewOpenRouterClient("test-key", "test-model")
+	client.BaseURL = srv.URL
+
+	_, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+		SessionID: "sess-msg",
+		Endpoint:  EndpointMessages,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if gotPath != "/messages" {
+		t.Errorf("path = %q, want /messages", gotPath)
+	}
+}
+
+// ── Messages Response Parsing ───────────────────────────────────────────────
+
+func TestComplete_MessagesResponse_ThinkingBlocks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "thinking", "thinking": "Let me think...", "signature": "sig123abc"},
+				{"type": "text", "text": "The answer is 42."},
+			},
+			"model":       "anthropic/claude-opus-4-6",
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 20, "output_tokens": 15},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewOpenRouterClient("test-key", "test-model")
+	client.BaseURL = srv.URL
+
+	resp, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "anthropic/claude-opus-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		MaxTokens: 100,
+		SessionID: "sess-think",
+		Endpoint:  EndpointMessages,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if resp.Content != "The answer is 42." {
+		t.Errorf("Content = %q, want %q", resp.Content, "The answer is 42.")
+	}
+	if len(resp.ThinkingBlocks) != 1 {
+		t.Fatalf("ThinkingBlocks len = %d, want 1", len(resp.ThinkingBlocks))
+	}
+	tb := resp.ThinkingBlocks[0]
+	if tb.Thinking != "Let me think..." {
+		t.Errorf("Thinking = %q, want %q", tb.Thinking, "Let me think...")
+	}
+	if tb.Signature != "sig123abc" {
+		t.Errorf("Signature = %q, want %q", tb.Signature, "sig123abc")
+	}
+}
+
+func TestComplete_MessagesResponse_CacheTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "Cached response."},
+			},
+			"model":       "anthropic/claude-sonnet-4-6",
+			"stop_reason": "end_turn",
+			"usage": map[string]any{
+				"input_tokens":                10,
+				"output_tokens":               5,
+				"cache_read_input_tokens":     500,
+				"cache_creation_input_tokens": 200,
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewOpenRouterClient("test-key", "test-model")
+	client.BaseURL = srv.URL
+
+	resp, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-cache",
+		Endpoint:  EndpointMessages,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if resp.CacheReadTokens != 500 {
+		t.Errorf("CacheReadTokens = %d, want 500", resp.CacheReadTokens)
+	}
+	if resp.CacheCreationTokens != 200 {
+		t.Errorf("CacheCreationTokens = %d, want 200", resp.CacheCreationTokens)
+	}
+}
+
+// ── Retry Policy ────────────────────────────────────────────────────────────
+
+func TestOpenRouterRetryOn_PermanentErrors(t *testing.T) {
+	permanentErrors := []error{
+		ErrBadRequest,
+		ErrUnauthorized,
+		ErrInsufficientCredits,
+		ErrForbidden,
+		ErrNotFound,
+		ErrPayloadTooLarge,
+		ErrUnprocessableEntity,
+	}
+
+	for _, err := range permanentErrors {
+		if OpenRouterRetryOn(err, 1) {
+			t.Errorf("OpenRouterRetryOn(%v) = true, want false (permanent)", err)
+		}
+	}
+}
+
+func TestOpenRouterRetryOn_TransientErrors(t *testing.T) {
+	transientErrors := []error{
+		ErrRequestTimeout,
+		ErrRateLimited,
+		ErrProviderUnavailable,
+		ErrEdgeTimeout,
+		ErrProviderOverloaded,
+	}
+
+	for _, err := range transientErrors {
+		if !OpenRouterRetryOn(err, 1) {
+			t.Errorf("OpenRouterRetryOn(%v) = false, want true (transient)", err)
+		}
+	}
+}
+
+func TestOpenRouterRetryOn_ContextErrors(t *testing.T) {
+	if OpenRouterRetryOn(context.Canceled, 1) {
+		t.Error("OpenRouterRetryOn(context.Canceled) = true, want false")
+	}
+	if OpenRouterRetryOn(context.DeadlineExceeded, 1) {
+		t.Error("OpenRouterRetryOn(context.DeadlineExceeded) = true, want false")
+	}
+}
+
+func TestOpenRouterRetryPolicy(t *testing.T) {
+	policy := OpenRouterRetryPolicy()
+
+	if policy.MaxAttempts != 3 {
+		t.Errorf("MaxAttempts = %d, want 3", policy.MaxAttempts)
+	}
+	if policy.InitialWait != 500*time.Millisecond {
+		t.Errorf("InitialWait = %v, want 500ms", policy.InitialWait)
+	}
+	if policy.MaxWait != 30*time.Second {
+		t.Errorf("MaxWait = %v, want 30s", policy.MaxWait)
+	}
+	if policy.Multiplier != 2.0 {
+		t.Errorf("Multiplier = %f, want 2.0", policy.Multiplier)
+	}
+	if policy.RetryOn == nil {
+		t.Fatal("RetryOn is nil")
+	}
+	if policy.CircuitBreaker == nil {
+		t.Fatal("CircuitBreaker is nil")
+	}
+	if policy.CircuitBreaker.FailureThreshold != 5 {
+		t.Errorf("CB.FailureThreshold = %d, want 5", policy.CircuitBreaker.FailureThreshold)
+	}
+	if policy.CircuitBreaker.OpenDuration != 60*time.Second {
+		t.Errorf("CB.OpenDuration = %v, want 60s", policy.CircuitBreaker.OpenDuration)
+	}
+}
+
+// ── TokenLedger: RecordWithCache ────────────────────────────────────────────
+
+func TestTokenLedger_RecordWithCache(t *testing.T) {
+	ledger := NewTokenLedger()
+
+	ledger.RecordWithCache("sess-cache", 100, 50, 500, 200, 0.005)
+	ledger.RecordWithCache("sess-cache", 80, 40, 300, 100, 0.003)
+
+	rec := ledger.Get("sess-cache")
+	if rec == nil {
+		t.Fatal("expected record")
+	}
+	if rec.InputTokens != 180 {
+		t.Errorf("InputTokens = %d, want 180", rec.InputTokens)
+	}
+	if rec.OutputTokens != 90 {
+		t.Errorf("OutputTokens = %d, want 90", rec.OutputTokens)
+	}
+	if rec.CacheReadTokens != 800 {
+		t.Errorf("CacheReadTokens = %d, want 800", rec.CacheReadTokens)
+	}
+	if rec.CacheCreationTokens != 300 {
+		t.Errorf("CacheCreationTokens = %d, want 300", rec.CacheCreationTokens)
+	}
+	if rec.Calls != 2 {
+		t.Errorf("Calls = %d, want 2", rec.Calls)
+	}
+}
+
+// ── Complete: RecordWithCache Integration ────────────────────────────────────
+
+func TestComplete_MessagesEndpoint_RecordsCacheTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "Cached!"},
+			},
+			"model":       "anthropic/claude-sonnet-4-6",
+			"stop_reason": "end_turn",
+			"usage": map[string]any{
+				"input_tokens":                10,
+				"output_tokens":               5,
+				"cache_read_input_tokens":     300,
+				"cache_creation_input_tokens": 150,
+				"total_cost":                  0.002,
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewOpenRouterClient("test-key", "test-model")
+	client.BaseURL = srv.URL
+
+	_, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-cache-ledger",
+		Endpoint:  EndpointMessages,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	rec := client.TokenLedger.Get("sess-cache-ledger")
+	if rec == nil {
+		t.Fatal("expected ledger record")
+	}
+	if rec.CacheReadTokens != 300 {
+		t.Errorf("CacheReadTokens = %d, want 300", rec.CacheReadTokens)
+	}
+	if rec.CacheCreationTokens != 150 {
+		t.Errorf("CacheCreationTokens = %d, want 150", rec.CacheCreationTokens)
+	}
+}
+
+// ── Backward Compatibility ──────────────────────────────────────────────────
+
+func TestLLMConfig_BackwardCompatibility(t *testing.T) {
+	// v1.1 usage: only 6 original fields. Must still compile and work.
+	cfg := &LLMConfig{
+		Model:        "reasoning",
+		MaxTokens:    1000,
+		Temperature:  0.7,
+		StreamOutput: false,
+		RequireJSON:  true,
+		Budget:       0.05,
+	}
+
+	if cfg.Model != "reasoning" {
+		t.Errorf("Model = %q, want reasoning", cfg.Model)
+	}
+	if cfg.MaxTokens != 1000 {
+		t.Errorf("MaxTokens = %d, want 1000", cfg.MaxTokens)
+	}
+	if cfg.Temperature != 0.7 {
+		t.Errorf("Temperature = %f, want 0.7", cfg.Temperature)
+	}
+	if cfg.RequireJSON != true {
+		t.Error("RequireJSON should be true")
+	}
+	if cfg.Budget != 0.05 {
+		t.Errorf("Budget = %f, want 0.05", cfg.Budget)
+	}
+
+	// New v1.2 fields should have zero values.
+	if cfg.FallbackModels != nil {
+		t.Error("FallbackModels should be nil for v1.1 usage")
+	}
+	if cfg.Endpoint != "" {
+		t.Error("Endpoint should be empty for v1.1 usage")
+	}
+	if cfg.Provider != nil {
+		t.Error("Provider should be nil for v1.1 usage")
+	}
+}
+
+// ── Anthropic Messages: User Cache Control ──────────────────────────────────
+
+func TestFormatAnthropicMessages_UserCacheControl(t *testing.T) {
+	msgs := []*LLMMessage{
+		{Role: "system", Content: "System prompt"},
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there"},
+		{Role: "user", Content: "Follow up"},
+	}
+	cache := &CacheControlConfig{TTL: "5m"}
+
+	formatted := formatAnthropicMessages(msgs, cache)
+
+	// System messages should be excluded.
+	for _, m := range formatted {
+		if m["role"] == "system" {
+			t.Error("system message should be excluded")
+		}
+	}
+
+	// User messages should have cache_control.
+	userCount := 0
+	for _, m := range formatted {
+		if m["role"] == "user" {
+			userCount++
+			cc, ok := m["cache_control"].(map[string]string)
+			if !ok {
+				t.Error("user message missing cache_control")
+				continue
+			}
+			if cc["type"] != "ephemeral" {
+				t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+			}
+		}
+		if m["role"] == "assistant" {
+			if _, ok := m["cache_control"]; ok {
+				t.Error("assistant message should NOT have cache_control")
+			}
+		}
+	}
+	if userCount != 2 {
+		t.Errorf("expected 2 user messages, got %d", userCount)
+	}
+}
+
+// ── ModelRegistry: Thinking Entry ───────────────────────────────────────────
+
+func TestModelRegistry_ThinkingEntry(t *testing.T) {
+	model, ok := ModelRegistry["thinking"]
+	if !ok {
+		t.Fatal("ModelRegistry missing 'thinking' entry")
+	}
+	if model != "anthropic/claude-opus-4-6" {
+		t.Errorf("thinking model = %q, want anthropic/claude-opus-4-6", model)
 	}
 }
