@@ -206,6 +206,48 @@ data: [DONE]
 	}
 }
 
+func TestParseChatSSE_MultipleToolCalls(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"foo","arguments":"{\"x"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"bar","arguments":"{\"y"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":1}"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\":2}"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+`
+	h := NewStreamHandler()
+	resp, err := h.ParseChatSSE(sseReader(sse))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("ToolCalls len = %d, want 2", len(resp.ToolCalls))
+	}
+	// Verify order: index 0 first, index 1 second.
+	if resp.ToolCalls[0].ID != "call_a" {
+		t.Errorf("ToolCalls[0].ID = %q, want %q", resp.ToolCalls[0].ID, "call_a")
+	}
+	if resp.ToolCalls[0].ToolName != "foo" {
+		t.Errorf("ToolCalls[0].ToolName = %q, want %q", resp.ToolCalls[0].ToolName, "foo")
+	}
+	if string(resp.ToolCalls[0].Arguments) != `{"x":1}` {
+		t.Errorf("ToolCalls[0].Arguments = %q, want %q", string(resp.ToolCalls[0].Arguments), `{"x":1}`)
+	}
+	if resp.ToolCalls[1].ID != "call_b" {
+		t.Errorf("ToolCalls[1].ID = %q, want %q", resp.ToolCalls[1].ID, "call_b")
+	}
+	if resp.ToolCalls[1].ToolName != "bar" {
+		t.Errorf("ToolCalls[1].ToolName = %q, want %q", resp.ToolCalls[1].ToolName, "bar")
+	}
+	if string(resp.ToolCalls[1].Arguments) != `{"y":2}` {
+		t.Errorf("ToolCalls[1].Arguments = %q, want %q", string(resp.ToolCalls[1].Arguments), `{"y":2}`)
+	}
+}
+
 // ── ParseAnthropicSSE Tests ─────────────────────────────────────────────────
 
 func TestParseAnthropicSSE_TextContent(t *testing.T) {

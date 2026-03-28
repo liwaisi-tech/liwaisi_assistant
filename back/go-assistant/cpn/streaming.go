@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -113,7 +114,7 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
 			}
 		}
 
-		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 || chunk.Usage.Cost > 0 {
 			resp.InputTokens = chunk.Usage.PromptTokens
 			resp.OutputTokens = chunk.Usage.CompletionTokens
 			resp.CostUSD = chunk.Usage.Cost
@@ -126,11 +127,16 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
 
 	resp.Content = content.String()
 
-	// Convert accumulated tool calls to LLMToolCall slice.
+	// Convert accumulated tool calls to LLMToolCall slice, sorted by index.
 	if len(toolCalls) > 0 {
-		resp.ToolCalls = make([]*LLMToolCall, 0, len(toolCalls))
-		for i := 0; i < len(toolCalls); i++ {
-			acc := toolCalls[i]
+		indices := make([]int, 0, len(toolCalls))
+		for idx := range toolCalls {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+		resp.ToolCalls = make([]*LLMToolCall, 0, len(indices))
+		for _, idx := range indices {
+			acc := toolCalls[idx]
 			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
 				ID:        acc.id,
 				ToolName:  acc.name,
@@ -165,6 +171,7 @@ func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (LLMResponse, erro
 	var currentEventType string
 
 	scanner := bufio.NewScanner(body)
+scanLoop:
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -213,6 +220,8 @@ func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (LLMResponse, erro
 			}
 			blocks[cbs.Index] = &blockAccumulator{blockType: cbs.ContentBlock.Type}
 
+		// Note: Anthropic tool_use blocks (input_json_delta) are not handled here.
+		// They will be added when executor integration requires them.
 		case "content_block_delta":
 			var cbd struct {
 				Index int `json:"index"`
@@ -264,7 +273,7 @@ func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (LLMResponse, erro
 
 		case "message_stop":
 			// Terminate parsing loop.
-			goto done
+			break scanLoop
 
 		case "error":
 			var errEvt struct {
@@ -281,7 +290,6 @@ func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (LLMResponse, erro
 		currentEventType = ""
 	}
 
-done:
 	if err := scanner.Err(); err != nil {
 		return LLMResponse{}, err
 	}
