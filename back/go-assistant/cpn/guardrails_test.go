@@ -26,14 +26,17 @@ func mockGuardrailsServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 func TestNewGuardrailsClient(t *testing.T) {
 	client := NewGuardrailsClient("mgmt-key", "https://openrouter.ai/api/v1")
 
-	if client.APIKey != "mgmt-key" {
-		t.Errorf("APIKey = %q, want %q", client.APIKey, "mgmt-key")
-	}
 	if client.BaseURL != "https://openrouter.ai/api/v1" {
 		t.Errorf("BaseURL = %q, want %q", client.BaseURL, "https://openrouter.ai/api/v1")
 	}
 	if client.HTTPClient == nil {
 		t.Fatal("HTTPClient is nil")
+	}
+
+	// Verify apiKey is set correctly via String() — key must NOT appear.
+	s := client.String()
+	if s != "GuardrailsClient{base: https://openrouter.ai/api/v1}" {
+		t.Errorf("String() = %q, unexpected", s)
 	}
 }
 

@@ -16,8 +16,8 @@ import (
 // OpenRouter management API. Requires a management API key (separate
 // from the regular API key used by OpenRouterClient).
 type GuardrailsClient struct {
-	// APIKey is the management API key. Never logged or included in errors.
-	APIKey string
+	// apiKey is the management API key. Never logged or included in errors.
+	apiKey string
 
 	// BaseURL is the OpenRouter API base (e.g. "https://openrouter.ai/api/v1").
 	BaseURL string
@@ -29,7 +29,7 @@ type GuardrailsClient struct {
 // NewGuardrailsClient returns a configured client with sensible defaults.
 func NewGuardrailsClient(apiKey, baseURL string) *GuardrailsClient {
 	return &GuardrailsClient{
-		APIKey:  apiKey,
+		apiKey:  apiKey,
 		BaseURL: baseURL,
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -84,11 +84,11 @@ type guardrailJSON struct {
 	ID               string   `json:"id,omitempty"`
 	Name             string   `json:"name,omitempty"`
 	Description      string   `json:"description,omitempty"`
-	LimitUSD         float64  `json:"limit_usd,omitempty"`
+	LimitUSD         float64  `json:"limit_usd"`
 	ResetInterval    string   `json:"reset_interval,omitempty"`
 	AllowedProviders []string `json:"allowed_providers,omitempty"`
 	AllowedModels    []string `json:"allowed_models,omitempty"`
-	EnforceZDR       bool     `json:"enforce_zdr,omitempty"`
+	EnforceZDR       bool     `json:"enforce_zdr"`
 	CreatedAt        string   `json:"created_at,omitempty"`
 	UpdatedAt        string   `json:"updated_at,omitempty"`
 }
@@ -336,7 +336,7 @@ func (c *GuardrailsClient) doRequest(ctx context.Context, method, path string, b
 		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
