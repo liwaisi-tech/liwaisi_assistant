@@ -966,6 +966,183 @@ func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
 	}
 }
 
+func TestBuildCompletionsBody_ReasoningAllFields(t *testing.T) {
+	enabled := true
+	exclude := false
+	req := &LLMRequest{
+		Model:     "anthropic/claude-sonnet-4-6",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		MaxTokens: 100,
+		Reasoning: &ReasoningConfig{
+			Effort:    "high",
+			Summary:   "auto",
+			MaxTokens: 2000,
+			Enabled:   &enabled,
+			Exclude:   &exclude,
+		},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := parsed["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("reasoning field missing")
+	}
+	if reasoning["effort"] != "high" {
+		t.Errorf("effort = %v, want high", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Errorf("summary = %v, want auto", reasoning["summary"])
+	}
+	maxTok, _ := reasoning["max_tokens"].(float64)
+	if int(maxTok) != 2000 {
+		t.Errorf("max_tokens = %v, want 2000", maxTok)
+	}
+	if reasoning["enabled"] != true {
+		t.Errorf("enabled = %v, want true", reasoning["enabled"])
+	}
+	if reasoning["exclude"] != false {
+		t.Errorf("exclude = %v, want false", reasoning["exclude"])
+	}
+}
+
+func TestComplete_ChatEndpoint_CacheTokensParsing(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "Cached chat response.",
+				},
+			}},
+			"usage": map[string]any{
+				"prompt_tokens":     100,
+				"completion_tokens": 20,
+				"cost":              0.003,
+				"prompt_tokens_details": map[string]any{
+					"cached_tokens":      400,
+					"cache_write_tokens": 100,
+				},
+			},
+			"model": "test-model",
+		})
+	})
+
+	resp, err := client.Complete(context.Background(), &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-chat-cache",
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if resp.CacheReadTokens != 400 {
+		t.Errorf("CacheReadTokens = %d, want 400", resp.CacheReadTokens)
+	}
+	if resp.CacheCreationTokens != 100 {
+		t.Errorf("CacheCreationTokens = %d, want 100", resp.CacheCreationTokens)
+	}
+	if resp.CostUSD != 0.003 {
+		t.Errorf("CostUSD = %f, want 0.003", resp.CostUSD)
+	}
+
+	// Verify ledger also got cache tokens.
+	rec := client.TokenLedger.Get("sess-chat-cache")
+	if rec == nil {
+		t.Fatal("expected ledger record")
+	}
+	if rec.CacheReadTokens != 400 {
+		t.Errorf("ledger CacheReadTokens = %d, want 400", rec.CacheReadTokens)
+	}
+}
+
+func TestBuildCompletionsBody_CacheControlWithTTL(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Cache:     &CacheControlConfig{TTL: "1h"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cc, ok := parsed["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatal("cache_control field missing")
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+	if cc["ttl"] != "1h" {
+		t.Errorf("cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+}
+
+func TestBuildMessagesBody_CacheControlWithTTL(t *testing.T) {
+	req := &LLMRequest{
+		Model: "anthropic/claude-sonnet-4-6",
+		Messages: []*LLMMessage{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "user", Content: "Hi"},
+		},
+		MaxTokens: 100,
+		Endpoint:  EndpointMessages,
+		Cache:     &CacheControlConfig{TTL: "1h"},
+	}
+
+	body, err := buildMessagesBody(req)
+	if err != nil {
+		t.Fatalf("buildMessagesBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// System prompt cache_control should include TTL.
+	sys, _ := parsed["system"].([]any)
+	if len(sys) == 0 {
+		t.Fatal("system should be an array when caching is enabled")
+	}
+	sysBlock, _ := sys[0].(map[string]any)
+	cc, _ := sysBlock["cache_control"].(map[string]any)
+	if cc["ttl"] != "1h" {
+		t.Errorf("system cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+
+	// User message cache_control should also include TTL.
+	msgs, _ := parsed["messages"].([]any)
+	for _, m := range msgs {
+		msg, _ := m.(map[string]any)
+		if msg["role"] == "user" {
+			ucc, ok := msg["cache_control"].(map[string]any)
+			if !ok {
+				t.Error("user message missing cache_control")
+				continue
+			}
+			if ucc["ttl"] != "1h" {
+				t.Errorf("user cache_control.ttl = %v, want 1h", ucc["ttl"])
+			}
+		}
+	}
+}
+
 // ── Format Functions ────────────────────────────────────────────────────────
 
 func TestFormatChatMessages_ToolResult(t *testing.T) {
@@ -1153,25 +1330,53 @@ func TestFormatProviderConfig_AllFields(t *testing.T) {
 }
 
 func TestFormatPlugins(t *testing.T) {
-	enabled := true
-	plugins := []PluginConfig{
-		{ID: "plugin-1", Enabled: &enabled, Options: map[string]any{"key": "val"}},
-	}
+	plugins := []PluginConfig{"auto-router", "moderation", "web"}
 
 	formatted := formatPlugins(plugins)
-	if len(formatted) != 1 {
-		t.Fatalf("len = %d, want 1", len(formatted))
+	if len(formatted) != 3 {
+		t.Fatalf("len = %d, want 3", len(formatted))
 	}
-	p := formatted[0]
-	if p["id"] != "plugin-1" {
-		t.Errorf("id = %v, want plugin-1", p["id"])
+	if formatted[0] != "auto-router" {
+		t.Errorf("plugins[0] = %q, want auto-router", formatted[0])
 	}
-	if p["enabled"] != true {
-		t.Errorf("enabled = %v, want true", p["enabled"])
+	if formatted[1] != "moderation" {
+		t.Errorf("plugins[1] = %q, want moderation", formatted[1])
 	}
-	opts, _ := p["options"].(map[string]any)
-	if opts["key"] != "val" {
-		t.Errorf("options.key = %v, want val", opts["key"])
+	if formatted[2] != "web" {
+		t.Errorf("plugins[2] = %q, want web", formatted[2])
+	}
+}
+
+func TestFormatPlugins_InBody(t *testing.T) {
+	req := &LLMRequest{
+		Model:     "test-model",
+		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Plugins:   []PluginConfig{"auto-router", "web"},
+	}
+
+	body, err := buildCompletionsBody(req)
+	if err != nil {
+		t.Fatalf("buildCompletionsBody: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	plugins, ok := parsed["plugins"].([]any)
+	if !ok {
+		t.Fatal("plugins field missing or wrong type")
+	}
+	if len(plugins) != 2 {
+		t.Fatalf("plugins len = %d, want 2", len(plugins))
+	}
+	// Must be strings, not objects.
+	if plugins[0] != "auto-router" {
+		t.Errorf("plugins[0] = %v, want auto-router", plugins[0])
+	}
+	if plugins[1] != "web" {
+		t.Errorf("plugins[1] = %v, want web", plugins[1])
 	}
 }
 

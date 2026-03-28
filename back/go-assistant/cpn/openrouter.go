@@ -208,19 +208,20 @@ type TraceConfig struct {
 	ParentSpanID   string
 }
 
-// PluginConfig configures an OpenRouter plugin.
-type PluginConfig struct {
-	ID      string
-	Enabled *bool
-	Options map[string]any
-}
+// PluginConfig is a plugin name string for OpenRouter.
+// Valid values: "auto-router", "moderation", "web", "file-parser",
+// "response-healing", "context-compression".
+type PluginConfig = string
 
 // ReasoningConfig configures reasoning/thinking behavior.
+// For /chat/completions: Effort, Summary, MaxTokens, Enabled, Exclude are serialized.
+// For /messages: BudgetTokens is serialized as thinking.budget_tokens (Anthropic-native).
 type ReasoningConfig struct {
 	Effort       string
 	Summary      string
 	MaxTokens    int
 	Enabled      *bool
+	Exclude      *bool
 	BudgetTokens int
 }
 
@@ -481,7 +482,7 @@ func formatAnthropicMessages(msgs []*LLMMessage, cache *CacheControlConfig) []ma
 
 		// Apply cache control to user messages.
 		if cache != nil && m.Role == "user" {
-			msg["cache_control"] = map[string]string{"type": "ephemeral"}
+			msg["cache_control"] = formatCacheControl(cache)
 		}
 
 		out = append(out, msg)
@@ -573,20 +574,10 @@ func formatProviderConfig(p *ProviderConfig) map[string]any {
 	return out
 }
 
-// formatPlugins serializes PluginConfig slice to the OpenRouter body format.
-func formatPlugins(plugins []PluginConfig) []map[string]any {
-	out := make([]map[string]any, 0, len(plugins))
-	for _, p := range plugins {
-		entry := map[string]any{"id": p.ID}
-		if p.Enabled != nil {
-			entry["enabled"] = *p.Enabled
-		}
-		if len(p.Options) > 0 {
-			entry["options"] = p.Options
-		}
-		out = append(out, entry)
-	}
-	return out
+// formatPlugins returns the plugins slice directly.
+// OpenRouter plugins are string identifiers per the API spec.
+func formatPlugins(plugins []PluginConfig) []string {
+	return plugins
 }
 
 // formatTrace serializes TraceConfig to the OpenRouter body format.
@@ -661,7 +652,7 @@ func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
 		body["models"] = models
 	}
 
-	// Reasoning for chat endpoint.
+	// Reasoning for chat endpoint — all documented fields.
 	if req.Reasoning != nil {
 		r := map[string]any{}
 		if req.Reasoning.Effort != "" {
@@ -669,6 +660,15 @@ func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
 		}
 		if req.Reasoning.Summary != "" {
 			r["summary"] = req.Reasoning.Summary
+		}
+		if req.Reasoning.MaxTokens > 0 {
+			r["max_tokens"] = req.Reasoning.MaxTokens
+		}
+		if req.Reasoning.Enabled != nil {
+			r["enabled"] = *req.Reasoning.Enabled
+		}
+		if req.Reasoning.Exclude != nil {
+			r["exclude"] = *req.Reasoning.Exclude
 		}
 		if len(r) > 0 {
 			body["reasoning"] = r
@@ -686,10 +686,20 @@ func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
 		body["plugins"] = formatPlugins(req.Plugins)
 	}
 	if req.Cache != nil {
-		body["cache_control"] = map[string]string{"type": "ephemeral"}
+		body["cache_control"] = formatCacheControl(req.Cache)
 	}
 
 	return json.Marshal(body)
+}
+
+// formatCacheControl serializes CacheControlConfig per the OpenRouter API spec.
+// Always includes type:"ephemeral". Includes ttl when set (e.g., "1h").
+func formatCacheControl(c *CacheControlConfig) map[string]string {
+	cc := map[string]string{"type": "ephemeral"}
+	if c.TTL != "" {
+		cc["ttl"] = c.TTL
+	}
+	return cc
 }
 
 // buildMessagesBody produces Anthropic-native JSON for /messages.
@@ -714,7 +724,7 @@ func buildMessagesBody(req *LLMRequest) ([]byte, error) {
 				{
 					"type":          "text",
 					"text":          systemContent,
-					"cache_control": map[string]string{"type": "ephemeral"},
+					"cache_control": formatCacheControl(req.Cache),
 				},
 			}
 		} else {
@@ -798,11 +808,17 @@ type openRouterToolFunction struct {
 }
 
 type openRouterUsage struct {
-	PromptTokens             int     `json:"prompt_tokens"`
-	CompletionTokens         int     `json:"completion_tokens"`
-	TotalCost                float64 `json:"total_cost"`
-	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	PromptTokens        int                  `json:"prompt_tokens"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalCost           float64              `json:"total_cost"`
+	Cost                float64              `json:"cost"`
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
+}
+
+// promptTokensDetails holds cache metrics from the chat/completions endpoint.
+type promptTokensDetails struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 // parseLLMResponse converts the chat/completions API response into an LLMResponse.
@@ -826,9 +842,16 @@ func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
 	if apiResp.Usage != nil {
 		resp.InputTokens = apiResp.Usage.PromptTokens
 		resp.OutputTokens = apiResp.Usage.CompletionTokens
-		resp.CostUSD = apiResp.Usage.TotalCost
-		resp.CacheReadTokens = apiResp.Usage.CacheReadInputTokens
-		resp.CacheCreationTokens = apiResp.Usage.CacheCreationInputTokens
+		// OpenRouter uses "cost" at top-level; fall back to "total_cost" for compat.
+		resp.CostUSD = apiResp.Usage.Cost
+		if resp.CostUSD == 0 {
+			resp.CostUSD = apiResp.Usage.TotalCost
+		}
+		// Cache tokens from prompt_tokens_details (chat/completions format).
+		if apiResp.Usage.PromptTokensDetails != nil {
+			resp.CacheReadTokens = apiResp.Usage.PromptTokensDetails.CachedTokens
+			resp.CacheCreationTokens = apiResp.Usage.PromptTokensDetails.CacheWriteTokens
+		}
 	}
 
 	return resp
