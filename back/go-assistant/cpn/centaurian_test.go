@@ -366,7 +366,7 @@ func TestCanFire_BackwardCompatibility(t *testing.T) {
 
 // --- Mode switch tests ---
 
-func TestCheckModeSwitch_MAStoSentaurian(t *testing.T) {
+func TestCheckModeSwitch_MAStoCentaurian(t *testing.T) {
 	pComp := NewPlace("P1", ColorHuman, SpaceComputation)
 	_ = pComp.Deposit(humanToken())
 
