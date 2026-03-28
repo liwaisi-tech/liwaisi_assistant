@@ -1,7 +1,9 @@
 package cpn
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -38,9 +40,6 @@ func TestNewSession(t *testing.T) {
 	if cap(sess.Stream) != DefaultStreamBuffer {
 		t.Fatalf("Stream cap = %d, want %d", cap(sess.Stream), DefaultStreamBuffer)
 	}
-	if len(sess.HITLInject) != 0 {
-		t.Fatalf("HITLInject should be empty, got %d entries", len(sess.HITLInject))
-	}
 	if sess.Messages() != nil {
 		t.Fatal("Messages() should return nil for empty history")
 	}
@@ -57,12 +56,12 @@ func TestSession_RegisterHITL_Valid(t *testing.T) {
 		t.Fatalf("RegisterHITL valid: %v", err)
 	}
 
-	sess.mu.RLock()
-	got, ok := sess.HITLInject["T:HITL"]
-	sess.mu.RUnlock()
-	if !ok || got != ch {
-		t.Fatal("channel should be stored in HITLInject")
+	// Verify registration through public API: ResolveHITL should succeed.
+	ctx := context.Background()
+	if err := sess.ResolveHITL(ctx, "T:HITL", HITLResponse{Action: HITLApprove}); err != nil {
+		t.Fatalf("ResolveHITL after register: %v", err)
 	}
+	<-ch // drain
 }
 
 func TestSession_RegisterHITL_NonExistent(t *testing.T) {
@@ -121,7 +120,8 @@ func TestSession_UnregisterHITL(t *testing.T) {
 	}
 	sess.UnregisterHITL("T:HITL")
 
-	err := sess.ResolveHITL("T:HITL", HITLResponse{Action: HITLApprove})
+	ctx := context.Background()
+	err := sess.ResolveHITL(ctx, "T:HITL", HITLResponse{Action: HITLApprove})
 	if !errors.Is(err, ErrNoHITLWaiting) {
 		t.Fatalf("expected ErrNoHITLWaiting after unregister, got %v", err)
 	}
@@ -141,8 +141,9 @@ func TestSession_ResolveHITL_Success(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
+	ctx := context.Background()
 	resp := HITLResponse{Action: HITLApprove, Content: "looks good"}
-	if err := sess.ResolveHITL("T:HITL", resp); err != nil {
+	if err := sess.ResolveHITL(ctx, "T:HITL", resp); err != nil {
 		t.Fatalf("ResolveHITL: %v", err)
 	}
 
@@ -181,7 +182,8 @@ func TestSession_ResolveHITL_Success(t *testing.T) {
 func TestSession_ResolveHITL_NoWaiting(t *testing.T) {
 	sess := testSessionWithHITL()
 
-	err := sess.ResolveHITL("T:HITL", HITLResponse{Action: HITLApprove})
+	ctx := context.Background()
+	err := sess.ResolveHITL(ctx, "T:HITL", HITLResponse{Action: HITLApprove})
 	if !errors.Is(err, ErrNoHITLWaiting) {
 		t.Fatalf("expected ErrNoHITLWaiting, got %v", err)
 	}
@@ -195,8 +197,9 @@ func TestSession_ResolveHITL_TokenMetadata(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
+	ctx := context.Background()
 	before := time.Now()
-	if err := sess.ResolveHITL("T:HITL", HITLResponse{Action: HITLRevise, Content: "fix this"}); err != nil {
+	if err := sess.ResolveHITL(ctx, "T:HITL", HITLResponse{Action: HITLRevise, Content: "fix this"}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	after := time.Now()
@@ -204,6 +207,27 @@ func TestSession_ResolveHITL_TokenMetadata(t *testing.T) {
 	tok := <-ch
 	if tok.Timestamp.Before(before) || tok.Timestamp.After(after) {
 		t.Errorf("Timestamp %v not in [%v, %v]", tok.Timestamp, before, after)
+	}
+}
+
+func TestSession_ResolveHITL_ContextCancellation(t *testing.T) {
+	sess := testSessionWithHITL()
+	// Unbuffered channel — send will block.
+	ch := make(chan Token)
+
+	if err := sess.RegisterHITL("T:HITL", ch); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := sess.ResolveHITL(ctx, "T:HITL", HITLResponse{Action: HITLApprove})
+	if err == nil {
+		t.Fatal("expected error on canceled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
@@ -285,24 +309,25 @@ func TestSession_Messages_EmptyReturnsNil(t *testing.T) {
 func TestSession_Concurrent_HITLRegisterResolve(t *testing.T) {
 	transitions := make(map[string]*Transition)
 	for i := range 100 {
-		id := "T:HITL-" + itoa(i)
+		id := "T:HITL-" + strconv.Itoa(i)
 		transitions[id] = &Transition{ID: id, Kind: NodeKindHITL}
 	}
 	root := &CPN{ID: "root", Transitions: transitions}
 	sess := NewSession("sess-conc", "u1", ChannelWeb, root)
 
+	ctx := context.Background()
 	var wg sync.WaitGroup
 	for i := range 100 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			id := "T:HITL-" + itoa(idx)
+			id := "T:HITL-" + strconv.Itoa(idx)
 			ch := make(chan Token, 1)
 			if err := sess.RegisterHITL(id, ch); err != nil {
 				t.Errorf("register %s: %v", id, err)
 				return
 			}
-			if err := sess.ResolveHITL(id, HITLResponse{Action: HITLApprove}); err != nil {
+			if err := sess.ResolveHITL(ctx, id, HITLResponse{Action: HITLApprove}); err != nil {
 				t.Errorf("resolve %s: %v", id, err)
 				return
 			}
@@ -322,9 +347,9 @@ func TestSession_Concurrent_AppendMessages(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			sess.AppendMessage(&Message{
-				ID:      "m-" + itoa(idx),
+				ID:      "m-" + strconv.Itoa(idx),
 				Role:    RoleUser,
-				Content: "msg " + itoa(idx),
+				Content: "msg " + strconv.Itoa(idx),
 			})
 			_ = sess.Messages()
 		}(i)
@@ -335,19 +360,4 @@ func TestSession_Concurrent_AppendMessages(t *testing.T) {
 	if len(got) != 100 {
 		t.Fatalf("Messages() len = %d, want 100", len(got))
 	}
-}
-
-// itoa is a minimal int-to-string helper to avoid importing strconv.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

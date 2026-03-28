@@ -126,10 +126,10 @@ type Session struct {
 	// Buffered with DefaultStreamBuffer capacity.
 	Stream chan StreamChunk
 
-	// HITLInject maps transition IDs to their HITL input channels.
+	// hitlInject maps transition IDs to their HITL input channels.
 	// Populated by RegisterHITL when HITL transitions block.
 	// Read by ResolveHITL when the human responds.
-	HITLInject map[string]chan Token
+	hitlInject map[string]chan Token
 
 	// History is the user-facing conversation log.
 	// Distinct from CPN.History (which is LLM context).
@@ -151,7 +151,7 @@ func NewSession(id, userID string, channel ChannelType, root *CPN) *Session {
 		Channel:    channel,
 		Root:       root,
 		Stream:     make(chan StreamChunk, DefaultStreamBuffer),
-		HITLInject: make(map[string]chan Token),
+		hitlInject: make(map[string]chan Token),
 		CreatedAt:  time.Now(),
 	}
 }
@@ -175,10 +175,10 @@ func (s *Session) RegisterHITL(transitionID string, ch chan Token) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.HITLInject[transitionID]; exists {
+	if _, exists := s.hitlInject[transitionID]; exists {
 		return fmt.Errorf("register HITL %q: %w", transitionID, ErrHITLAlreadyRegistered)
 	}
-	s.HITLInject[transitionID] = ch
+	s.hitlInject[transitionID] = ch
 	return nil
 }
 
@@ -187,16 +187,17 @@ func (s *Session) RegisterHITL(transitionID string, ch chan Token) error {
 func (s *Session) UnregisterHITL(transitionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.HITLInject, transitionID)
+	delete(s.hitlInject, transitionID)
 }
 
 // ResolveHITL wraps the human's response as a ColorHuman token and
 // sends it to the registered HITL channel for the given transition.
 // Returns ErrNoHITLWaiting if no channel is registered for the ID.
+// Respects context cancellation to prevent goroutine leaks on stale channels.
 // Thread-safe.
-func (s *Session) ResolveHITL(transitionID string, resp HITLResponse) error {
+func (s *Session) ResolveHITL(ctx context.Context, transitionID string, resp HITLResponse) error {
 	s.mu.RLock()
-	ch, ok := s.HITLInject[transitionID]
+	ch, ok := s.hitlInject[transitionID]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -214,8 +215,12 @@ func (s *Session) ResolveHITL(transitionID string, resp HITLResponse) error {
 		Timestamp:   time.Now(),
 	}
 
-	ch <- tok
-	return nil
+	select {
+	case ch <- tok:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("resolve HITL %q: %w", transitionID, ctx.Err())
+	}
 }
 
 // AppendMessage adds a message to the session's conversation history.
@@ -249,6 +254,6 @@ type ChannelAdapter interface {
 	// Receive blocks until a user message arrives from the external channel.
 	Receive(ctx context.Context) (Message, error)
 
-	// ChannelType returns the channel type this adapter handles.
-	ChannelType() ChannelType
+	// Channel returns the channel type this adapter handles.
+	Channel() ChannelType
 }
