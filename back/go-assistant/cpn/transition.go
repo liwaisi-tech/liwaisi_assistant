@@ -128,7 +128,15 @@ func NewTransition(id string, kind NodeKind, inputPlaces, outputPlaces []string)
 //
 // CanFire does not modify any place state — it uses Peek (read-only).
 // Safe for concurrent calls (Place.Peek is mutex-protected).
+//
+// Delegates to canFireWith with t.Guard. Signature unchanged from Block 3.
 func (t *Transition) CanFire(places map[string]*Place) bool {
+	return t.canFireWith(places, t.Guard)
+}
+
+// canFireWith evaluates firability using the provided guard instead of t.Guard.
+// Used by CPN.effectiveCanFire to inject the centaurian guard without mutation.
+func (t *Transition) canFireWith(places map[string]*Place, guard func([]*Token) bool) bool {
 	// Circuit breaker check (Block 4).
 	if t.cbState != nil && !t.cbState.Allow() {
 		return false
@@ -151,8 +159,8 @@ func (t *Transition) CanFire(places map[string]*Place) bool {
 		tokens = append(tokens, ts...)
 	}
 
-	if t.Guard != nil {
-		return t.Guard(tokens)
+	if guard != nil {
+		return guard(tokens)
 	}
 	return true
 }
