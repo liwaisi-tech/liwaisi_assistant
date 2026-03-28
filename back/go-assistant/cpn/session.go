@@ -1,6 +1,11 @@
 package cpn
 
-import "time"
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+)
 
 // ChannelType identifies the external channel through which a user session originates.
 type ChannelType string
@@ -95,4 +100,160 @@ type HITLResponse struct {
 	// Content carries revised input when Action == HITLRevise.
 	// Empty for approve and reject actions.
 	Content string
+}
+
+// DefaultStreamBuffer is the buffer capacity for the Session.Stream channel.
+const DefaultStreamBuffer = 64
+
+// Session binds a user to their root CPN and streaming channel.
+// The Session is the ONLY interface the user sees (Axiom A10).
+// No topology, depth, or mode is exposed — only the stream from
+// the surface space of the root CPN.
+type Session struct {
+	// ID is the opaque session identifier (UUID v4).
+	ID string
+
+	// UserID identifies the human user.
+	UserID string
+
+	// Channel is the communication channel type (web, whatsapp, telegram).
+	Channel ChannelType
+
+	// Root is the depth=0 CPN that handles this session's processing.
+	Root *CPN
+
+	// Stream carries StreamChunks from the CPN to the channel adapter.
+	// Buffered with DefaultStreamBuffer capacity.
+	Stream chan StreamChunk
+
+	// hitlInject maps transition IDs to their HITL input channels.
+	// Populated by RegisterHITL when HITL transitions block.
+	// Read by ResolveHITL when the human responds.
+	hitlInject map[string]chan Token
+
+	// History is the user-facing conversation log.
+	// Distinct from CPN.History (which is LLM context).
+	history []Message
+
+	// CreatedAt records when this session was created.
+	CreatedAt time.Time
+
+	mu sync.RWMutex
+}
+
+// NewSession creates a Session binding a user to a root CPN.
+// The Stream channel is buffered, HITLInject map is empty,
+// and CreatedAt is set to the current time.
+func NewSession(id, userID string, channel ChannelType, root *CPN) *Session {
+	return &Session{
+		ID:         id,
+		UserID:     userID,
+		Channel:    channel,
+		Root:       root,
+		Stream:     make(chan StreamChunk, DefaultStreamBuffer),
+		hitlInject: make(map[string]chan Token),
+		CreatedAt:  time.Now(),
+	}
+}
+
+// RegisterHITL registers a HITL channel for a specific transition.
+// Validates: transition exists in Root CPN, Kind is NodeKindHITL,
+// not already registered. Thread-safe.
+func (s *Session) RegisterHITL(transitionID string, ch chan Token) error {
+	if s.Root == nil {
+		return fmt.Errorf("register HITL %q: root CPN is nil", transitionID)
+	}
+
+	t, ok := s.Root.Transitions[transitionID]
+	if !ok {
+		return fmt.Errorf("register HITL %q: transition not found in root CPN", transitionID)
+	}
+	if t.Kind != NodeKindHITL {
+		return fmt.Errorf("register HITL %q: transition kind is %s, not %s", transitionID, t.Kind, NodeKindHITL)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.hitlInject[transitionID]; exists {
+		return fmt.Errorf("register HITL %q: %w", transitionID, ErrHITLAlreadyRegistered)
+	}
+	s.hitlInject[transitionID] = ch
+	return nil
+}
+
+// UnregisterHITL removes a HITL channel registration.
+// No-op if the transition ID is not registered. Thread-safe.
+func (s *Session) UnregisterHITL(transitionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.hitlInject, transitionID)
+}
+
+// ResolveHITL wraps the human's response as a ColorHuman token and
+// sends it to the registered HITL channel for the given transition.
+// Returns ErrNoHITLWaiting if no channel is registered for the ID.
+// Respects context cancellation to prevent goroutine leaks on stale channels.
+// Thread-safe.
+func (s *Session) ResolveHITL(ctx context.Context, transitionID string, resp HITLResponse) error {
+	s.mu.RLock()
+	ch, ok := s.hitlInject[transitionID]
+	s.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("resolve HITL %q: %w", transitionID, ErrNoHITLWaiting)
+	}
+
+	tok := Token{
+		Color:       ColorHuman,
+		Payload:     resp,
+		OriginID:    "human",
+		OriginDepth: -1,
+		OriginKind:  NodeKindHITL,
+		Space:       SpaceSurface,
+		SessionID:   s.ID,
+		Timestamp:   time.Now(),
+	}
+
+	select {
+	case ch <- tok:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("resolve HITL %q: %w", transitionID, ctx.Err())
+	}
+}
+
+// AppendMessage adds a message to the session's conversation history.
+// Thread-safe (write lock).
+func (s *Session) AppendMessage(msg *Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.history = append(s.history, *msg)
+}
+
+// Messages returns a copy of the conversation history.
+// Thread-safe (read lock). Returned slice is safe to iterate without locks.
+func (s *Session) Messages() []Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.history) == 0 {
+		return nil
+	}
+	cp := make([]Message, len(s.history))
+	copy(cp, s.history)
+	return cp
+}
+
+// ChannelAdapter abstracts delivery of stream chunks and receipt of user
+// messages over a specific communication channel.
+// Concrete implementations are provided by infrastructure packages.
+type ChannelAdapter interface {
+	// Send delivers a stream chunk to the external channel (e.g., SSE, webhook).
+	Send(ctx context.Context, chunk StreamChunk) error
+
+	// Receive blocks until a user message arrives from the external channel.
+	Receive(ctx context.Context) (Message, error)
+
+	// Channel returns the channel type this adapter handles.
+	Channel() ChannelType
 }
