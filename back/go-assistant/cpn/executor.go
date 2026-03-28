@@ -207,7 +207,8 @@ func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 
 // dispatch routes a transition to the correct fire function based on Kind.
 // NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10),
-// NodeKindSubNet (Block 12), and NodeKindHITL (Block 14) are implemented.
+// NodeKindSubNet (Block 12), NodeKindHITL (Block 14), and NodeKindHITL
+// with RevisionLoop (Block 15) are implemented.
 func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
 	switch t.Kind {
 	case NodeKindTool:

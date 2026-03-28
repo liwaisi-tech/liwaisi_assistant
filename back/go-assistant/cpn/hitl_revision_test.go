@@ -175,6 +175,22 @@ func TestFireHITLWithRevision_Reject(t *testing.T) {
 	}
 }
 
+func TestFireHITLWithRevision_RejectAfterRevisions(t *testing.T) {
+	c, ch := revisionTestCPN(3, []string{"rev1"})
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ch <- reviseToken("fix it")
+		time.Sleep(50 * time.Millisecond)
+		ch <- rejectToken()
+	}()
+
+	err := c.Run(context.Background())
+	if !errors.Is(err, ErrHITLRejected) {
+		t.Fatalf("expected ErrHITLRejected after revision, got %v", err)
+	}
+}
+
 // ── Max Revisions ───────────────────────────────────────────────────────────
 
 func TestFireHITLWithRevision_MaxRevisions(t *testing.T) {
@@ -253,7 +269,22 @@ func TestFireHITLWithRevision_StringPayloadAsApprove(t *testing.T) {
 	}
 }
 
-// ── Missing Correction Transition ───────────────────────────────────────────
+// ── Missing / Empty Correction Transition ────────────────────────────────────
+
+func TestFireHITLWithRevision_EmptyCorrectionLLMID(t *testing.T) {
+	c, ch := revisionTestCPN(3, nil)
+	c.Transitions["T:HITL_REV"].HITLConfig.CorrectionLLMID = ""
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ch <- reviseToken("fix it")
+	}()
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty CorrectionLLMID, got nil")
+	}
+}
 
 func TestFireHITLWithRevision_MissingCorrectionTransition(t *testing.T) {
 	c, ch := revisionTestCPN(3, []string{"shouldn't be called"})
@@ -508,6 +539,92 @@ func TestFireLLMDirect_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("expected connection refused error, got: %v", err)
+	}
+}
+
+func TestFireLLMDirect_NilLLMClient(t *testing.T) {
+	transitions := map[string]*Transition{
+		"T:CORR": {
+			ID: "T:CORR", Kind: NodeKindLLM,
+			SystemPrompt: "Fix it.",
+			LLMConfig:    &LLMConfig{Model: "test", MaxTokens: 512},
+		},
+	}
+	c := NewCPN("test-nil", "worker", 0, ModeMAS, "sess-n", map[string]*Place{}, transitions)
+	// LLMClient deliberately nil.
+
+	input := Token{Color: ColorString, Payload: "bad"}
+	_, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	if err == nil {
+		t.Fatal("expected error for nil LLMClient, got nil")
+	}
+	if !strings.Contains(err.Error(), "nil LLMClient") {
+		t.Errorf("expected nil LLMClient error, got: %v", err)
+	}
+}
+
+func TestFireLLMDirect_RequireJSON(t *testing.T) {
+	mock := sequentialMockLLM([]string{`{"result":"ok"}`})
+	transitions := map[string]*Transition{
+		"T:CORR": {
+			ID: "T:CORR", Kind: NodeKindLLM,
+			SystemPrompt: "Fix JSON.",
+			LLMConfig:    &LLMConfig{Model: "test", MaxTokens: 512, RequireJSON: true},
+		},
+	}
+	c := NewCPN("test-json", "worker", 0, ModeMAS, "sess-j", map[string]*Place{}, transitions)
+	c.LLMClient = mock
+
+	input := Token{Color: ColorString, Payload: "bad json"}
+	result, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result != `{"result":"ok"}` {
+		t.Errorf("expected JSON result, got %q", result)
+	}
+
+	// Verify the request had ResponseFmt set.
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].ResponseFmt != "json_object" {
+		t.Errorf("expected ResponseFmt=json_object, got %q", calls[0].ResponseFmt)
+	}
+}
+
+func TestFireLLMDirect_FallbackDefaults(t *testing.T) {
+	mock := sequentialMockLLM([]string{"fixed"})
+	transitions := map[string]*Transition{
+		"T:CORR": {
+			ID:   "T:CORR",
+			Kind: NodeKindLLM,
+			// No SystemPrompt, no LLMConfig — exercises all fallback paths.
+		},
+	}
+	c := NewCPN("test-defaults", "worker", 0, ModeMAS, "sess-def", map[string]*Place{}, transitions)
+	c.LLMClient = mock
+
+	input := Token{Color: ColorString, Payload: "bad"}
+	result, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result != "fixed" {
+		t.Errorf("expected 'fixed', got %q", result)
+	}
+
+	// Verify fallback model and maxTokens.
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Model != "structured" {
+		t.Errorf("expected fallback model 'structured', got %q", calls[0].Model)
+	}
+	if calls[0].MaxTokens != 1024 {
+		t.Errorf("expected fallback maxTokens 1024, got %d", calls[0].MaxTokens)
 	}
 }
 
