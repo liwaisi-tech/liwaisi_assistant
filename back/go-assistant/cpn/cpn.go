@@ -47,6 +47,12 @@ type CPN struct {
 	// Implemented by GroupAgent (Block 11).
 	GroupNotifier GroupNotifier
 
+	// Metrics records execution metrics. If nil, no metrics are collected (REQ-015).
+	Metrics *MetricsRecorder
+
+	// Cost provides session cost data for ranking. If nil, cost defaults to 0 (REQ-016).
+	Cost CostProvider
+
 	// EventEmitter is the channel where this CPN's events are sent.
 	// Read by the parent CPN's observer transitions and GroupAgent.Deliver.
 	// Nil if this CPN is not a sub-CPN.

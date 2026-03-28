@@ -41,6 +41,24 @@ func (c *CPN) Run(ctx context.Context) error {
 	// REQ-004: Set running after successful validation.
 	c.setState(StateRunning)
 
+	// Block 18: Create execution tracker if metrics are enabled (REQ-013).
+	var tracker *executionTracker
+	if c.Metrics != nil {
+		tracker = newExecutionTracker(c.ID, c.Role, c.Depth, c.SessionID)
+	}
+	// PAT-003: Defer-based finalization captures metrics on all exit paths (REQ-013, CON-005).
+	defer func() {
+		if tracker == nil {
+			return
+		}
+		var costUSD float64
+		if c.Cost != nil {
+			costUSD = c.Cost.SessionCostUSD(c.SessionID)
+		}
+		rec := tracker.Finalize(c.getState() == StateCompleted, costUSD)
+		c.Metrics.Append(&rec)
+	}()
+
 	for {
 		// REQ-015: Check context cancellation.
 		select {
@@ -108,6 +126,17 @@ func (c *CPN) Run(ctx context.Context) error {
 		// SEC-002: Wait for all goroutines before processing errors.
 		wg.Wait()
 		close(errCh)
+
+		// Block 18: Record transition firings for metrics (REQ-014, GUD-004).
+		// Recorded after wg.Wait() and BEFORE error processing so that all
+		// dispatched transitions are counted regardless of success or failure —
+		// the firing happened, the LLM call was made, the cost was incurred.
+		if tracker != nil {
+			for _, f := range firings {
+				tracker.RecordTransitionFired(f.transition.Kind)
+				tracker.RecordTokensProduced(len(f.transition.OutputPlaces))
+			}
+		}
 
 		// Process errors from fire goroutines.
 		for fr := range errCh {
