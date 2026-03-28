@@ -70,22 +70,20 @@ func TestFlowLibrary_ConcurrentAccess(t *testing.T) {
 	wg.Add(goroutines * 2)
 
 	// Writers
-	for i := range goroutines {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			cpn := &CPN{ID: "cpn-write"}
 			fl.Register(cpn, "hash-concurrent")
 		}()
-		_ = i
 	}
 
 	// Readers
-	for i := range goroutines {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			fl.Get("hash-concurrent")
 		}()
-		_ = i
 	}
 
 	wg.Wait()

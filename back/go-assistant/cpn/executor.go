@@ -127,6 +127,17 @@ func (c *CPN) Run(ctx context.Context) error {
 		wg.Wait()
 		close(errCh)
 
+		// Block 18: Record transition firings for metrics (REQ-014, GUD-004).
+		// Recorded after wg.Wait() and BEFORE error processing so that all
+		// dispatched transitions are counted regardless of success or failure —
+		// the firing happened, the LLM call was made, the cost was incurred.
+		if tracker != nil {
+			for _, f := range firings {
+				tracker.RecordTransitionFired(f.transition.Kind)
+				tracker.RecordTokensProduced(len(f.transition.OutputPlaces))
+			}
+		}
+
 		// Process errors from fire goroutines.
 		for fr := range errCh {
 			t := c.Transitions[fr.transitionID]
@@ -156,14 +167,6 @@ func (c *CPN) Run(ctx context.Context) error {
 			// REQ-011: No ErrorPlace — CPN fails.
 			c.setFailed(fr.err)
 			return fr.err
-		}
-
-		// Block 18: Record transition firings for metrics (REQ-014, GUD-004).
-		if tracker != nil {
-			for _, f := range firings {
-				tracker.RecordTransitionFired(f.transition.Kind)
-				tracker.RecordTokensProduced(len(f.transition.OutputPlaces))
-			}
 		}
 
 		// REQ-012 (Block 16): Evaluate mode transition rules after each firing round.

@@ -93,7 +93,7 @@ type CostProvider interface {
 // Exported — shared across CPNs for aggregate ranking (GUD-002).
 type MetricsRecorder struct {
 	records []ExecutionRecord
-	mu      sync.Mutex
+	mu      sync.RWMutex
 }
 
 // NewMetricsRecorder creates an empty MetricsRecorder.
@@ -112,8 +112,8 @@ func (mr *MetricsRecorder) Append(rec *ExecutionRecord) {
 // Records returns a copy of all records (REQ-006).
 // Mutating the returned slice does not affect internal state (PAT-004).
 func (mr *MetricsRecorder) Records() []ExecutionRecord {
-	mr.mu.Lock()
-	defer mr.mu.Unlock()
+	mr.mu.RLock()
+	defer mr.mu.RUnlock()
 	if len(mr.records) == 0 {
 		return nil
 	}
@@ -124,7 +124,7 @@ func (mr *MetricsRecorder) Records() []ExecutionRecord {
 
 // Len returns the number of recorded executions.
 func (mr *MetricsRecorder) Len() int {
-	mr.mu.Lock()
-	defer mr.mu.Unlock()
+	mr.mu.RLock()
+	defer mr.mu.RUnlock()
 	return len(mr.records)
 }
