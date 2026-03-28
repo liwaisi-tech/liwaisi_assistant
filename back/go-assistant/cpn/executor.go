@@ -75,7 +75,7 @@ func (c *CPN) Run(ctx context.Context) error {
 		}
 		var firings []firing
 		for _, t := range firable {
-			if !t.CanFire(c.Places) {
+			if !c.effectiveCanFire(t) {
 				continue // PAT-002: re-check after prior consumption
 			}
 			consumed := consumeAll(t.InputPlaces, c.Places)
@@ -139,6 +139,11 @@ func (c *CPN) Run(ctx context.Context) error {
 			c.setFailed(fr.err)
 			return fr.err
 		}
+
+		// REQ-012 (Block 16): Evaluate mode transition rules after each firing round.
+		// checkModeSwitch runs after wg.Wait() + error processing, ensuring all
+		// firings are complete and token deposits are visible.
+		c.checkModeSwitch()
 	}
 }
 
@@ -174,13 +179,14 @@ func (c *CPN) checkCompletionOrDeadlock() error {
 }
 
 // collectFirable returns transitions that can fire, excluding observers.
+// Uses effectiveCanFire to apply mode-aware guard injection (Block 16).
 func (c *CPN) collectFirable() []*Transition {
 	var firable []*Transition
 	for _, t := range c.Transitions {
 		if t.Kind == NodeKindObserver {
 			continue
 		}
-		if t.CanFire(c.Places) {
+		if c.effectiveCanFire(t) {
 			firable = append(firable, t)
 		}
 	}

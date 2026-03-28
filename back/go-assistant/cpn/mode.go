@@ -11,6 +11,26 @@ const (
 	ModeCentaurian Mode = "centaurian"
 )
 
+// centaurianGuard returns true only when tokens contain BOTH a human-origin
+// and a non-human-origin token. This is the core Centaurian invariant:
+// neither human nor AI can trigger computation alone.
+//
+// Used by effectiveGuard for automatic injection in ModeCentaurian.
+func centaurianGuard(tokens []*Token) bool {
+	var hasHuman, hasAI bool
+	for _, tok := range tokens {
+		if tok.IsHumanOrigin() {
+			hasHuman = true
+		} else {
+			hasAI = true
+		}
+		if hasHuman && hasAI {
+			return true
+		}
+	}
+	return false
+}
+
 // State represents the lifecycle state of a CPN instance.
 type State string
 

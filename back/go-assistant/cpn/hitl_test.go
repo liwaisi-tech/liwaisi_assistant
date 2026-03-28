@@ -290,8 +290,11 @@ func TestFireHITL_EventModeSwitch(t *testing.T) {
 	for _, e := range events {
 		if e.Type == EventModeSwitch {
 			hasModeSwitch = true
-			if e.Payload != ModeCentaurian {
-				t.Errorf("expected ModeCentaurian payload, got %v", e.Payload)
+			payload, ok := e.Payload.(map[string]Mode)
+			if !ok {
+				t.Errorf("expected map[string]Mode payload, got %T", e.Payload)
+			} else if payload["to"] != ModeCentaurian {
+				t.Errorf("expected to=ModeCentaurian, got %v", payload["to"])
 			}
 		}
 	}

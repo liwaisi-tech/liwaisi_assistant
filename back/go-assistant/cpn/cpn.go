@@ -161,14 +161,124 @@ func (c *CPN) emit(e *Event) {
 // switchModeToCentaurian sets Mode to ModeCentaurian and emits EventModeSwitch.
 // REQ-013: Called when a human token enters a SpaceComputation place via HITL.
 func (c *CPN) switchModeToCentaurian() {
+	c.setMode(ModeCentaurian)
+}
+
+// setMode is the internal helper that handles mode transitions with event emission.
+// Emits EventModeSwitch with map{"from": old, "to": new} payload.
+// No-op if the mode is already set to the target value.
+func (c *CPN) setMode(newMode Mode) {
 	c.mu.Lock()
-	c.Mode = ModeCentaurian
+	old := c.Mode
+	if old == newMode {
+		c.mu.Unlock()
+		return
+	}
+	c.Mode = newMode
 	c.mu.Unlock()
 
 	c.emit(&Event{
 		Type:    EventModeSwitch,
-		Payload: ModeCentaurian,
+		Payload: map[string]Mode{"from": old, "to": newMode},
 	})
+}
+
+// SetMode explicitly sets the CPN mode. Thread-safe.
+// Allows parent CPNs to override mode regardless of token state.
+func (c *CPN) SetMode(mode Mode) {
+	c.setMode(mode)
+}
+
+// getMode returns the CPN mode under read lock.
+func (c *CPN) getMode() Mode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Mode
+}
+
+// isComputationTransition returns true if any output place is SpaceComputation.
+func (c *CPN) isComputationTransition(t *Transition) bool {
+	for _, pid := range t.OutputPlaces {
+		p, ok := c.Places[pid]
+		if ok && p.Space == SpaceComputation {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveGuard returns the guard to use for a transition considering mode.
+// In ModeCentaurian + computation transition: injects centaurianGuard.
+// Composes with custom guard if one exists (AND semantics).
+// In ModeMAS or for non-computation transitions: returns t.Guard unchanged.
+func (c *CPN) effectiveGuard(t *Transition) func([]*Token) bool {
+	if c.getMode() != ModeCentaurian {
+		return t.Guard
+	}
+	if !c.isComputationTransition(t) {
+		return t.Guard
+	}
+
+	// Computation transition in Centaurian mode: inject centaurianGuard.
+	if t.Guard == nil {
+		return centaurianGuard
+	}
+
+	// Compose: both centaurian AND custom guard must pass.
+	custom := t.Guard
+	return func(tokens []*Token) bool {
+		return centaurianGuard(tokens) && custom(tokens)
+	}
+}
+
+// effectiveCanFire evaluates whether a transition can fire in the current mode.
+// Replaces direct t.CanFire(c.Places) calls in the executor.
+func (c *CPN) effectiveCanFire(t *Transition) bool {
+	return t.canFireWith(c.Places, c.effectiveGuard(t))
+}
+
+// checkModeSwitch evaluates mode transition rules after each firing round.
+//
+// MAS → Centaurian: when any SpaceComputation place contains a human-origin token.
+// Centaurian → MAS: when NO SpaceComputation place contains human-origin tokens
+// AND no HITL transition is firable.
+func (c *CPN) checkModeSwitch() {
+	hasHumanInComputation := false
+	for _, p := range c.Places {
+		if p.Space != SpaceComputation {
+			continue
+		}
+		tokens, ok := p.Peek()
+		if !ok {
+			continue
+		}
+		for _, tok := range tokens {
+			if tok.IsHumanOrigin() {
+				hasHumanInComputation = true
+				break
+			}
+		}
+		if hasHumanInComputation {
+			break
+		}
+	}
+
+	currentMode := c.getMode()
+
+	if currentMode == ModeMAS && hasHumanInComputation {
+		c.setMode(ModeCentaurian)
+		return
+	}
+
+	if currentMode == ModeCentaurian && !hasHumanInComputation {
+		// Check if any HITL transition is firable — if so, stay in Centaurian.
+		for _, t := range c.Transitions {
+			if t.Kind == NodeKindHITL && t.CanFire(c.Places) {
+				return
+			}
+		}
+		c.setMode(ModeMAS)
+	}
 }
 
 // registerSubNetBus registers a child's event bus channel for observer draining.
