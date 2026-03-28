@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,38 @@ type LLMRequest struct {
 
 	// SessionID is passed to OpenRouter for per-user token tracking.
 	SessionID string
+
+	// ── v1.2 Extended Fields ────────────────────────────────────────────────
+
+	// FallbackModels lists alternative models tried in order.
+	FallbackModels []string
+
+	// Endpoint selects the API surface: EndpointChat or EndpointMessages.
+	Endpoint LLMEndpoint
+
+	// JSONSchema configures structured JSON output with a schema.
+	JSONSchema *JSONSchemaConfig
+
+	// ToolChoice controls tool selection ("auto", "none", or specific tool).
+	ToolChoice string
+
+	// Provider configures per-request routing.
+	Provider *ProviderConfig
+
+	// Trace configures observability trace fields.
+	Trace *TraceConfig
+
+	// Plugins lists active OpenRouter plugins.
+	Plugins []PluginConfig
+
+	// Reasoning configures reasoning/thinking behavior.
+	Reasoning *ReasoningConfig
+
+	// Cache configures prompt caching.
+	Cache *CacheControlConfig
+
+	// TraceID is a distributed trace identifier.
+	TraceID string
 }
 
 // LLMResponse is the output from LLMClient.Complete().
@@ -73,14 +106,35 @@ type LLMResponse struct {
 
 	// CostUSD is the actual cost reported by OpenRouter.
 	CostUSD float64
+
+	// ── v1.2 Extended Fields ────────────────────────────────────────────────
+
+	// ThinkingBlocks contains extended thinking content from Anthropic models.
+	ThinkingBlocks []ThinkingBlock
+
+	// CacheReadTokens is the number of tokens read from the cache.
+	CacheReadTokens int
+
+	// CacheCreationTokens is the number of tokens used to create the cache.
+	CacheCreationTokens int
+
+	// StopReason indicates why the model stopped generating.
+	StopReason string
 }
 
 // LLMConfig is per-transition model selection and budget constraints.
-// Used by fireLLM (Block 9) to configure LLMRequest parameters.
+// v1.2 replaces v1.1 — all 6 original fields remain, 8 new fields added.
+// Widening is backward-compatible: existing code using v1.1 fields compiles unchanged.
 type LLMConfig struct {
 	// Model is an OpenRouter model string or ModelRegistry key.
 	// If empty, falls back to OpenRouterClient.DefaultModel.
 	Model string
+
+	// FallbackModels lists alternative models tried in order if Model is unavailable.
+	FallbackModels []string
+
+	// Endpoint selects the API surface: EndpointChat or EndpointMessages.
+	Endpoint LLMEndpoint
 
 	// MaxTokens is the hard cap for the completion. Required.
 	MaxTokens int
@@ -94,8 +148,88 @@ type LLMConfig struct {
 	// RequireJSON sets response_format to json_object.
 	RequireJSON bool
 
+	// JSONSchema configures structured JSON output with a schema.
+	JSONSchema *JSONSchemaConfig
+
 	// Budget is the per-call cost ceiling in USD. 0 disables budget check.
 	Budget float64
+
+	// Provider configures per-request routing: sort, ZDR, max price.
+	Provider *ProviderConfig
+
+	// Trace configures observability trace fields.
+	Trace *TraceConfig
+
+	// Plugins lists active OpenRouter plugins for this request.
+	Plugins []PluginConfig
+
+	// Reasoning configures reasoning/thinking behavior.
+	Reasoning *ReasoningConfig
+
+	// CacheControl configures Anthropic prompt caching.
+	CacheControl *CacheControlConfig
+}
+
+// ── v1.2 Sub-Types ──────────────────────────────────────────────────────────
+
+// JSONSchemaConfig configures structured JSON output.
+type JSONSchemaConfig struct {
+	Name        string
+	Description string
+	Schema      json.RawMessage
+	Strict      *bool
+}
+
+// ProviderConfig configures per-request OpenRouter provider routing.
+type ProviderConfig struct {
+	Order             []string
+	Only              []string
+	Ignore            []string
+	AllowFallbacks    *bool
+	Sort              string
+	MaxPrice          *ProviderMaxPrice
+	DataCollection    string
+	ZDR               bool
+	RequireParameters bool
+}
+
+// ProviderMaxPrice caps per-unit pricing for provider selection.
+type ProviderMaxPrice struct {
+	Prompt     string
+	Completion string
+	Image      string
+	Audio      string
+	Request    string
+}
+
+// TraceConfig configures observability fields sent to OpenRouter.
+type TraceConfig struct {
+	TraceID        string
+	TraceName      string
+	SpanName       string
+	GenerationName string
+	ParentSpanID   string
+}
+
+// PluginConfig configures an OpenRouter plugin.
+type PluginConfig struct {
+	ID      string
+	Enabled *bool
+	Options map[string]any
+}
+
+// ReasoningConfig configures reasoning/thinking behavior.
+type ReasoningConfig struct {
+	Effort       string
+	Summary      string
+	MaxTokens    int
+	Enabled      *bool
+	BudgetTokens int
+}
+
+// CacheControlConfig configures Anthropic prompt caching.
+type CacheControlConfig struct {
+	TTL string
 }
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
@@ -108,6 +242,7 @@ var ModelRegistry = map[string]string{
 	"reasoning":    "anthropic/claude-sonnet-4-6",
 	"long-context": "google/gemini-2.0-pro-001",
 	"summarize":    "meta-llama/llama-3.3-8b-instruct",
+	"thinking":     "anthropic/claude-opus-4-6",
 }
 
 // modelCostTable holds per-model pricing in USD per 1M tokens.
@@ -118,6 +253,7 @@ var modelCostTable = map[string][2]float64{
 	"anthropic/claude-sonnet-4-6":         {3.00, 15.00},
 	"google/gemini-2.0-pro-001":           {1.25, 5.00},
 	"meta-llama/llama-3.3-8b-instruct":    {0.05, 0.08},
+	"anthropic/claude-opus-4-6":           {15.00, 75.00},
 }
 
 // ── OpenRouterClient ─────────────────────────────────────────────────────────
@@ -159,6 +295,7 @@ func (c *OpenRouterClient) String() string {
 }
 
 // Complete sends a request to the LLM and returns the response.
+// Routes to /chat/completions (EndpointChat, default) or /messages (EndpointMessages).
 func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
 	resolvedModel := c.resolveModel(req.Model)
 
@@ -166,12 +303,19 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 	resolved := *req
 	resolved.Model = resolvedModel
 
-	body, err := buildRequestBody(&resolved)
-	if err != nil {
-		return LLMResponse{}, fmt.Errorf("build request body: %w", err)
+	var body []byte
+	var endpoint string
+
+	switch resolved.Endpoint {
+	case EndpointMessages:
+		body = buildMessagesBody(&resolved)
+		endpoint = c.BaseURL + "/messages"
+	default: // EndpointChat or empty
+		body = buildCompletionsBody(&resolved)
+		endpoint = c.BaseURL + "/chat/completions"
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("create HTTP request: %w", err)
 	}
@@ -189,17 +333,24 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Drain body to allow connection reuse.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
 	}
 
-	var apiResp openRouterResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return LLMResponse{}, fmt.Errorf("decode response: %w", err)
+	var llmResp LLMResponse
+	switch resolved.Endpoint {
+	case EndpointMessages:
+		llmResp, err = parseMessagesResponse(resp.Body)
+	default:
+		var apiResp openRouterResponse
+		if err2 := json.NewDecoder(resp.Body).Decode(&apiResp); err2 != nil {
+			return LLMResponse{}, fmt.Errorf("decode response: %w", err2)
+		}
+		llmResp = parseLLMResponse(apiResp)
 	}
-
-	llmResp := parseLLMResponse(apiResp)
+	if err != nil {
+		return LLMResponse{}, err
+	}
 
 	if req.SessionID != "" {
 		c.TokenLedger.Record(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens, llmResp.CostUSD)
@@ -242,75 +393,368 @@ func (c *OpenRouterClient) resolveModel(model string) string {
 	return model
 }
 
-// ── Request Body Serialization ───────────────────────────────────────────────
+// ── Format Functions ────────────────────────────────────────────────────────
 
-// chatCompletionRequest is the OpenAI-compatible request body.
-type chatCompletionRequest struct {
-	Model          string              `json:"model"`
-	Messages       []*chatMessage      `json:"messages"`
-	MaxTokens      int                 `json:"max_tokens"`
-	Temperature    *float64            `json:"temperature,omitempty"`
-	Tools          []*chatTool         `json:"tools,omitempty"`
-	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
-	SessionID      string              `json:"session_id,omitempty"`
+// formatChatMessages converts LLMMessages to OpenAI chat format.
+// System messages remain in-place. Tool results use role "tool" with tool_call_id.
+func formatChatMessages(msgs []*LLMMessage) []map[string]any {
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		msg := map[string]any{
+			"role":    m.Role,
+			"content": m.Content,
+		}
+		if m.ToolCall != nil {
+			msg["tool_calls"] = []map[string]any{{
+				"id":   m.ToolCall.ID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      m.ToolCall.ToolName,
+					"arguments": string(m.ToolCall.Arguments),
+				},
+			}}
+		}
+		if m.ToolResult != nil {
+			msg["role"] = "tool"
+			msg["tool_call_id"] = m.ToolResult.ToolCallID
+			msg["content"] = m.ToolResult.Content
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+// formatAnthropicMessages converts LLMMessages to Anthropic /messages format.
+// System messages are excluded (extracted to top-level by buildMessagesBody).
+// ThinkingBlocks are serialized with signature preserved byte-for-byte.
+// Cache control is applied to user messages when cache config is set.
+func formatAnthropicMessages(msgs []*LLMMessage, cache *CacheControlConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+
+		msg := map[string]any{
+			"role": m.Role,
+		}
+
+		// Build content blocks based on message type.
+		switch {
+		case m.ThinkingContent != nil:
+			blocks := []map[string]any{
+				{
+					"type":      "thinking",
+					"thinking":  m.ThinkingContent.Thinking,
+					"signature": m.ThinkingContent.Signature,
+				},
+			}
+			if m.Content != "" {
+				blocks = append(blocks, map[string]any{
+					"type": "text",
+					"text": m.Content,
+				})
+			}
+			msg["content"] = blocks
+		case m.ToolResult != nil:
+			msg["content"] = []map[string]any{{
+				"type":        "tool_result",
+				"tool_use_id": m.ToolResult.ToolCallID,
+				"content":     m.ToolResult.Content,
+			}}
+		case m.ToolCall != nil:
+			msg["content"] = []map[string]any{{
+				"type":  "tool_use",
+				"id":    m.ToolCall.ID,
+				"name":  m.ToolCall.ToolName,
+				"input": m.ToolCall.Arguments,
+			}}
+		default:
+			msg["content"] = m.Content
+		}
+
+		// Apply cache control to user messages.
+		if cache != nil && m.Role == "user" {
+			msg["cache_control"] = map[string]string{"type": "ephemeral"}
+		}
+
+		out = append(out, msg)
+	}
+	return out
 }
 
-type chatTool struct {
-	Type     string       `json:"type"`
-	Function chatFunction `json:"function"`
+// formatChatTools converts LLMTools to OpenAI chat format (uses "parameters").
+func formatChatTools(tools []*LLMTool) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Parameters,
+			},
+		})
+	}
+	return out
 }
 
-type chatFunction struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
+// formatAnthropicTools converts LLMTools to Anthropic format (uses "input_schema").
+func formatAnthropicTools(tools []*LLMTool) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, map[string]any{
+			"name":         t.Name,
+			"description":  t.Description,
+			"input_schema": t.Parameters,
+		})
+	}
+	return out
 }
 
-type chatResponseFormat struct {
-	Type string `json:"type"`
-}
+// formatProviderConfig serializes ProviderConfig to the OpenRouter body format.
+// ZDR enforcement: when ZDR==true, data_collection is forced to "deny".
+func formatProviderConfig(p *ProviderConfig) map[string]any {
+	out := map[string]any{}
 
-// buildRequestBody produces OpenAI-compatible JSON for /chat/completions.
-func buildRequestBody(req *LLMRequest) ([]byte, error) {
-	body := chatCompletionRequest{
-		Model:     req.Model,
-		MaxTokens: req.MaxTokens,
+	if len(p.Order) > 0 {
+		out["order"] = p.Order
+	}
+	if len(p.Only) > 0 {
+		out["only"] = p.Only
+	}
+	if len(p.Ignore) > 0 {
+		out["ignore"] = p.Ignore
+	}
+	if p.AllowFallbacks != nil {
+		out["allow_fallbacks"] = *p.AllowFallbacks
+	}
+	if p.Sort != "" {
+		out["sort"] = p.Sort
+	}
+	if p.RequireParameters {
+		out["require_parameters"] = true
+	}
+	if p.MaxPrice != nil {
+		mp := map[string]string{}
+		if p.MaxPrice.Prompt != "" {
+			mp["prompt"] = p.MaxPrice.Prompt
+		}
+		if p.MaxPrice.Completion != "" {
+			mp["completion"] = p.MaxPrice.Completion
+		}
+		if p.MaxPrice.Image != "" {
+			mp["image"] = p.MaxPrice.Image
+		}
+		if p.MaxPrice.Audio != "" {
+			mp["audio"] = p.MaxPrice.Audio
+		}
+		if p.MaxPrice.Request != "" {
+			mp["request"] = p.MaxPrice.Request
+		}
+		if len(mp) > 0 {
+			out["max_price"] = mp
+		}
 	}
 
-	if req.SessionID != "" {
-		body.SessionID = req.SessionID
+	// SEC-001: ZDR enforcement at serialization layer.
+	if p.ZDR {
+		out["data_collection"] = "deny"
+	} else if p.DataCollection != "" {
+		out["data_collection"] = p.DataCollection
+	}
+
+	return out
+}
+
+// formatPlugins serializes PluginConfig slice to the OpenRouter body format.
+func formatPlugins(plugins []PluginConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(plugins))
+	for _, p := range plugins {
+		entry := map[string]any{"id": p.ID}
+		if p.Enabled != nil {
+			entry["enabled"] = *p.Enabled
+		}
+		if len(p.Options) > 0 {
+			entry["options"] = p.Options
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// formatTrace serializes TraceConfig to the OpenRouter body format.
+func formatTrace(t *TraceConfig) map[string]any {
+	out := map[string]any{}
+	if t.TraceID != "" {
+		out["trace_id"] = t.TraceID
+	}
+	if t.TraceName != "" {
+		out["trace_name"] = t.TraceName
+	}
+	if t.SpanName != "" {
+		out["span_name"] = t.SpanName
+	}
+	if t.GenerationName != "" {
+		out["generation_name"] = t.GenerationName
+	}
+	if t.ParentSpanID != "" {
+		out["parent_span_id"] = t.ParentSpanID
+	}
+	return out
+}
+
+// ── Body Builders ───────────────────────────────────────────────────────────
+
+// buildCompletionsBody produces OpenAI-compatible JSON for /chat/completions.
+func buildCompletionsBody(req *LLMRequest) []byte {
+	body := map[string]any{
+		"model":      req.Model,
+		"messages":   formatChatMessages(req.Messages),
+		"max_tokens": req.MaxTokens,
 	}
 
 	if req.Temperature != 0 {
-		t := req.Temperature
-		body.Temperature = &t
+		body["temperature"] = req.Temperature
+	}
+	if req.SessionID != "" {
+		body["session_id"] = req.SessionID
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = formatChatTools(req.Tools)
 	}
 
-	body.Messages = make([]*chatMessage, 0, len(req.Messages))
+	// Response format.
+	if req.JSONSchema != nil {
+		schema := map[string]any{
+			"name":   req.JSONSchema.Name,
+			"schema": req.JSONSchema.Schema,
+		}
+		if req.JSONSchema.Description != "" {
+			schema["description"] = req.JSONSchema.Description
+		}
+		if req.JSONSchema.Strict != nil {
+			schema["strict"] = *req.JSONSchema.Strict
+		}
+		body["response_format"] = map[string]any{
+			"type":        "json_schema",
+			"json_schema": schema,
+		}
+	} else if req.ResponseFmt != "" {
+		body["response_format"] = map[string]any{"type": req.ResponseFmt}
+	}
+
+	// FallbackModels → "models" array.
+	if len(req.FallbackModels) > 0 {
+		models := make([]string, 0, 1+len(req.FallbackModels))
+		models = append(models, req.Model)
+		models = append(models, req.FallbackModels...)
+		body["models"] = models
+	}
+
+	// Reasoning for chat endpoint.
+	if req.Reasoning != nil {
+		r := map[string]any{}
+		if req.Reasoning.Effort != "" {
+			r["effort"] = req.Reasoning.Effort
+		}
+		if req.Reasoning.Summary != "" {
+			r["summary"] = req.Reasoning.Summary
+		}
+		if len(r) > 0 {
+			body["reasoning"] = r
+		}
+	}
+
+	// Shared fields.
+	if req.Provider != nil {
+		body["provider"] = formatProviderConfig(req.Provider)
+	}
+	if req.Trace != nil {
+		body["trace"] = formatTrace(req.Trace)
+	}
+	if len(req.Plugins) > 0 {
+		body["plugins"] = formatPlugins(req.Plugins)
+	}
+	if req.Cache != nil {
+		body["cache_control"] = map[string]string{"type": "ephemeral"}
+	}
+
+	data, _ := json.Marshal(body)
+	return data
+}
+
+// buildMessagesBody produces Anthropic-native JSON for /messages.
+func buildMessagesBody(req *LLMRequest) []byte {
+	body := map[string]any{
+		"model":      req.Model,
+		"max_tokens": req.MaxTokens,
+	}
+
+	// Extract system prompt to top-level field.
+	var systemContent string
 	for _, m := range req.Messages {
-		body.Messages = append(body.Messages, &chatMessage{
-			Role:    m.Role,
-			Content: m.Content,
-		})
+		if m.Role == "system" {
+			systemContent = m.Content
+			break
+		}
+	}
+	if systemContent != "" {
+		if req.Cache != nil {
+			// Prompt caching: system as array with cache_control block.
+			body["system"] = []map[string]any{
+				{
+					"type":          "text",
+					"text":          systemContent,
+					"cache_control": map[string]string{"type": "ephemeral"},
+				},
+			}
+		} else {
+			body["system"] = systemContent
+		}
 	}
 
-	for _, tool := range req.Tools {
-		body.Tools = append(body.Tools, &chatTool{
-			Type:     "function",
-			Function: chatFunction(*tool),
-		})
+	body["messages"] = formatAnthropicMessages(req.Messages, req.Cache)
+
+	if req.Temperature != 0 {
+		body["temperature"] = req.Temperature
+	}
+	if req.SessionID != "" {
+		body["session_id"] = req.SessionID
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = formatAnthropicTools(req.Tools)
 	}
 
-	if req.ResponseFmt != "" {
-		body.ResponseFormat = &chatResponseFormat{Type: req.ResponseFmt}
+	// Extended thinking for messages endpoint.
+	if req.Reasoning != nil && req.Reasoning.BudgetTokens > 0 {
+		body["thinking"] = map[string]any{
+			"type":          "enabled",
+			"budget_tokens": req.Reasoning.BudgetTokens,
+		}
 	}
 
-	return json.Marshal(body)
+	// FallbackModels → "models" array.
+	if len(req.FallbackModels) > 0 {
+		models := make([]string, 0, 1+len(req.FallbackModels))
+		models = append(models, req.Model)
+		models = append(models, req.FallbackModels...)
+		body["models"] = models
+	}
+
+	// Shared fields.
+	if req.Provider != nil {
+		body["provider"] = formatProviderConfig(req.Provider)
+	}
+	if req.Trace != nil {
+		body["trace"] = formatTrace(req.Trace)
+	}
+	if len(req.Plugins) > 0 {
+		body["plugins"] = formatPlugins(req.Plugins)
+	}
+
+	data, _ := json.Marshal(body)
+	return data
 }
 
 // ── Response Parsing ─────────────────────────────────────────────────────────
@@ -344,12 +788,14 @@ type openRouterToolFunction struct {
 }
 
 type openRouterUsage struct {
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	TotalCost        float64 `json:"total_cost"`
+	PromptTokens             int     `json:"prompt_tokens"`
+	CompletionTokens         int     `json:"completion_tokens"`
+	TotalCost                float64 `json:"total_cost"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
 }
 
-// parseLLMResponse converts the API response into an LLMResponse.
+// parseLLMResponse converts the chat/completions API response into an LLMResponse.
 func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
 	var resp LLMResponse
 	resp.Model = apiResp.Model
@@ -371,9 +817,80 @@ func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
 		resp.InputTokens = apiResp.Usage.PromptTokens
 		resp.OutputTokens = apiResp.Usage.CompletionTokens
 		resp.CostUSD = apiResp.Usage.TotalCost
+		resp.CacheReadTokens = apiResp.Usage.CacheReadInputTokens
+		resp.CacheCreationTokens = apiResp.Usage.CacheCreationInputTokens
 	}
 
 	return resp
+}
+
+// ── Anthropic Messages Response Parsing ─────────────────────────────────────
+
+// anthropicMessagesResponse represents the Anthropic /messages API response.
+type anthropicMessagesResponse struct {
+	Content    []anthropicContentBlock `json:"content"`
+	Model      string                  `json:"model"`
+	StopReason string                  `json:"stop_reason"`
+	Usage      *anthropicUsage         `json:"usage"`
+}
+
+type anthropicContentBlock struct {
+	Type      string `json:"type"`
+	Text      string `json:"text"`
+	Thinking  string `json:"thinking"`
+	Signature string `json:"signature"`
+	// Tool use fields.
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+type anthropicUsage struct {
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	TotalCost                float64 `json:"total_cost"`
+}
+
+// parseMessagesResponse parses an Anthropic /messages response body.
+func parseMessagesResponse(body io.Reader) (LLMResponse, error) {
+	var apiResp anthropicMessagesResponse
+	if err := json.NewDecoder(body).Decode(&apiResp); err != nil {
+		return LLMResponse{}, fmt.Errorf("decode messages response: %w", err)
+	}
+
+	var resp LLMResponse
+	resp.Model = apiResp.Model
+	resp.StopReason = apiResp.StopReason
+
+	for _, block := range apiResp.Content {
+		switch block.Type {
+		case "text":
+			resp.Content = block.Text
+		case "thinking":
+			resp.ThinkingBlocks = append(resp.ThinkingBlocks, ThinkingBlock{
+				Thinking:  block.Thinking,
+				Signature: block.Signature,
+			})
+		case "tool_use":
+			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
+				ID:        block.ID,
+				ToolName:  block.Name,
+				Arguments: block.Input,
+			})
+		}
+	}
+
+	if apiResp.Usage != nil {
+		resp.InputTokens = apiResp.Usage.InputTokens
+		resp.OutputTokens = apiResp.Usage.OutputTokens
+		resp.CostUSD = apiResp.Usage.TotalCost
+		resp.CacheReadTokens = apiResp.Usage.CacheReadInputTokens
+		resp.CacheCreationTokens = apiResp.Usage.CacheCreationInputTokens
+	}
+
+	return resp, nil
 }
 
 // ── HTTP Error Mapping ───────────────────────────────────────────────────────
@@ -421,12 +938,14 @@ type TokenLedger struct {
 
 // SessionTokenRecord accumulates usage for one session.
 type SessionTokenRecord struct {
-	SessionID    string
-	InputTokens  int
-	OutputTokens int
-	TotalCostUSD float64
-	Calls        int
-	LastUpdated  time.Time
+	SessionID           string
+	InputTokens         int
+	OutputTokens        int
+	TotalCostUSD        float64
+	Calls               int
+	LastUpdated         time.Time
+	CacheReadTokens     int
+	CacheCreationTokens int
 }
 
 // NewTokenLedger creates an initialized TokenLedger.
@@ -465,4 +984,76 @@ func (l *TokenLedger) Get(sessionID string) *SessionTokenRecord {
 	}
 	cp := *rec
 	return &cp
+}
+
+// RecordWithCache accumulates token usage including cache token fields. Thread-safe.
+func (l *TokenLedger) RecordWithCache(sessionID string, in, out, cacheRead, cacheCreate int, costUSD float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	rec, ok := l.records[sessionID]
+	if !ok {
+		rec = &SessionTokenRecord{SessionID: sessionID}
+		l.records[sessionID] = rec
+	}
+
+	rec.InputTokens += in
+	rec.OutputTokens += out
+	rec.CacheReadTokens += cacheRead
+	rec.CacheCreationTokens += cacheCreate
+	rec.TotalCostUSD += costUSD
+	rec.Calls++
+	rec.LastUpdated = time.Now()
+}
+
+// ── OpenRouter Retry Policy ─────────────────────────────────────────────────
+
+// OpenRouterRetryOn classifies errors as permanent (no retry) or transient (retry).
+// Returns false for context errors and client-side 4xx errors.
+// Returns true for transient errors (408, 429, 5xx, 524, 529).
+func OpenRouterRetryOn(err error, _ int) bool {
+	if err == nil {
+		return false
+	}
+
+	// Context errors — never retry.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	// Permanent client errors — never retry.
+	permanentErrors := []error{
+		ErrBadRequest,
+		ErrUnauthorized,
+		ErrInsufficientCredits,
+		ErrForbidden,
+		ErrNotFound,
+		ErrPayloadTooLarge,
+		ErrUnprocessableEntity,
+	}
+	for _, pe := range permanentErrors {
+		if errors.Is(err, pe) {
+			return false
+		}
+	}
+
+	// All other errors are considered transient.
+	return true
+}
+
+// OpenRouterRetryPolicy returns the domain-specific retry policy for OpenRouter.
+// MaxAttempts=3, InitialWait=500ms, MaxWait=30s, Multiplier=2.0,
+// CircuitBreaker(FailureThreshold=5, OpenDuration=60s).
+func OpenRouterRetryPolicy() *RetryPolicy {
+	return &RetryPolicy{
+		MaxAttempts: 3,
+		InitialWait: 500 * time.Millisecond,
+		MaxWait:     30 * time.Second,
+		Multiplier:  2.0,
+		RetryOn:     OpenRouterRetryOn,
+		CircuitBreaker: &CircuitBreakerConfig{
+			FailureThreshold: 5,
+			OpenDuration:     60 * time.Second,
+		},
+	}
 }
