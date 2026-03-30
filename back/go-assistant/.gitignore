@@ -1,5 +1,6 @@
 # Build artifacts
 bin/
+/server
 
 # Coverage reports
 coverage.out
