@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: back/go-assistant
+      network: host
+      args:
+        VERSION: ${VERSION:-dev}
+    container_name: liwaisi-backend
+    network_mode: host
+    env_file: .env
+    environment:
+      - LISTEN_ADDR=:8080
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: front/react-assistant
+      network: host
+    container_name: liwaisi-frontend
+    network_mode: host
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

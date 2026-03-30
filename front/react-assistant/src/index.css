@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/* -- Custom properties -- */
+:root {
+  --bg-deep: #0a0a0f;
+  --bg-surface: #12121a;
+  --bg-input: #1a1a26;
+  --bg-user: #1e3a5f;
+  --bg-assistant: #16161f;
+  --border-dim: #2a2a3a;
+  --border-glow: #0ea5e9;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent: #0ea5e9;
+  --accent-glow: #0ea5e940;
+}
+
+/* -- Base resets -- */
+body {
+  margin: 0;
+  background-color: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* -- Scan-line overlay -- */
+.scan-lines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
+
+/* -- Streaming cursor -- */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-cursor::after {
+  content: '\2588';
+  animation: cursor-blink 1s step-end infinite;
+  color: var(--accent);
+  margin-left: 1px;
+  font-size: 0.875rem;
+}
+
+/* -- Thinking dots -- */
+@keyframes thinking-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.thinking-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* -- SSE connection dot pulse -- */
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+
+/* -- Status badge pulse (for running state) -- */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.status-pulse {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* -- Glow border -- */
+.glow-border {
+  box-shadow: 0 0 0 1px var(--border-dim),
+              0 0 12px -4px var(--accent-glow);
+}
+
+/* -- Scrollbar styling -- */
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-dim);
+  border-radius: 3px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* -- Textarea auto-resize support -- */
+.message-textarea {
+  field-sizing: content;
+  min-height: 44px;
+  max-height: 120px;
+}
+
+/* Fallback for browsers without field-sizing */
+@supports not (field-sizing: content) {
+  .message-textarea {
+    overflow-y: auto;
+    resize: none;
+  }
+}
