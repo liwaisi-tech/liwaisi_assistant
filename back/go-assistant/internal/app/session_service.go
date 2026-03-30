@@ -188,7 +188,29 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 					CPNDepth:  session.Root.Depth,
 					Timestamp: time.Now(),
 				})
+				select {
+				case session.Stream <- cpn.StreamChunk{
+					SessionID: sessionID,
+					CPNID:     session.Root.ID,
+					CPNRole:   session.Root.Role,
+					Content:   content,
+					Done:      false,
+				}:
+				default:
+					s.logger.Warn("stream buffer full, chunk dropped", "session_id", sessionID)
+				}
 			}
+		}
+		// Send done sentinel so SSE handler knows this response is complete.
+		select {
+		case session.Stream <- cpn.StreamChunk{
+			SessionID: sessionID,
+			CPNID:     session.Root.ID,
+			CPNRole:   session.Root.Role,
+			Content:   "",
+			Done:      true,
+		}:
+		default:
 		}
 		// Set idle instead of completed — session can accept more messages.
 		st.set(cpn.StateIdle)

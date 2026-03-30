@@ -57,6 +57,18 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
     case 'STREAM_CHUNK': {
       const { data } = action;
+
+      // Done sentinel — no content, just signals response complete
+      if (data.Done && !data.Content) {
+        return {
+          ...state,
+          sessionState: 'idle',
+          messages: state.messages.map((m) =>
+            m.isStreaming ? { ...m, isStreaming: false } : m
+          ),
+        };
+      }
+
       const existingIdx = state.messages.findIndex(
         (m) => m.role === 'assistant' && m.isStreaming && m.cpnId === data.CPNID
       );
@@ -68,7 +80,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           content: updated[existingIdx].content + data.Content,
           isStreaming: !data.Done,
         };
-        return { ...state, messages: updated, sessionState: 'running' };
+        return { ...state, messages: updated, sessionState: data.Done ? 'idle' : 'running' };
       }
 
       return {
@@ -85,7 +97,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             timestamp: new Date(),
           },
         ],
-        sessionState: 'running',
+        sessionState: data.Done ? 'idle' : 'running',
       };
     }
 
