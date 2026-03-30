@@ -70,6 +70,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 		Temperature: t.LLMConfig.Temperature,
 		Tools:       tools,
 		SessionID:   c.SessionID,
+		Trace:       buildTrace(t, c),
 	}
 	if t.LLMConfig.RequireJSON {
 		req.ResponseFmt = "json_object"
@@ -215,9 +216,9 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			MaxTokens:   t.LLMConfig.MaxTokens,
 			Temperature: t.LLMConfig.Temperature,
 			SessionID:   c.SessionID,
+			Tools:       loopTools,
+			Trace:       buildTrace(t, c),
 		}
-
-		req.Tools = loopTools
 
 		if t.LLMConfig.RequireJSON {
 			req.ResponseFmt = "json_object"
@@ -262,6 +263,20 @@ func buildToolSchema(tool *Transition) LLMTool {
 	return LLMTool{
 		Name:        tool.ToolName,
 		Description: fmt.Sprintf("Execute tool: %s", tool.ToolName),
+	}
+}
+
+// buildTrace creates a TraceConfig for observability.
+// Uses the transition's explicit LLMConfig.Trace if set,
+// otherwise auto-populates from transition ID and CPN context.
+func buildTrace(t *Transition, c *CPN) *TraceConfig {
+	if t.LLMConfig.Trace != nil {
+		return t.LLMConfig.Trace
+	}
+	return &TraceConfig{
+		TraceID:        c.SessionID,
+		GenerationName: t.ID,
+		SpanName:       c.ID + "/" + t.ID,
 	}
 }
 

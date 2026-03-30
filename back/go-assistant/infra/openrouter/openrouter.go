@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -18,15 +19,43 @@ var _ cpn.LLMClient = (*Client)(nil)
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
-// ModelRegistry maps task roles to OpenRouter model strings.
+// defaultModelRegistry holds the default model for each task role.
 // Using the cheapest model that can do the job operationalizes Axiom A11.
-var ModelRegistry = map[string]string{
+// Override any entry via its environment variable (see modelEnvVars).
+var defaultModelRegistry = map[string]string{
 	"classifier":   "google/gemini-2.0-flash-001",
 	"structured":   "anthropic/claude-haiku-4-5-20251001",
 	"reasoning":    "anthropic/claude-sonnet-4-6",
 	"long-context": "google/gemini-2.0-pro-001",
 	"summarize":    "meta-llama/llama-3.3-8b-instruct",
 	"thinking":     "anthropic/claude-opus-4-6",
+}
+
+// modelEnvVars maps each registry key to the environment variable that overrides it.
+var modelEnvVars = map[string]string{
+	"classifier":   "MODEL_CLASSIFIER",
+	"structured":   "MODEL_STRUCTURED",
+	"reasoning":    "MODEL_REASONING",
+	"long-context": "MODEL_LONG_CONTEXT",
+	"summarize":    "MODEL_SUMMARIZE",
+	"thinking":     "MODEL_THINKING",
+}
+
+// buildModelRegistry creates a model registry by reading environment variables
+// with fallback to defaults. The getEnv parameter enables testing without
+// manipulating real environment variables.
+func buildModelRegistry(getEnv func(string) string) map[string]string {
+	registry := make(map[string]string, len(defaultModelRegistry))
+	for key, defaultModel := range defaultModelRegistry {
+		if envVar, ok := modelEnvVars[key]; ok {
+			if v := getEnv(envVar); v != "" {
+				registry[key] = v
+				continue
+			}
+		}
+		registry[key] = defaultModel
+	}
+	return registry
 }
 
 // modelCostTable holds per-model pricing in USD per 1M tokens.
@@ -50,6 +79,18 @@ type Client struct {
 	// DefaultModel is used when LLMRequest.Model is empty.
 	DefaultModel string
 
+	// ModelRegistry maps task roles to OpenRouter model strings.
+	// Populated from environment variables with defaults at construction time.
+	ModelRegistry map[string]string
+
+	// AppURL is sent as the HTTP-Referer header to OpenRouter for app identification.
+	// Configured via OPENROUTER_APP_URL env var.
+	AppURL string
+
+	// AppTitle is sent as the X-Title header to OpenRouter for app identification.
+	// Configured via OPENROUTER_APP_TITLE env var.
+	AppTitle string
+
 	// BaseURL defaults to "https://openrouter.ai/api/v1".
 	BaseURL string
 
@@ -61,11 +102,19 @@ type Client struct {
 }
 
 // NewClient returns a configured client with sensible defaults.
+// Reads from environment:
+//   - MODEL_CLASSIFIER, MODEL_STRUCTURED, MODEL_REASONING, MODEL_LONG_CONTEXT,
+//     MODEL_SUMMARIZE, MODEL_THINKING — override default model registry entries
+//   - OPENROUTER_APP_URL — sent as HTTP-Referer for app identification
+//   - OPENROUTER_APP_TITLE — sent as X-Title for app identification
 func NewClient(apiKey, defaultModel string) *Client {
 	return &Client{
-		apiKey:       apiKey,
-		DefaultModel: defaultModel,
-		BaseURL:      "https://openrouter.ai/api/v1",
+		apiKey:        apiKey,
+		DefaultModel:  defaultModel,
+		ModelRegistry: buildModelRegistry(os.Getenv),
+		AppURL:        os.Getenv("OPENROUTER_APP_URL"),
+		AppTitle:      os.Getenv("OPENROUTER_APP_TITLE"),
+		BaseURL:       "https://openrouter.ai/api/v1",
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -110,6 +159,12 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	if c.AppURL != "" {
+		httpReq.Header.Set("HTTP-Referer", c.AppURL)
+	}
+	if c.AppTitle != "" {
+		httpReq.Header.Set("X-Title", c.AppTitle)
+	}
 	if req.SessionID != "" {
 		httpReq.Header.Set("X-Session-Id", req.SessionID)
 	}
@@ -180,7 +235,7 @@ func (c *Client) resolveModel(model string) string {
 	if model == "" {
 		return c.DefaultModel
 	}
-	if resolved, ok := ModelRegistry[model]; ok {
+	if resolved, ok := c.ModelRegistry[model]; ok {
 		return resolved
 	}
 	return model

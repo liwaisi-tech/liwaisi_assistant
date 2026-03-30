@@ -741,3 +741,67 @@ func TestFireLLM_EstimateCostError_GracefulDegradation(t *testing.T) {
 		t.Fatalf("expected 1 output token, got %d", output.Len())
 	}
 }
+
+// ── buildTrace ──────────────────────────────────────────────────────────────
+
+func TestBuildTrace_AutoPopulates(t *testing.T) {
+	trans := NewTransition("t-classify", NodeKindLLM, []string{"P:IN"}, []string{"P:OUT"})
+	trans.LLMConfig = &LLMConfig{MaxTokens: 100}
+
+	c := &CPN{ID: "cpn-sess-1", SessionID: "sess-1"}
+
+	trace := buildTrace(trans, c)
+
+	if trace.TraceID != "sess-1" {
+		t.Errorf("TraceID = %q, want %q", trace.TraceID, "sess-1")
+	}
+	if trace.GenerationName != "t-classify" {
+		t.Errorf("GenerationName = %q, want %q", trace.GenerationName, "t-classify")
+	}
+	if trace.SpanName != "cpn-sess-1/t-classify" {
+		t.Errorf("SpanName = %q, want %q", trace.SpanName, "cpn-sess-1/t-classify")
+	}
+}
+
+func TestBuildTrace_ExplicitConfigTakesPrecedence(t *testing.T) {
+	explicit := &TraceConfig{
+		TraceID:        "custom-trace",
+		GenerationName: "custom-gen",
+		SpanName:       "custom-span",
+	}
+	trans := NewTransition("t-llm", NodeKindLLM, []string{"P:IN"}, []string{"P:OUT"})
+	trans.LLMConfig = &LLMConfig{MaxTokens: 100, Trace: explicit}
+
+	c := &CPN{ID: "cpn-1", SessionID: "sess-1"}
+
+	trace := buildTrace(trans, c)
+
+	if trace != explicit {
+		t.Error("expected explicit TraceConfig to be returned, got auto-generated")
+	}
+}
+
+func TestFireLLM_SetsTrace(t *testing.T) {
+	mock := &mockLLMClient{}
+	trans := NewTransition("t-reason", NodeKindLLM, []string{"P:INPUT"}, []string{"P:OUTPUT"})
+	trans.LLMConfig = &LLMConfig{MaxTokens: 100}
+
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	consumed := []Token{{Color: ColorString, Payload: "test"}}
+
+	err := fireLLM(context.Background(), trans, cpn, consumed)
+	if err != nil {
+		t.Fatalf("fireLLM() error = %v", err)
+	}
+
+	if len(mock.calls) == 0 {
+		t.Fatal("expected at least 1 LLM call")
+	}
+	trace := mock.calls[0].Trace
+	if trace == nil {
+		t.Fatal("expected Trace to be set on LLMRequest")
+	}
+	if trace.GenerationName != "t-reason" {
+		t.Errorf("GenerationName = %q, want %q", trace.GenerationName, "t-reason")
+	}
+}
