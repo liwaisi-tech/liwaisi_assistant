@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -264,6 +265,43 @@ func TestCORSMiddleware_LastEventID(t *testing.T) {
 	// Check that Last-Event-ID is included in allowed headers.
 	if !containsHeader(allowed, "Last-Event-ID") {
 		t.Errorf("Allow-Headers %q does not include Last-Event-ID", allowed)
+	}
+}
+
+func TestStatusWriter_Unwrap(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := &statusWriter{ResponseWriter: rec}
+
+	if got := sw.Unwrap(); got != rec {
+		t.Errorf("Unwrap() returned %v, want %v", got, rec)
+	}
+}
+
+func TestMiddleware_FlushThroughChain(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: hello\n\n"))
+		err := rc.Flush()
+		if err != nil {
+			t.Errorf("Flush through middleware failed: %v", err)
+		}
+	}))
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 }
 

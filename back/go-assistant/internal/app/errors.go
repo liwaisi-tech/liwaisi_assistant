@@ -10,3 +10,6 @@ var ErrSessionClosed = errors.New("session is closed")
 
 // ErrInvalidInput is returned when required input parameters are missing or invalid.
 var ErrInvalidInput = errors.New("invalid input")
+
+// ErrSessionBusy is returned when a message is sent while the CPN is already running.
+var ErrSessionBusy = errors.New("session is busy")

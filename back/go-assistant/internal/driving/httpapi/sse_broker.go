@@ -67,22 +67,24 @@ func (b *SSEBroker) Subscribe(sessionID string) (client *sseClient, cleanup func
 		slog.String("client_id", clientID),
 	)
 
+	var closeOnce sync.Once
 	cleanup = func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-
-		if clients, ok := b.clients[sessionID]; ok {
-			delete(clients, clientID)
-			if len(clients) == 0 {
-				delete(b.clients, sessionID)
+		closeOnce.Do(func() {
+			b.mu.Lock()
+			if clients, ok := b.clients[sessionID]; ok {
+				delete(clients, clientID)
+				if len(clients) == 0 {
+					delete(b.clients, sessionID)
+				}
 			}
-		}
-		close(client.done)
+			b.mu.Unlock()
+			close(client.done)
 
-		b.logger.Info("SSE client unsubscribed",
-			slog.String("session_id", sessionID),
-			slog.String("client_id", clientID),
-		)
+			b.logger.Info("SSE client unsubscribed",
+				slog.String("session_id", sessionID),
+				slog.String("client_id", clientID),
+			)
+		})
 	}
 
 	return client, cleanup

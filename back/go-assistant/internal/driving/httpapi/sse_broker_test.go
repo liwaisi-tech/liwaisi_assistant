@@ -367,6 +367,30 @@ func TestSSEBroker_EventIDs(t *testing.T) {
 	}
 }
 
+func TestSSEBroker_CleanupDoubleCall(t *testing.T) {
+	t.Parallel()
+	broker := NewSSEBroker(newTestLogger())
+
+	client, cleanup := broker.Subscribe("session-dc")
+
+	// First cleanup should work normally.
+	cleanup()
+
+	select {
+	case <-client.done:
+		// expected — done channel closed
+	default:
+		t.Error("client.done should be closed after first cleanup")
+	}
+
+	if broker.ClientCount("session-dc") != 0 {
+		t.Errorf("ClientCount = %d after cleanup, want 0", broker.ClientCount("session-dc"))
+	}
+
+	// Second cleanup must not panic.
+	cleanup()
+}
+
 // extractDataLine extracts the value after "data: " from an SSE message.
 func extractDataLine(sse string) string {
 	for _, line := range strings.Split(sse, "\n") {

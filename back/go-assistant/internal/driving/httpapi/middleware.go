@@ -66,6 +66,12 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Unwrap returns the underlying ResponseWriter.
+// Required by http.ResponseController (Go 1.20+) to access Flusher/Hijacker.
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // LoggingMiddleware logs each request with method, path, status, duration, and request ID.
 func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

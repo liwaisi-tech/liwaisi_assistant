@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -93,7 +94,7 @@ func TestCreateSession_InvalidInput(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty userID")
 	}
-	if !isWrapping(err, ErrInvalidInput) {
+	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
 }
@@ -127,7 +128,7 @@ func TestGetSession_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
-	if !isWrapping(err, ErrSessionNotFound) {
+	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
 	}
 }
@@ -170,9 +171,79 @@ func TestSendMessage_SessionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
-	if !isWrapping(err, ErrSessionNotFound) {
+	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
 	}
+}
+
+func TestCloseStream_DoubleClose(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-dc", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := svc.CloseStream(info.ID); err != nil {
+		t.Fatalf("first CloseStream: %v", err)
+	}
+
+	// Second call must not panic and should return nil.
+	if err := svc.CloseStream(info.ID); err != nil {
+		t.Fatalf("second CloseStream should return nil, got: %v", err)
+	}
+}
+
+func TestSendMessage_SessionBusy(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-busy", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// First message starts CPN.
+	err = svc.SendMessage(context.Background(), info.ID, "first")
+	if err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+
+	// Force state to Running to simulate in-flight CPN.
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	st.set(cpn.StateRunning)
+
+	err = svc.SendMessage(context.Background(), info.ID, "second")
+	if err == nil {
+		t.Fatal("expected ErrSessionBusy for second message")
+	}
+	if !errors.Is(err, ErrSessionBusy) {
+		t.Errorf("expected ErrSessionBusy, got: %v", err)
+	}
+}
+
+func TestCancelSession(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-cancel", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = svc.SendMessage(context.Background(), info.ID, "hello")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// CancelSession should not panic even if CPN already finished.
+	svc.CancelSession(info.ID)
+
+	// Cancel nonexistent session should not panic.
+	svc.CancelSession("nonexistent")
 }
 
 func TestResolveHITL_SessionNotFound(t *testing.T) {
@@ -185,7 +256,7 @@ func TestResolveHITL_SessionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
-	if !isWrapping(err, ErrSessionNotFound) {
+	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
 	}
 }
@@ -216,46 +287,7 @@ func TestStreamChannel_SessionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
-	if !isWrapping(err, ErrSessionNotFound) {
+	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
 	}
-}
-
-// isWrapping checks if err's message contains target's message.
-// Used instead of errors.Is because we use fmt.Errorf with %w wrapping.
-func isWrapping(err, target error) bool {
-	if err == nil {
-		return false
-	}
-	// errors.Is traverses the chain.
-	return containsError(err, target)
-}
-
-func containsError(err, target error) bool {
-	// Use standard library unwrap chain.
-	for e := err; e != nil; {
-		if e.Error() == target.Error() {
-			return true
-		}
-		u, ok := e.(interface{ Unwrap() error })
-		if !ok {
-			break
-		}
-		e = u.Unwrap()
-	}
-	// Fallback: check if the target error text is contained in err.
-	return contains(err.Error(), target.Error())
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

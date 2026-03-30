@@ -66,8 +66,8 @@ func (r *ResolveHITLRequest) Validate() error {
 }
 
 // decodeJSON reads and decodes a JSON request body with size limiting.
-func decodeJSON(r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBodySize)
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {

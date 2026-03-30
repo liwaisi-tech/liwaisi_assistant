@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -176,8 +177,9 @@ func TestDecodeJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
 			var dst SendMessageRequest
-			err := decodeJSON(req, &dst)
+			err := decodeJSON(w, req, &dst)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -193,8 +195,9 @@ func TestDecodeJSON(t *testing.T) {
 		body := append([]byte(`{"content":"`), big...)
 		body = append(body, '"', '}')
 		req, _ := http.NewRequest(http.MethodPost, "/", io.NopCloser(bytes.NewReader(body)))
+		w := httptest.NewRecorder()
 		var dst SendMessageRequest
-		err := decodeJSON(req, &dst)
+		err := decodeJSON(w, req, &dst)
 		if err == nil {
 			t.Error("expected error for oversized body")
 		}

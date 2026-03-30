@@ -41,8 +41,10 @@ type SessionService struct {
 
 // sessionState tracks the CPN state safely from outside the cpn package.
 type sessionState struct {
-	mu    sync.RWMutex
-	state cpn.State
+	mu           sync.RWMutex
+	state        cpn.State
+	cancel       context.CancelFunc
+	streamClosed sync.Once
 }
 
 func (ss *sessionState) set(s cpn.State) {
@@ -114,12 +116,18 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 
 // SendMessage appends a user message and starts CPN execution.
 // Returns immediately (202 pattern); CPN runs in a background goroutine.
+// Returns ErrSessionBusy if the CPN is already running for this session.
 func (s *SessionService) SendMessage(ctx context.Context, sessionID, content string) error {
 	s.mu.RLock()
 	session, ok := s.sessions[sessionID]
+	st := s.states[sessionID]
 	s.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+
+	if st.get() == cpn.StateRunning {
+		return fmt.Errorf("%w: %s", ErrSessionBusy, sessionID)
 	}
 
 	msg := &cpn.Message{
@@ -145,13 +153,15 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		}
 	}
 
-	s.mu.RLock()
-	st := s.states[sessionID]
-	s.mu.RUnlock()
+	bgCtx, cancel := context.WithCancel(context.Background())
+	st.mu.Lock()
+	st.cancel = cancel
+	st.mu.Unlock()
+
+	st.set(cpn.StateRunning)
 
 	go func() {
-		st.set(cpn.StateRunning)
-		bgCtx := context.Background()
+		defer cancel()
 		if err := session.Root.Run(bgCtx); err != nil {
 			s.logger.Error("CPN run failed", "session_id", sessionID, "error", err)
 			st.set(cpn.StateFailed)
@@ -161,6 +171,22 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	}()
 
 	return nil
+}
+
+// CancelSession cancels a running CPN session.
+func (s *SessionService) CancelSession(sessionID string) {
+	s.mu.RLock()
+	st, ok := s.states[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	st.mu.RLock()
+	cancel := st.cancel
+	st.mu.RUnlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // ResolveHITL forwards a human response to a waiting HITL transition.
@@ -226,15 +252,17 @@ func (s *SessionService) SendStreamChunk(sessionID string, chunk cpn.StreamChunk
 }
 
 // CloseStream closes the session's streaming channel, signaling end of output.
+// Safe to call multiple times; the channel is closed only once.
 func (s *SessionService) CloseStream(sessionID string) error {
 	s.mu.RLock()
 	session, ok := s.sessions[sessionID]
+	st := s.states[sessionID]
 	s.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	close(session.Stream)
+	st.streamClosed.Do(func() { close(session.Stream) })
 	return nil
 }
 
