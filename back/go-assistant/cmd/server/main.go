@@ -102,7 +102,7 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 func defaultTopologyFactory(sessionID string) *cpn.CPN {
 	places := map[string]*cpn.Place{
 		"p-input":  cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
-		"p-output": cpn.NewPlace("p-output", cpn.ColorString, cpn.SpaceSurface),
+		"p-output": cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
 	}
 	tLLM := cpn.NewTransition("t-llm", cpn.NodeKindLLM,
 		[]string{"p-input"}, []string{"p-output"})

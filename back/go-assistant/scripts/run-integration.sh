@@ -21,7 +21,7 @@ fi
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-export DEFAULT_MODEL="${DEFAULT_MODEL:-meta-llama/llama-3.3-8b-instruct}"
+export DEFAULT_MODEL="${DEFAULT_MODEL:-minimax/minimax-m2.7}"
 export LOG_LEVEL="${LOG_LEVEL:-error}"
 
 cd "$PROJECT_DIR"

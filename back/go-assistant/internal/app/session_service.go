@@ -165,9 +165,34 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		if err := session.Root.Run(bgCtx); err != nil {
 			s.logger.Error("CPN run failed", "session_id", sessionID, "error", err)
 			st.set(cpn.StateFailed)
+			st.streamClosed.Do(func() { close(session.Stream) })
 			return
 		}
+		// Collect output from terminal places and append as assistant messages.
+		for _, p := range session.Root.TerminalPlaces() {
+			for {
+				tok, err := p.Consume()
+				if err != nil {
+					break // no more tokens
+				}
+				content, ok := tok.Payload.(string)
+				if !ok {
+					continue
+				}
+				session.AppendMessage(&cpn.Message{
+					ID:        sessionID + "-resp-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					Role:      cpn.RoleAssistant,
+					Content:   content,
+					CPNID:     session.Root.ID,
+					CPNRole:   session.Root.Role,
+					CPNDepth:  session.Root.Depth,
+					Timestamp: time.Now(),
+				})
+			}
+		}
 		st.set(cpn.StateCompleted)
+		// Close the stream so SSE handler sends session_completed.
+		st.streamClosed.Do(func() { close(session.Stream) })
 	}()
 
 	return nil
