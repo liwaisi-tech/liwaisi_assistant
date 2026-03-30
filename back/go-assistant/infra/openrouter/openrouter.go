@@ -1,4 +1,4 @@
-package cpn
+package openrouter
 
 import (
 	"bytes"
@@ -8,227 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
 // Compile-time interface check.
-var _ LLMClient = (*OpenRouterClient)(nil)
-
-// ── LLMClient Interface ─────────────────────────────────────────────────────
-
-// LLMClient is the interface all LLM transitions call.
-// OpenRouterClient is the production implementation.
-// MockLLMClient is used in tests (defined in test files).
-type LLMClient interface {
-	// Complete sends a request to the LLM and returns the response.
-	Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error)
-
-	// EstimateCost returns a USD cost estimate for the request
-	// based on model pricing and estimated token counts.
-	EstimateCost(req *LLMRequest) (float64, error)
-}
-
-// ── Request / Response Types ─────────────────────────────────────────────────
-
-// LLMRequest is the input to LLMClient.Complete().
-type LLMRequest struct {
-	// Model is the OpenRouter model string or a ModelRegistry key.
-	Model string
-
-	// Messages is the conversation history including system prompt.
-	Messages []*LLMMessage
-
-	// MaxTokens is the hard cap for the completion.
-	MaxTokens int
-
-	// Temperature controls randomness (0.0 = deterministic, 2.0 = max).
-	Temperature float64
-
-	// Tools lists the tools available to the LLM for this request.
-	Tools []*LLMTool
-
-	// ResponseFmt is "json_object" when structured JSON output is required.
-	ResponseFmt string
-
-	// SessionID is passed to OpenRouter for per-user token tracking.
-	SessionID string
-
-	// ── v1.2 Extended Fields ────────────────────────────────────────────────
-
-	// FallbackModels lists alternative models tried in order.
-	FallbackModels []string
-
-	// Endpoint selects the API surface: EndpointChat or EndpointMessages.
-	Endpoint LLMEndpoint
-
-	// JSONSchema configures structured JSON output with a schema.
-	JSONSchema *JSONSchemaConfig
-
-	// ToolChoice controls tool selection ("auto", "none", or specific tool).
-	ToolChoice string
-
-	// Provider configures per-request routing.
-	Provider *ProviderConfig
-
-	// Trace configures observability trace fields.
-	Trace *TraceConfig
-
-	// Plugins lists active OpenRouter plugins.
-	Plugins []PluginConfig
-
-	// Reasoning configures reasoning/thinking behavior.
-	Reasoning *ReasoningConfig
-
-	// Cache configures prompt caching.
-	Cache *CacheControlConfig
-}
-
-// LLMResponse is the output from LLMClient.Complete().
-type LLMResponse struct {
-	// Content is the text content of the assistant's response.
-	Content string
-
-	// ToolCalls contains any tool invocations requested by the LLM.
-	ToolCalls []*LLMToolCall
-
-	// InputTokens is the number of prompt tokens consumed.
-	InputTokens int
-
-	// OutputTokens is the number of completion tokens generated.
-	OutputTokens int
-
-	// Model is the actual model used (may differ if fallback occurred).
-	Model string
-
-	// CostUSD is the actual cost reported by OpenRouter.
-	CostUSD float64
-
-	// ── v1.2 Extended Fields ────────────────────────────────────────────────
-
-	// ThinkingBlocks contains extended thinking content from Anthropic models.
-	ThinkingBlocks []ThinkingBlock
-
-	// CacheReadTokens is the number of tokens read from the cache.
-	CacheReadTokens int
-
-	// CacheCreationTokens is the number of tokens used to create the cache.
-	CacheCreationTokens int
-
-	// StopReason indicates why the model stopped generating.
-	StopReason string
-}
-
-// LLMConfig is per-transition model selection and budget constraints.
-// v1.2 replaces v1.1 — all 6 original fields remain, 8 new fields added.
-// Widening is backward-compatible: existing code using v1.1 fields compiles unchanged.
-type LLMConfig struct {
-	// Model is an OpenRouter model string or ModelRegistry key.
-	// If empty, falls back to OpenRouterClient.DefaultModel.
-	Model string
-
-	// FallbackModels lists alternative models tried in order if Model is unavailable.
-	FallbackModels []string
-
-	// Endpoint selects the API surface: EndpointChat or EndpointMessages.
-	Endpoint LLMEndpoint
-
-	// MaxTokens is the hard cap for the completion. Required.
-	MaxTokens int
-
-	// Temperature controls randomness. Default 0.0 for deterministic.
-	Temperature float64
-
-	// StreamOutput enables real-time streaming (not implemented until Block 20).
-	StreamOutput bool
-
-	// RequireJSON sets response_format to json_object.
-	RequireJSON bool
-
-	// JSONSchema configures structured JSON output with a schema.
-	JSONSchema *JSONSchemaConfig
-
-	// Budget is the per-call cost ceiling in USD. 0 disables budget check.
-	Budget float64
-
-	// Provider configures per-request routing: sort, ZDR, max price.
-	Provider *ProviderConfig
-
-	// Trace configures observability trace fields.
-	Trace *TraceConfig
-
-	// Plugins lists active OpenRouter plugins for this request.
-	Plugins []PluginConfig
-
-	// Reasoning configures reasoning/thinking behavior.
-	Reasoning *ReasoningConfig
-
-	// CacheControl configures Anthropic prompt caching.
-	CacheControl *CacheControlConfig
-}
-
-// ── v1.2 Sub-Types ──────────────────────────────────────────────────────────
-
-// JSONSchemaConfig configures structured JSON output.
-type JSONSchemaConfig struct {
-	Name        string
-	Description string
-	Schema      json.RawMessage
-	Strict      *bool
-}
-
-// ProviderConfig configures per-request OpenRouter provider routing.
-type ProviderConfig struct {
-	Order             []string
-	Only              []string
-	Ignore            []string
-	AllowFallbacks    *bool
-	Sort              string
-	MaxPrice          *ProviderMaxPrice
-	DataCollection    string
-	ZDR               bool
-	RequireParameters bool
-}
-
-// ProviderMaxPrice caps per-unit pricing for provider selection.
-type ProviderMaxPrice struct {
-	Prompt     string
-	Completion string
-	Image      string
-	Audio      string
-	Request    string
-}
-
-// TraceConfig configures observability fields sent to OpenRouter.
-type TraceConfig struct {
-	TraceID        string
-	TraceName      string
-	SpanName       string
-	GenerationName string
-	ParentSpanID   string
-}
-
-// PluginConfig is a plugin name string for OpenRouter.
-// Valid values: "auto-router", "moderation", "web", "file-parser",
-// "response-healing", "context-compression".
-type PluginConfig = string
-
-// ReasoningConfig configures reasoning/thinking behavior.
-// For /chat/completions: Effort, Summary, MaxTokens, Enabled, Exclude are serialized.
-// For /messages: BudgetTokens is serialized as thinking.budget_tokens (Anthropic-native).
-type ReasoningConfig struct {
-	Effort       string
-	Summary      string
-	MaxTokens    int
-	Enabled      *bool
-	Exclude      *bool
-	BudgetTokens int
-}
-
-// CacheControlConfig configures Anthropic prompt caching.
-type CacheControlConfig struct {
-	TTL string
-}
+var _ cpn.LLMClient = (*Client)(nil)
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
@@ -254,10 +40,10 @@ var modelCostTable = map[string][2]float64{
 	"anthropic/claude-opus-4-6":           {15.00, 75.00},
 }
 
-// ── OpenRouterClient ─────────────────────────────────────────────────────────
+// ── Client ─────────────────────────────────────────────────────────
 
-// OpenRouterClient is the production LLMClient backed by OpenRouter.
-type OpenRouterClient struct {
+// Client is the production LLMClient backed by OpenRouter.
+type Client struct {
 	// apiKey is the OpenRouter API key. Never logged.
 	apiKey string
 
@@ -274,9 +60,9 @@ type OpenRouterClient struct {
 	TokenLedger *TokenLedger
 }
 
-// NewOpenRouterClient returns a configured client with sensible defaults.
-func NewOpenRouterClient(apiKey, defaultModel string) *OpenRouterClient {
-	return &OpenRouterClient{
+// NewClient returns a configured client with sensible defaults.
+func NewClient(apiKey, defaultModel string) *Client {
+	return &Client{
 		apiKey:       apiKey,
 		DefaultModel: defaultModel,
 		BaseURL:      "https://openrouter.ai/api/v1",
@@ -288,13 +74,13 @@ func NewOpenRouterClient(apiKey, defaultModel string) *OpenRouterClient {
 }
 
 // String implements fmt.Stringer. Redacts the API key.
-func (c *OpenRouterClient) String() string {
-	return fmt.Sprintf("OpenRouterClient{model: %s, base: %s}", c.DefaultModel, c.BaseURL)
+func (c *Client) String() string {
+	return fmt.Sprintf("Client{model: %s, base: %s}", c.DefaultModel, c.BaseURL)
 }
 
 // Complete sends a request to the LLM and returns the response.
 // Routes to /chat/completions (EndpointChat, default) or /messages (EndpointMessages).
-func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
+func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResponse, error) {
 	resolvedModel := c.resolveModel(req.Model)
 
 	// Build a shallow copy with the resolved model to avoid mutating the caller's request.
@@ -306,7 +92,7 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 	var buildErr error
 
 	switch resolved.Endpoint {
-	case EndpointMessages:
+	case cpn.EndpointMessages:
 		body, buildErr = buildMessagesBody(&resolved)
 		endpoint = c.BaseURL + "/messages"
 	default: // EndpointChat or empty
@@ -314,12 +100,12 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 		endpoint = c.BaseURL + "/chat/completions"
 	}
 	if buildErr != nil {
-		return LLMResponse{}, fmt.Errorf("build request body: %w", buildErr)
+		return cpn.LLMResponse{}, fmt.Errorf("build request body: %w", buildErr)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return LLMResponse{}, fmt.Errorf("create HTTP request: %w", err)
+		return cpn.LLMResponse{}, fmt.Errorf("create HTTP request: %w", err)
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -330,28 +116,28 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return LLMResponse{}, fmt.Errorf("HTTP request: %w", err)
+		return cpn.LLMResponse{}, fmt.Errorf("HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
 	}
 
-	var llmResp LLMResponse
+	var llmResp cpn.LLMResponse
 	switch resolved.Endpoint {
-	case EndpointMessages:
+	case cpn.EndpointMessages:
 		llmResp, err = parseMessagesResponse(resp.Body)
 	default:
 		var apiResp openRouterResponse
 		if err2 := json.NewDecoder(resp.Body).Decode(&apiResp); err2 != nil {
-			return LLMResponse{}, fmt.Errorf("decode response: %w", err2)
+			return cpn.LLMResponse{}, fmt.Errorf("decode response: %w", err2)
 		}
 		llmResp = parseLLMResponse(apiResp)
 	}
 	if err != nil {
-		return LLMResponse{}, err
+		return cpn.LLMResponse{}, err
 	}
 
 	if req.SessionID != "" {
@@ -368,7 +154,7 @@ func (c *OpenRouterClient) Complete(ctx context.Context, req *LLMRequest) (LLMRe
 
 // EstimateCost returns a USD cost estimate for the request
 // based on model pricing and estimated token counts.
-func (c *OpenRouterClient) EstimateCost(req *LLMRequest) (float64, error) {
+func (c *Client) EstimateCost(req *cpn.LLMRequest) (float64, error) {
 	model := c.resolveModel(req.Model)
 
 	rates, ok := modelCostTable[model]
@@ -390,7 +176,7 @@ func (c *OpenRouterClient) EstimateCost(req *LLMRequest) (float64, error) {
 
 // resolveModel resolves a model string: check ModelRegistry first,
 // fall back to using as-is, use DefaultModel if empty.
-func (c *OpenRouterClient) resolveModel(model string) string {
+func (c *Client) resolveModel(model string) string {
 	if model == "" {
 		return c.DefaultModel
 	}
@@ -404,7 +190,7 @@ func (c *OpenRouterClient) resolveModel(model string) string {
 
 // formatChatMessages converts LLMMessages to OpenAI chat format.
 // System messages remain in-place. Tool results use role "tool" with tool_call_id.
-func formatChatMessages(msgs []*LLMMessage) []map[string]any {
+func formatChatMessages(msgs []*cpn.LLMMessage) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		msg := map[string]any{
@@ -435,7 +221,7 @@ func formatChatMessages(msgs []*LLMMessage) []map[string]any {
 // System messages are excluded (extracted to top-level by buildMessagesBody).
 // ThinkingBlocks are serialized with signature preserved byte-for-byte.
 // Cache control is applied to user messages when cache config is set.
-func formatAnthropicMessages(msgs []*LLMMessage, cache *CacheControlConfig) []map[string]any {
+func formatAnthropicMessages(msgs []*cpn.LLMMessage, cache *cpn.CacheControlConfig) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "system" {
@@ -491,7 +277,7 @@ func formatAnthropicMessages(msgs []*LLMMessage, cache *CacheControlConfig) []ma
 }
 
 // formatChatTools converts LLMTools to OpenAI chat format (uses "parameters").
-func formatChatTools(tools []*LLMTool) []map[string]any {
+func formatChatTools(tools []*cpn.LLMTool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, map[string]any{
@@ -507,7 +293,7 @@ func formatChatTools(tools []*LLMTool) []map[string]any {
 }
 
 // formatAnthropicTools converts LLMTools to Anthropic format (uses "input_schema").
-func formatAnthropicTools(tools []*LLMTool) []map[string]any {
+func formatAnthropicTools(tools []*cpn.LLMTool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, map[string]any{
@@ -521,7 +307,7 @@ func formatAnthropicTools(tools []*LLMTool) []map[string]any {
 
 // formatProviderConfig serializes ProviderConfig to the OpenRouter body format.
 // ZDR enforcement: when ZDR==true, data_collection is forced to "deny".
-func formatProviderConfig(p *ProviderConfig) map[string]any {
+func formatProviderConfig(p *cpn.ProviderConfig) map[string]any {
 	out := map[string]any{}
 
 	if len(p.Order) > 0 {
@@ -576,12 +362,12 @@ func formatProviderConfig(p *ProviderConfig) map[string]any {
 
 // formatPlugins returns the plugins slice directly.
 // OpenRouter plugins are string identifiers per the API spec.
-func formatPlugins(plugins []PluginConfig) []string {
+func formatPlugins(plugins []cpn.PluginConfig) []string {
 	return plugins
 }
 
 // formatTrace serializes TraceConfig to the OpenRouter body format.
-func formatTrace(t *TraceConfig) map[string]any {
+func formatTrace(t *cpn.TraceConfig) map[string]any {
 	out := map[string]any{}
 	if t.TraceID != "" {
 		out["trace_id"] = t.TraceID
@@ -604,7 +390,7 @@ func formatTrace(t *TraceConfig) map[string]any {
 // ── Body Builders ───────────────────────────────────────────────────────────
 
 // buildCompletionsBody produces OpenAI-compatible JSON for /chat/completions.
-func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
+func buildCompletionsBody(req *cpn.LLMRequest) ([]byte, error) {
 	body := map[string]any{
 		"model":      req.Model,
 		"messages":   formatChatMessages(req.Messages),
@@ -694,7 +480,7 @@ func buildCompletionsBody(req *LLMRequest) ([]byte, error) {
 
 // formatCacheControl serializes CacheControlConfig per the OpenRouter API spec.
 // Always includes type:"ephemeral". Includes ttl when set (e.g., "1h").
-func formatCacheControl(c *CacheControlConfig) map[string]string {
+func formatCacheControl(c *cpn.CacheControlConfig) map[string]string {
 	cc := map[string]string{"type": "ephemeral"}
 	if c.TTL != "" {
 		cc["ttl"] = c.TTL
@@ -703,7 +489,7 @@ func formatCacheControl(c *CacheControlConfig) map[string]string {
 }
 
 // buildMessagesBody produces Anthropic-native JSON for /messages.
-func buildMessagesBody(req *LLMRequest) ([]byte, error) {
+func buildMessagesBody(req *cpn.LLMRequest) ([]byte, error) {
 	body := map[string]any{
 		"model":      req.Model,
 		"max_tokens": req.MaxTokens,
@@ -822,8 +608,8 @@ type promptTokensDetails struct {
 }
 
 // parseLLMResponse converts the chat/completions API response into an LLMResponse.
-func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
-	var resp LLMResponse
+func parseLLMResponse(apiResp openRouterResponse) cpn.LLMResponse {
+	var resp cpn.LLMResponse
 	resp.Model = apiResp.Model
 
 	if len(apiResp.Choices) > 0 {
@@ -831,7 +617,7 @@ func parseLLMResponse(apiResp openRouterResponse) LLMResponse {
 		resp.Content = msg.Content
 
 		for _, tc := range msg.ToolCalls {
-			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
+			resp.ToolCalls = append(resp.ToolCalls, &cpn.LLMToolCall{
 				ID:        tc.ID,
 				ToolName:  tc.Function.Name,
 				Arguments: json.RawMessage(tc.Function.Arguments),
@@ -887,13 +673,13 @@ type anthropicUsage struct {
 }
 
 // parseMessagesResponse parses an Anthropic /messages response body.
-func parseMessagesResponse(body io.Reader) (LLMResponse, error) {
+func parseMessagesResponse(body io.Reader) (cpn.LLMResponse, error) {
 	var apiResp anthropicMessagesResponse
 	if err := json.NewDecoder(body).Decode(&apiResp); err != nil {
-		return LLMResponse{}, fmt.Errorf("decode messages response: %w", err)
+		return cpn.LLMResponse{}, fmt.Errorf("decode messages response: %w", err)
 	}
 
-	var resp LLMResponse
+	var resp cpn.LLMResponse
 	resp.Model = apiResp.Model
 	resp.StopReason = apiResp.StopReason
 
@@ -906,12 +692,12 @@ func parseMessagesResponse(body io.Reader) (LLMResponse, error) {
 				resp.Content = block.Text
 			}
 		case "thinking":
-			resp.ThinkingBlocks = append(resp.ThinkingBlocks, ThinkingBlock{
+			resp.ThinkingBlocks = append(resp.ThinkingBlocks, cpn.ThinkingBlock{
 				Thinking:  block.Thinking,
 				Signature: block.Signature,
 			})
 		case "tool_use":
-			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
+			resp.ToolCalls = append(resp.ToolCalls, &cpn.LLMToolCall{
 				ID:        block.ID,
 				ToolName:  block.Name,
 				Arguments: block.Input,
@@ -936,147 +722,52 @@ func parseMessagesResponse(body io.Reader) (LLMResponse, error) {
 func mapHTTPStatusToError(status int) error {
 	switch status {
 	case 400:
-		return ErrBadRequest
+		return cpn.ErrBadRequest
 	case 401:
-		return ErrUnauthorized
+		return cpn.ErrUnauthorized
 	case 402:
-		return ErrInsufficientCredits
+		return cpn.ErrInsufficientCredits
 	case 403:
-		return ErrForbidden
+		return cpn.ErrForbidden
 	case 404:
-		return ErrNotFound
+		return cpn.ErrNotFound
 	case 408:
-		return ErrRequestTimeout
+		return cpn.ErrRequestTimeout
 	case 413:
-		return ErrPayloadTooLarge
+		return cpn.ErrPayloadTooLarge
 	case 422:
-		return ErrUnprocessableEntity
+		return cpn.ErrUnprocessableEntity
 	case 429:
-		return ErrRateLimited
+		return cpn.ErrRateLimited
 	case 524:
-		return ErrEdgeTimeout
+		return cpn.ErrEdgeTimeout
 	case 529:
-		return ErrProviderOverloaded
+		return cpn.ErrProviderOverloaded
 	default:
 		if status >= 500 && status < 600 {
-			return ErrProviderUnavailable
+			return cpn.ErrProviderUnavailable
 		}
 		return fmt.Errorf("unexpected HTTP status %d", status)
 	}
-}
-
-// ── TokenLedger ──────────────────────────────────────────────────────────────
-
-// TokenLedger tracks per-session token usage and cost. Thread-safe.
-type TokenLedger struct {
-	records     map[string]*SessionTokenRecord
-	dailyTotals map[string]float64 // date (YYYY-MM-DD) → authoritative USD from /activity
-	mu          sync.RWMutex
-}
-
-// SessionTokenRecord accumulates usage for one session.
-type SessionTokenRecord struct {
-	SessionID           string
-	InputTokens         int
-	OutputTokens        int
-	TotalCostUSD        float64
-	Calls               int
-	LastUpdated         time.Time
-	CacheReadTokens     int
-	CacheCreationTokens int
-}
-
-// NewTokenLedger creates an initialized TokenLedger.
-func NewTokenLedger() *TokenLedger {
-	return &TokenLedger{
-		records:     make(map[string]*SessionTokenRecord),
-		dailyTotals: make(map[string]float64),
-	}
-}
-
-// Record accumulates token usage and cost for a session. Thread-safe.
-func (l *TokenLedger) Record(sessionID string, in, out int, costUSD float64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	rec, ok := l.records[sessionID]
-	if !ok {
-		rec = &SessionTokenRecord{SessionID: sessionID}
-		l.records[sessionID] = rec
-	}
-
-	rec.InputTokens += in
-	rec.OutputTokens += out
-	rec.TotalCostUSD += costUSD
-	rec.Calls++
-	rec.LastUpdated = time.Now()
-}
-
-// Get returns a snapshot of the session record, or nil for unknown sessions.
-// The returned value is a copy — safe to read without holding any lock.
-func (l *TokenLedger) Get(sessionID string) *SessionTokenRecord {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	rec, ok := l.records[sessionID]
-	if !ok {
-		return nil
-	}
-	cp := *rec
-	return &cp
-}
-
-// RecordWithCache accumulates token usage including cache token fields. Thread-safe.
-func (l *TokenLedger) RecordWithCache(sessionID string, in, out, cacheRead, cacheCreate int, costUSD float64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	rec, ok := l.records[sessionID]
-	if !ok {
-		rec = &SessionTokenRecord{SessionID: sessionID}
-		l.records[sessionID] = rec
-	}
-
-	rec.InputTokens += in
-	rec.OutputTokens += out
-	rec.CacheReadTokens += cacheRead
-	rec.CacheCreationTokens += cacheCreate
-	rec.TotalCostUSD += costUSD
-	rec.Calls++
-	rec.LastUpdated = time.Now()
-}
-
-// SetDailyTotal stores the authoritative daily cost from /activity. Thread-safe.
-func (l *TokenLedger) SetDailyTotal(date string, totalUSD float64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.dailyTotals[date] = totalUSD
-}
-
-// GetDailyTotal returns the authoritative daily cost, or (0, false) if not synced.
-func (l *TokenLedger) GetDailyTotal(date string) (float64, bool) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	total, ok := l.dailyTotals[date]
-	return total, ok
 }
 
 // ── OpenRouter Retry Policy ─────────────────────────────────────────────────
 
 // openRouterPermanentErrors lists errors that should never be retried.
 var openRouterPermanentErrors = []error{
-	ErrBadRequest,
-	ErrUnauthorized,
-	ErrInsufficientCredits,
-	ErrForbidden,
-	ErrNotFound,
-	ErrPayloadTooLarge,
-	ErrUnprocessableEntity,
+	cpn.ErrBadRequest,
+	cpn.ErrUnauthorized,
+	cpn.ErrInsufficientCredits,
+	cpn.ErrForbidden,
+	cpn.ErrNotFound,
+	cpn.ErrPayloadTooLarge,
+	cpn.ErrUnprocessableEntity,
 }
 
-// OpenRouterRetryOn classifies errors as permanent (no retry) or transient (retry).
+// RetryOn classifies errors as permanent (no retry) or transient (retry).
 // Returns false for context errors and client-side 4xx errors.
 // Returns true for transient errors (408, 429, 5xx, 524, 529).
-func OpenRouterRetryOn(err error, _ int) bool {
+func RetryOn(err error, _ int) bool {
 	if err == nil {
 		return false
 	}
@@ -1097,17 +788,17 @@ func OpenRouterRetryOn(err error, _ int) bool {
 	return true
 }
 
-// OpenRouterRetryPolicy returns the domain-specific retry policy for OpenRouter.
+// RetryPolicy returns the domain-specific retry policy for OpenRouter.
 // MaxAttempts=3, InitialWait=500ms, MaxWait=30s, Multiplier=2.0,
 // CircuitBreaker(FailureThreshold=5, OpenDuration=60s).
-func OpenRouterRetryPolicy() *RetryPolicy {
-	return &RetryPolicy{
+func RetryPolicy() *cpn.RetryPolicy {
+	return &cpn.RetryPolicy{
 		MaxAttempts: 3,
 		InitialWait: 500 * time.Millisecond,
 		MaxWait:     30 * time.Second,
 		Multiplier:  2.0,
-		RetryOn:     OpenRouterRetryOn,
-		CircuitBreaker: &CircuitBreakerConfig{
+		RetryOn:     RetryOn,
+		CircuitBreaker: &cpn.CircuitBreakerConfig{
 			FailureThreshold: 5,
 			OpenDuration:     60 * time.Second,
 		},

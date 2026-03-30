@@ -82,12 +82,6 @@ func (et *executionTracker) Finalize(success bool, costUSD float64) ExecutionRec
 	}
 }
 
-// CostProvider abstracts cost lookup for a session.
-// Block 7 (TokenLedger) will implement this interface (REQ-007).
-type CostProvider interface {
-	SessionCostUSD(sessionID string) float64
-}
-
 // MetricsRecorder is an append-only store of CPN execution records (REQ-005).
 // Thread-safe. No update or delete methods (SEC-001).
 // Exported — shared across CPNs for aggregate ranking (GUD-002).

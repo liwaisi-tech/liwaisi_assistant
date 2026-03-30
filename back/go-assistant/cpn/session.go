@@ -243,17 +243,3 @@ func (s *Session) Messages() []Message {
 	copy(cp, s.history)
 	return cp
 }
-
-// ChannelAdapter abstracts delivery of stream chunks and receipt of user
-// messages over a specific communication channel.
-// Concrete implementations are provided by infrastructure packages.
-type ChannelAdapter interface {
-	// Send delivers a stream chunk to the external channel (e.g., SSE, webhook).
-	Send(ctx context.Context, chunk StreamChunk) error
-
-	// Receive blocks until a user message arrives from the external channel.
-	Receive(ctx context.Context) (Message, error)
-
-	// Channel returns the channel type this adapter handles.
-	Channel() ChannelType
-}

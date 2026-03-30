@@ -1,4 +1,4 @@
-package cpn
+package activity
 
 import (
 	"context"
@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 )
 
-// ── ActivityClient ─────────────────────────────────────────────────────────
+// ── Client ─────────────────────────────────────────────────────────
 
-// ActivityClient fetches authoritative usage from OpenRouter /activity.
+// Client fetches authoritative usage from OpenRouter /activity.
 // Requires a management API key (same key used by GuardrailsClient).
-type ActivityClient struct {
+type Client struct {
 	// apiKey is the management API key. Never logged or included in errors.
 	apiKey string
 
@@ -25,9 +28,9 @@ type ActivityClient struct {
 	HTTPClient *http.Client
 }
 
-// NewActivityClient returns a configured client with sensible defaults.
-func NewActivityClient(apiKey, baseURL string) *ActivityClient {
-	return &ActivityClient{
+// NewClient returns a configured client with sensible defaults.
+func NewClient(apiKey, baseURL string) *Client {
+	return &Client{
 		apiKey:  apiKey,
 		BaseURL: baseURL,
 		HTTPClient: &http.Client{
@@ -37,14 +40,14 @@ func NewActivityClient(apiKey, baseURL string) *ActivityClient {
 }
 
 // String implements fmt.Stringer. Redacts the API key.
-func (c *ActivityClient) String() string {
-	return fmt.Sprintf("ActivityClient{base: %s}", c.BaseURL)
+func (c *Client) String() string {
+	return fmt.Sprintf("Client{base: %s}", c.BaseURL)
 }
 
-// ── ActivityRecord ─────────────────────────────────────────────────────────
+// ── Record ─────────────────────────────────────────────────────────
 
-// ActivityRecord is one row from /activity, grouped by (date, model, endpoint).
-type ActivityRecord struct {
+// Record is one row from /activity, grouped by (date, model, endpoint).
+type Record struct {
 	// Date is the UTC date in YYYY-MM-DD format.
 	Date string `json:"date"`
 
@@ -83,14 +86,14 @@ type ActivityRecord struct {
 
 // activityResponse is the JSON envelope from GET /activity.
 type activityResponse struct {
-	Data []ActivityRecord `json:"data"`
+	Data []Record `json:"data"`
 }
 
 // ── Fetch ──────────────────────────────────────────────────────────────────
 
 // Fetch retrieves activity for the last 30 completed UTC days.
 // date: optional YYYY-MM-DD filter; empty string = all 30 days.
-func (c *ActivityClient) Fetch(ctx context.Context, date string) ([]ActivityRecord, error) {
+func (c *Client) Fetch(ctx context.Context, date string) ([]Record, error) {
 	u, err := url.Parse(c.BaseURL + "/activity")
 	if err != nil {
 		return nil, fmt.Errorf("activity: parse base URL: %w", err)
@@ -139,7 +142,7 @@ func (c *ActivityClient) Fetch(ctx context.Context, date string) ([]ActivityReco
 // SyncToLedger reconciles TokenLedger estimates with authoritative /activity data.
 // Aggregates UsageUSD from all records for the date and updates DailyTotal.
 // Designed for hourly cron execution.
-func (c *ActivityClient) SyncToLedger(ctx context.Context, ledger *TokenLedger, date string) error {
+func (c *Client) SyncToLedger(ctx context.Context, ledger *openrouter.TokenLedger, date string) error {
 	records, err := c.Fetch(ctx, date)
 	if err != nil {
 		return fmt.Errorf("sync to ledger: %w", err)
@@ -152,4 +155,39 @@ func (c *ActivityClient) SyncToLedger(ctx context.Context, ledger *TokenLedger, 
 
 	ledger.SetDailyTotal(date, totalUSD)
 	return nil
+}
+
+// ── HTTP Error Mapping ───────────────────────────────────────────────────────
+
+// mapHTTPStatusToError maps OpenRouter HTTP status codes to sentinel errors.
+func mapHTTPStatusToError(status int) error {
+	switch status {
+	case 400:
+		return cpn.ErrBadRequest
+	case 401:
+		return cpn.ErrUnauthorized
+	case 402:
+		return cpn.ErrInsufficientCredits
+	case 403:
+		return cpn.ErrForbidden
+	case 404:
+		return cpn.ErrNotFound
+	case 408:
+		return cpn.ErrRequestTimeout
+	case 413:
+		return cpn.ErrPayloadTooLarge
+	case 422:
+		return cpn.ErrUnprocessableEntity
+	case 429:
+		return cpn.ErrRateLimited
+	case 524:
+		return cpn.ErrEdgeTimeout
+	case 529:
+		return cpn.ErrProviderOverloaded
+	default:
+		if status >= 500 && status < 600 {
+			return cpn.ErrProviderUnavailable
+		}
+		return fmt.Errorf("unexpected HTTP status %d", status)
+	}
 }

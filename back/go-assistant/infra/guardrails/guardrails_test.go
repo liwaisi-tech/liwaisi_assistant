@@ -1,4 +1,4 @@
-package cpn
+package guardrails
 
 import (
 	"context"
@@ -9,22 +9,24 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
 // ── Test Helper ─────────────────────────────────────────────────────────────
 
-func mockGuardrailsServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *GuardrailsClient) {
+func mockGuardrailsServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *Client) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	client := NewGuardrailsClient("mgmt-api-key-secret", srv.URL)
+	client := NewClient("mgmt-api-key-secret", srv.URL)
 	return srv, client
 }
 
 // ── Constructor ─────────────────────────────────────────────────────────────
 
-func TestNewGuardrailsClient(t *testing.T) {
-	client := NewGuardrailsClient("mgmt-key", "https://openrouter.ai/api/v1")
+func TestNewClient(t *testing.T) {
+	client := NewClient("mgmt-key", "https://openrouter.ai/api/v1")
 
 	if client.BaseURL != "https://openrouter.ai/api/v1" {
 		t.Errorf("BaseURL = %q, want %q", client.BaseURL, "https://openrouter.ai/api/v1")
@@ -35,7 +37,7 @@ func TestNewGuardrailsClient(t *testing.T) {
 
 	// Verify apiKey is set correctly via String() — key must NOT appear.
 	s := client.String()
-	if s != "GuardrailsClient{base: https://openrouter.ai/api/v1}" {
+	if s != "Client{base: https://openrouter.ai/api/v1}" {
 		t.Errorf("String() = %q, unexpected", s)
 	}
 }
@@ -322,7 +324,7 @@ func TestGuardrailsClient_402_InsufficientCredits(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, ErrInsufficientCredits) {
+	if !errors.Is(err, cpn.ErrInsufficientCredits) {
 		t.Errorf("error = %v, want ErrInsufficientCredits", err)
 	}
 }
@@ -415,38 +417,38 @@ func TestApplicationInit_CreateFails(t *testing.T) {
 func TestGuardrailsClient_AuthHeader(t *testing.T) {
 	tests := []struct {
 		name   string
-		method func(context.Context, *GuardrailsClient) error
+		method func(context.Context, *Client) error
 	}{
 		{
 			name: "Create",
-			method: func(ctx context.Context, c *GuardrailsClient) error {
+			method: func(ctx context.Context, c *Client) error {
 				_, err := c.Create(ctx, &Guardrail{Name: "test"})
 				return err
 			},
 		},
 		{
 			name: "List",
-			method: func(ctx context.Context, c *GuardrailsClient) error {
+			method: func(ctx context.Context, c *Client) error {
 				_, err := c.List(ctx)
 				return err
 			},
 		},
 		{
 			name: "Delete",
-			method: func(ctx context.Context, c *GuardrailsClient) error {
+			method: func(ctx context.Context, c *Client) error {
 				return c.Delete(ctx, "gr-1")
 			},
 		},
 		{
 			name: "AssignKeys",
-			method: func(ctx context.Context, c *GuardrailsClient) error {
+			method: func(ctx context.Context, c *Client) error {
 				_, err := c.AssignKeys(ctx, "gr-1", []string{"h"})
 				return err
 			},
 		},
 		{
 			name: "UnassignKeys",
-			method: func(ctx context.Context, c *GuardrailsClient) error {
+			method: func(ctx context.Context, c *Client) error {
 				_, err := c.UnassignKeys(ctx, "gr-1", []string{"h"})
 				return err
 			},
