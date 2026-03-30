@@ -6,11 +6,10 @@ services:
       args:
         VERSION: ${VERSION:-dev}
     container_name: liwaisi-backend
+    network_mode: host
     env_file: .env
     environment:
       - LISTEN_ADDR=:8080
-    networks:
-      - liwaisi-net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
       interval: 10s
@@ -24,15 +23,8 @@ services:
       context: front/react-assistant
       network: host
     container_name: liwaisi-frontend
-    ports:
-      - "3000:80"
-    networks:
-      - liwaisi-net
+    network_mode: host
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
-
-networks:
-  liwaisi-net:
-    driver: bridge

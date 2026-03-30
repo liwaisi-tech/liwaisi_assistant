@@ -190,9 +190,9 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 				})
 			}
 		}
-		st.set(cpn.StateCompleted)
-		// Close the stream so SSE handler sends session_completed.
-		st.streamClosed.Do(func() { close(session.Stream) })
+		// Set idle instead of completed — session can accept more messages.
+		st.set(cpn.StateIdle)
+		// Do NOT close the stream — SSE connection stays alive for next message.
 	}()
 
 	return nil

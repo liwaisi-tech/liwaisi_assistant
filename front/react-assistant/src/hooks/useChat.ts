@@ -2,7 +2,7 @@ import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SessionState } from '../types/api';
 import type { StreamChunkData } from '../types/sse';
 import type { ChatMessage } from '../types/chat';
-import { createSession, sendMessage as apiSendMessage, ApiError } from '../services/api';
+import { createSession, getSession, sendMessage as apiSendMessage, ApiError } from '../services/api';
 import { useSSE } from './useSSE';
 
 interface ChatState {
@@ -14,6 +14,7 @@ interface ChatState {
 
 type ChatAction =
   | { type: 'SESSION_CREATED'; sessionId: string }
+  | { type: 'SESSION_RESTORED'; sessionId: string; messages: ChatMessage[]; state: SessionState }
   | { type: 'STREAM_CHUNK'; data: StreamChunkData }
   | { type: 'USER_MESSAGE'; content: string; id: string }
   | { type: 'SESSION_COMPLETED' }
@@ -26,6 +27,14 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SESSION_CREATED':
       return { ...state, sessionId: action.sessionId, sessionState: 'idle' };
+
+    case 'SESSION_RESTORED':
+      return {
+        ...state,
+        sessionId: action.sessionId,
+        messages: action.messages,
+        sessionState: action.state,
+      };
 
     case 'USER_MESSAGE':
       return {
@@ -120,14 +129,46 @@ export function useChat(userId: string) {
   const [state, dispatch] = useReducer(chatReducer, initialState);
   const initRef = useRef(false);
 
+  const storageKey = `liwaisi_session_${userId}`;
+
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
 
-    createSession(userId, 'web')
-      .then((session) => dispatch({ type: 'SESSION_CREATED', sessionId: session.id }))
-      .catch((err) => dispatch({ type: 'SET_ERROR', error: err.message }));
-  }, [userId]);
+    async function initSession() {
+      const savedSessionId = localStorage.getItem(storageKey);
+
+      if (savedSessionId) {
+        try {
+          const session = await getSession(savedSessionId);
+          if (session.state !== 'failed') {
+            const messages: ChatMessage[] = session.messages.map((m) => ({
+              id: m.id,
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              isStreaming: false,
+              cpnId: m.cpn_id,
+              timestamp: new Date(m.timestamp),
+            }));
+            dispatch({ type: 'SESSION_RESTORED', sessionId: session.id, messages, state: session.state });
+            return;
+          }
+        } catch {
+          // Session not found or invalid, create new one
+        }
+      }
+
+      try {
+        const session = await createSession(userId, 'web');
+        localStorage.setItem(storageKey, session.id);
+        dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
+      } catch (err) {
+        dispatch({ type: 'SET_ERROR', error: (err as Error).message });
+      }
+    }
+
+    initSession();
+  }, [userId, storageKey]);
 
   const onStreamChunk = useCallback((data: StreamChunkData) => {
     dispatch({ type: 'STREAM_CHUNK', data });
@@ -150,14 +191,30 @@ export function useChat(userId: string) {
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!state.sessionId || !content.trim()) return;
+      if (!content.trim()) return;
 
+      const trimmed = content.trim();
       const id = `user-${Date.now()}`;
-      dispatch({ type: 'USER_MESSAGE', content: content.trim(), id });
+
+      // If session is terminal (completed/failed), create a new session first
+      let sessionId = state.sessionId;
+      if (!sessionId || state.sessionState === 'completed' || state.sessionState === 'failed') {
+        try {
+          const session = await createSession(userId, 'web');
+          sessionId = session.id;
+          localStorage.setItem(storageKey, session.id);
+          dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
+        } catch (err) {
+          dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to create session' });
+          return;
+        }
+      }
+
+      dispatch({ type: 'USER_MESSAGE', content: trimmed, id });
       dispatch({ type: 'SET_SENDING' });
 
       try {
-        await apiSendMessage(state.sessionId, content.trim());
+        await apiSendMessage(sessionId, trimmed);
       } catch (err) {
         if (err instanceof ApiError) {
           dispatch({ type: 'SET_ERROR', error: err.message });
@@ -166,7 +223,7 @@ export function useChat(userId: string) {
         }
       }
     },
-    [state.sessionId]
+    [state.sessionId, state.sessionState, userId, storageKey]
   );
 
   return {

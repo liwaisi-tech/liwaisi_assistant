@@ -1,4 +1,5 @@
 import type { SessionState } from '../../types/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ChatHeaderProps {
   sessionState: SessionState;
@@ -15,6 +16,7 @@ const stateConfig: Record<SessionState, { label: string; className: string }> = 
 
 export function ChatHeader({ sessionState, isConnected }: ChatHeaderProps) {
   const state = stateConfig[sessionState];
+  const { user, logout } = useAuth();
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b"
@@ -27,6 +29,30 @@ export function ChatHeader({ sessionState, isConnected }: ChatHeaderProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        {user && (
+          <div className="flex items-center gap-2">
+            <img
+              src={user.picture}
+              alt={user.name}
+              className="w-6 h-6 rounded-full"
+              referrerPolicy="no-referrer"
+            />
+            <span className="text-xs hidden sm:inline" style={{ color: 'var(--text-secondary)' }}>
+              {user.name}
+            </span>
+            <button
+              onClick={logout}
+              className="text-xs px-2 py-1 rounded transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+              aria-label="Sign out"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
+
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${state.className}`}>
           {sessionState === 'running' && (
             <span className="w-1.5 h-1.5 rounded-full bg-sky-400 status-pulse" />
