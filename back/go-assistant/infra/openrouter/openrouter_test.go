@@ -1,4 +1,4 @@
-package cpn
+package openrouter
 
 import (
 	"context"
@@ -10,15 +10,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
 // ── Test Helper ──────────────────────────────────────────────────────────────
 
-func mockOpenRouterServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *OpenRouterClient) {
+func mockOpenRouterServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *Client) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	client := NewOpenRouterClient("test-api-key-secret", "test-default-model")
+	client := NewClient("test-api-key-secret", "test-default-model")
 	client.BaseURL = srv.URL
 	return srv, client
 }
@@ -43,8 +45,8 @@ func successHandler(w http.ResponseWriter, _ *http.Request) {
 
 // ── Constructor ──────────────────────────────────────────────────────────────
 
-func TestNewOpenRouterClient(t *testing.T) {
-	client := NewOpenRouterClient("my-key", "my-model")
+func TestNewClient(t *testing.T) {
+	client := NewClient("my-key", "my-model")
 
 	if client.BaseURL != "https://openrouter.ai/api/v1" {
 		t.Errorf("BaseURL = %q, want %q", client.BaseURL, "https://openrouter.ai/api/v1")
@@ -66,7 +68,7 @@ func TestNewOpenRouterClient(t *testing.T) {
 // ── Interface Compliance ─────────────────────────────────────────────────────
 
 func TestOpenRouterClient_ImplementsLLMClient(t *testing.T) {
-	var _ LLMClient = (*OpenRouterClient)(nil)
+	var _ cpn.LLMClient = (*Client)(nil)
 }
 
 // ── Complete: Success ────────────────────────────────────────────────────────
@@ -74,9 +76,9 @@ func TestOpenRouterClient_ImplementsLLMClient(t *testing.T) {
 func TestOpenRouterClient_Complete_Success(t *testing.T) {
 	_, client := mockOpenRouterServer(t, successHandler)
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-default-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 		SessionID: "sess-1",
 	})
@@ -128,9 +130,9 @@ func TestOpenRouterClient_Complete_ToolCalls(t *testing.T) {
 		})
 	})
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-default-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Weather?"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Weather?"}},
 		MaxTokens: 100,
 		SessionID: "sess-tc",
 	})
@@ -159,20 +161,20 @@ func TestOpenRouterClient_Complete_ServerErrors(t *testing.T) {
 		status int
 		want   error
 	}{
-		{400, ErrBadRequest},
-		{401, ErrUnauthorized},
-		{402, ErrInsufficientCredits},
-		{403, ErrForbidden},
-		{404, ErrNotFound},
-		{408, ErrRequestTimeout},
-		{413, ErrPayloadTooLarge},
-		{422, ErrUnprocessableEntity},
-		{429, ErrRateLimited},
-		{500, ErrProviderUnavailable},
-		{502, ErrProviderUnavailable},
-		{503, ErrProviderUnavailable},
-		{524, ErrEdgeTimeout},
-		{529, ErrProviderOverloaded},
+		{400, cpn.ErrBadRequest},
+		{401, cpn.ErrUnauthorized},
+		{402, cpn.ErrInsufficientCredits},
+		{403, cpn.ErrForbidden},
+		{404, cpn.ErrNotFound},
+		{408, cpn.ErrRequestTimeout},
+		{413, cpn.ErrPayloadTooLarge},
+		{422, cpn.ErrUnprocessableEntity},
+		{429, cpn.ErrRateLimited},
+		{500, cpn.ErrProviderUnavailable},
+		{502, cpn.ErrProviderUnavailable},
+		{503, cpn.ErrProviderUnavailable},
+		{524, cpn.ErrEdgeTimeout},
+		{529, cpn.ErrProviderOverloaded},
 	}
 
 	for _, tt := range tests {
@@ -181,9 +183,9 @@ func TestOpenRouterClient_Complete_ServerErrors(t *testing.T) {
 				w.WriteHeader(tt.status)
 			})
 
-			_, err := client.Complete(context.Background(), &LLMRequest{
+			_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 				Model:     "test-model",
-				Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+				Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 				MaxTokens: 10,
 				SessionID: "sess-err",
 			})
@@ -204,14 +206,14 @@ func TestOpenRouterClient_Complete_RateLimit(t *testing.T) {
 		w.WriteHeader(429)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-rl",
 	})
-	if err != ErrRateLimited {
-		t.Errorf("got %v, want ErrRateLimited", err)
+	if err != cpn.ErrRateLimited {
+		t.Errorf("got %v, want cpn.ErrRateLimited", err)
 	}
 }
 
@@ -226,9 +228,9 @@ func TestOpenRouterClient_Complete_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	_, err := client.Complete(ctx, &LLMRequest{
+	_, err := client.Complete(ctx, &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 	})
 	if err == nil {
@@ -244,9 +246,9 @@ func TestOpenRouterClient_Complete_MalformedJSON(t *testing.T) {
 		_, _ = w.Write([]byte(`{invalid json`))
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-bad",
 	})
@@ -264,9 +266,9 @@ func TestOpenRouterClient_Complete_APIKeyInHeader(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-auth",
 	})
@@ -287,9 +289,9 @@ func TestOpenRouterClient_Complete_SessionIdHeader(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-42",
 	})
@@ -310,9 +312,9 @@ func TestOpenRouterClient_Complete_NoSessionIdWhenEmpty(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 	})
 	if err != nil {
@@ -328,9 +330,9 @@ func TestOpenRouterClient_Complete_NoSessionIdWhenEmpty(t *testing.T) {
 func TestOpenRouterClient_Complete_RecordsToLedger(t *testing.T) {
 	_, client := mockOpenRouterServer(t, successHandler)
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-ledger",
 	})
@@ -360,9 +362,9 @@ func TestOpenRouterClient_Complete_NoRecordOnError(t *testing.T) {
 		w.WriteHeader(500)
 	})
 
-	_, _ = client.Complete(context.Background(), &LLMRequest{
+	_, _ = client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-record",
 	})
@@ -384,9 +386,9 @@ func TestOpenRouterClient_Complete_ModelResolution(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "classifier",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-resolve",
 	})
@@ -410,9 +412,9 @@ func TestOpenRouterClient_Complete_DefaultModel(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "", // empty — should use DefaultModel
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-default",
 	})
@@ -435,9 +437,9 @@ func TestOpenRouterClient_Complete_ResponseFormat(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:       "test-model",
-		Messages:    []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:    []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens:   10,
 		ResponseFmt: "json_object",
 		SessionID:   "sess-fmt",
@@ -464,11 +466,11 @@ func TestOpenRouterClient_Complete_ToolsInBody(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
-		Tools: []*LLMTool{{
+		Tools: []*cpn.LLMTool{{
 			Name:        "get_weather",
 			Description: "Get weather for a city",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
@@ -486,7 +488,7 @@ func TestOpenRouterClient_Complete_ToolsInBody(t *testing.T) {
 // ── String: Redacts API Key ──────────────────────────────────────────────────
 
 func TestOpenRouterClient_String_RedactsKey(t *testing.T) {
-	client := NewOpenRouterClient("super-secret-key-12345", "my-model")
+	client := NewClient("super-secret-key-12345", "my-model")
 	s := client.String()
 
 	if strings.Contains(s, "super-secret-key-12345") {
@@ -495,7 +497,7 @@ func TestOpenRouterClient_String_RedactsKey(t *testing.T) {
 	if !strings.Contains(s, "my-model") {
 		t.Errorf("String() should contain model: %s", s)
 	}
-	if !strings.Contains(s, "OpenRouterClient") {
+	if !strings.Contains(s, "Client") {
 		t.Errorf("String() should contain type name: %s", s)
 	}
 }
@@ -503,11 +505,11 @@ func TestOpenRouterClient_String_RedactsKey(t *testing.T) {
 // ── EstimateCost: Known Model ────────────────────────────────────────────────
 
 func TestOpenRouterClient_EstimateCost_KnownModel(t *testing.T) {
-	client := NewOpenRouterClient("key", "google/gemini-2.0-flash-001")
+	client := NewClient("key", "google/gemini-2.0-flash-001")
 
-	cost, err := client.EstimateCost(&LLMRequest{
+	cost, err := client.EstimateCost(&cpn.LLMRequest{
 		Model:     "google/gemini-2.0-flash-001",
-		Messages:  []*LLMMessage{{Role: "user", Content: strings.Repeat("a", 400)}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: strings.Repeat("a", 400)}},
 		MaxTokens: 100,
 	})
 	if err != nil {
@@ -521,11 +523,11 @@ func TestOpenRouterClient_EstimateCost_KnownModel(t *testing.T) {
 // ── EstimateCost: Unknown Model ──────────────────────────────────────────────
 
 func TestOpenRouterClient_EstimateCost_UnknownModel(t *testing.T) {
-	client := NewOpenRouterClient("key", "unknown/model")
+	client := NewClient("key", "unknown/model")
 
-	cost, err := client.EstimateCost(&LLMRequest{
+	cost, err := client.EstimateCost(&cpn.LLMRequest{
 		Model:     "unknown/model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 	})
 	if err != nil {
@@ -615,9 +617,9 @@ func TestOpenRouterClient_Complete_NoUsageField(t *testing.T) {
 		})
 	})
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-usage",
 	})
@@ -643,9 +645,9 @@ func TestOpenRouterClient_Complete_NoChoices(t *testing.T) {
 		})
 	})
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-no-choices",
 	})
@@ -662,9 +664,9 @@ func TestOpenRouterClient_Complete_NoChoices(t *testing.T) {
 func TestOpenRouterClient_Complete_DoesNotMutateRequest(t *testing.T) {
 	_, client := mockOpenRouterServer(t, successHandler)
 
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "classifier",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-mutate",
 	}
@@ -689,9 +691,9 @@ func TestOpenRouterClient_Complete_HTTPMethodPOST(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-method",
 	})
@@ -704,20 +706,20 @@ func TestOpenRouterClient_Complete_HTTPMethodPOST(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Block 19: Dual Endpoints, v1.2 LLMConfig, Format Functions, Retry Policy
+// Block 19: Dual Endpoints, v1.2 cpn.LLMConfig, Format Functions, Retry Policy
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Body Builders: Messages Endpoint ────────────────────────────────────────
 
 func TestBuildMessagesBody_SystemExtracted(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model: "anthropic/claude-sonnet-4-6",
-		Messages: []*LLMMessage{
+		Messages: []*cpn.LLMMessage{
 			{Role: "system", Content: "You are a helpful assistant."},
 			{Role: "user", Content: "Hello"},
 		},
 		MaxTokens: 100,
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	}
 
 	body, err := buildMessagesBody(req)
@@ -752,21 +754,21 @@ func TestBuildMessagesBody_ThinkingBlockSignature(t *testing.T) {
 	// Signature with special chars that must be preserved byte-for-byte.
 	signature := "aBc123+/=XyZ_sig-test!@#$%^&*()"
 
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model: "anthropic/claude-opus-4-6",
-		Messages: []*LLMMessage{
+		Messages: []*cpn.LLMMessage{
 			{Role: "user", Content: "Think about this"},
 			{
 				Role:    "assistant",
 				Content: "Here is my answer",
-				ThinkingContent: &ThinkingBlock{
+				ThinkingContent: &cpn.ThinkingBlock{
 					Thinking:  "Let me think...",
 					Signature: signature,
 				},
 			},
 		},
 		MaxTokens: 200,
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	}
 
 	body, err := buildMessagesBody(req)
@@ -804,12 +806,12 @@ func TestBuildMessagesBody_ThinkingBlockSignature(t *testing.T) {
 }
 
 func TestBuildMessagesBody_ExtendedThinking(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "anthropic/claude-opus-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Think deeply"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Think deeply"}},
 		MaxTokens: 500,
-		Endpoint:  EndpointMessages,
-		Reasoning: &ReasoningConfig{BudgetTokens: 10000},
+		Endpoint:  cpn.EndpointMessages,
+		Reasoning: &cpn.ReasoningConfig{BudgetTokens: 10000},
 	}
 
 	body, err := buildMessagesBody(req)
@@ -835,15 +837,15 @@ func TestBuildMessagesBody_ExtendedThinking(t *testing.T) {
 }
 
 func TestBuildMessagesBody_CacheControl(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model: "anthropic/claude-sonnet-4-6",
-		Messages: []*LLMMessage{
+		Messages: []*cpn.LLMMessage{
 			{Role: "system", Content: "You are a helpful assistant."},
 			{Role: "user", Content: "Hi"},
 		},
 		MaxTokens: 100,
-		Endpoint:  EndpointMessages,
-		Cache:     &CacheControlConfig{TTL: "5m"},
+		Endpoint:  cpn.EndpointMessages,
+		Cache:     &cpn.CacheControlConfig{TTL: "5m"},
 	}
 
 	body, err := buildMessagesBody(req)
@@ -870,9 +872,9 @@ func TestBuildMessagesBody_CacheControl(t *testing.T) {
 // ── Body Builders: Completions Endpoint ─────────────────────────────────────
 
 func TestBuildCompletionsBody_FallbackModels(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:          "anthropic/claude-sonnet-4-6",
-		Messages:       []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:       []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens:      100,
 		FallbackModels: []string{"anthropic/claude-haiku-4-5-20251001", "google/gemini-2.0-flash-001"},
 	}
@@ -902,11 +904,11 @@ func TestBuildCompletionsBody_FallbackModels(t *testing.T) {
 }
 
 func TestBuildCompletionsBody_Reasoning(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "anthropic/claude-sonnet-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Think"}},
 		MaxTokens: 100,
-		Reasoning: &ReasoningConfig{Effort: "high", Summary: "auto"},
+		Reasoning: &cpn.ReasoningConfig{Effort: "high", Summary: "auto"},
 	}
 
 	body, err := buildCompletionsBody(req)
@@ -932,11 +934,11 @@ func TestBuildCompletionsBody_Reasoning(t *testing.T) {
 
 func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
 	strict := true
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
-		JSONSchema: &JSONSchemaConfig{
+		JSONSchema: &cpn.JSONSchemaConfig{
 			Name:        "my_schema",
 			Description: "A test schema",
 			Schema:      json.RawMessage(`{"type":"object"}`),
@@ -969,11 +971,11 @@ func TestBuildCompletionsBody_JSONSchema(t *testing.T) {
 func TestBuildCompletionsBody_ReasoningAllFields(t *testing.T) {
 	enabled := true
 	exclude := false
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "anthropic/claude-sonnet-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Think"}},
 		MaxTokens: 100,
-		Reasoning: &ReasoningConfig{
+		Reasoning: &cpn.ReasoningConfig{
 			Effort:    "high",
 			Summary:   "auto",
 			MaxTokens: 2000,
@@ -1036,9 +1038,9 @@ func TestComplete_ChatEndpoint_CacheTokensParsing(t *testing.T) {
 		})
 	})
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 		SessionID: "sess-chat-cache",
 	})
@@ -1066,11 +1068,11 @@ func TestComplete_ChatEndpoint_CacheTokensParsing(t *testing.T) {
 }
 
 func TestBuildCompletionsBody_CacheControlWithTTL(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
-		Cache:     &CacheControlConfig{TTL: "1h"},
+		Cache:     &cpn.CacheControlConfig{TTL: "1h"},
 	}
 
 	body, err := buildCompletionsBody(req)
@@ -1095,15 +1097,15 @@ func TestBuildCompletionsBody_CacheControlWithTTL(t *testing.T) {
 }
 
 func TestBuildMessagesBody_CacheControlWithTTL(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model: "anthropic/claude-sonnet-4-6",
-		Messages: []*LLMMessage{
+		Messages: []*cpn.LLMMessage{
 			{Role: "system", Content: "You are helpful."},
 			{Role: "user", Content: "Hi"},
 		},
 		MaxTokens: 100,
-		Endpoint:  EndpointMessages,
-		Cache:     &CacheControlConfig{TTL: "1h"},
+		Endpoint:  cpn.EndpointMessages,
+		Cache:     &cpn.CacheControlConfig{TTL: "1h"},
 	}
 
 	body, err := buildMessagesBody(req)
@@ -1146,12 +1148,12 @@ func TestBuildMessagesBody_CacheControlWithTTL(t *testing.T) {
 // ── Format Functions ────────────────────────────────────────────────────────
 
 func TestFormatChatMessages_ToolResult(t *testing.T) {
-	msgs := []*LLMMessage{
+	msgs := []*cpn.LLMMessage{
 		{Role: "user", Content: "What's the weather?"},
 		{
 			Role:    "assistant",
 			Content: "",
-			ToolCall: &LLMToolCall{
+			ToolCall: &cpn.LLMToolCall{
 				ID:        "call-1",
 				ToolName:  "get_weather",
 				Arguments: json.RawMessage(`{"city":"Lima"}`),
@@ -1159,7 +1161,7 @@ func TestFormatChatMessages_ToolResult(t *testing.T) {
 		},
 		{
 			Role: "tool",
-			ToolResult: &LLMToolResult{
+			ToolResult: &cpn.LLMToolResult{
 				ToolCallID: "call-1",
 				Content:    "Sunny, 25°C",
 			},
@@ -1195,14 +1197,14 @@ func TestFormatChatMessages_ToolResult(t *testing.T) {
 }
 
 func TestBuildMessagesBody_WithTools(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model: "anthropic/claude-sonnet-4-6",
-		Messages: []*LLMMessage{
+		Messages: []*cpn.LLMMessage{
 			{Role: "user", Content: "Use the tool"},
 		},
 		MaxTokens: 100,
-		Endpoint:  EndpointMessages,
-		Tools: []*LLMTool{{
+		Endpoint:  cpn.EndpointMessages,
+		Tools: []*cpn.LLMTool{{
 			Name:        "get_weather",
 			Description: "Get weather",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
@@ -1239,7 +1241,7 @@ func TestBuildMessagesBody_WithTools(t *testing.T) {
 }
 
 func TestFormatAnthropicTools_InputSchema(t *testing.T) {
-	tools := []*LLMTool{{
+	tools := []*cpn.LLMTool{{
 		Name:        "get_weather",
 		Description: "Get weather",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
@@ -1260,7 +1262,7 @@ func TestFormatAnthropicTools_InputSchema(t *testing.T) {
 }
 
 func TestFormatChatTools_Parameters(t *testing.T) {
-	tools := []*LLMTool{{
+	tools := []*cpn.LLMTool{{
 		Name:        "get_weather",
 		Description: "Get weather",
 		Parameters:  json.RawMessage(`{"type":"object"}`),
@@ -1281,7 +1283,7 @@ func TestFormatChatTools_Parameters(t *testing.T) {
 }
 
 func TestFormatProviderConfig_ZDR(t *testing.T) {
-	p := &ProviderConfig{
+	p := &cpn.ProviderConfig{
 		ZDR:            true,
 		DataCollection: "allow", // Should be overridden by ZDR.
 	}
@@ -1298,13 +1300,13 @@ func TestFormatProviderConfig_ZDR(t *testing.T) {
 
 func TestFormatProviderConfig_AllFields(t *testing.T) {
 	af := false
-	p := &ProviderConfig{
+	p := &cpn.ProviderConfig{
 		Order:             []string{"openai", "anthropic"},
 		Only:              []string{"openai"},
 		Ignore:            []string{"google"},
 		AllowFallbacks:    &af,
 		Sort:              "price",
-		MaxPrice:          &ProviderMaxPrice{Prompt: "0.01", Completion: "0.02"},
+		MaxPrice:          &cpn.ProviderMaxPrice{Prompt: "0.01", Completion: "0.02"},
 		DataCollection:    "allow",
 		RequireParameters: true,
 	}
@@ -1330,7 +1332,7 @@ func TestFormatProviderConfig_AllFields(t *testing.T) {
 }
 
 func TestFormatPlugins(t *testing.T) {
-	plugins := []PluginConfig{"auto-router", "moderation", "web"}
+	plugins := []cpn.PluginConfig{"auto-router", "moderation", "web"}
 
 	formatted := formatPlugins(plugins)
 	if len(formatted) != 3 {
@@ -1348,11 +1350,11 @@ func TestFormatPlugins(t *testing.T) {
 }
 
 func TestFormatPlugins_InBody(t *testing.T) {
-	req := &LLMRequest{
+	req := &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
-		Plugins:   []PluginConfig{"auto-router", "web"},
+		Plugins:   []cpn.PluginConfig{"auto-router", "web"},
 	}
 
 	body, err := buildCompletionsBody(req)
@@ -1381,7 +1383,7 @@ func TestFormatPlugins_InBody(t *testing.T) {
 }
 
 func TestFormatTrace(t *testing.T) {
-	tr := &TraceConfig{
+	tr := &cpn.TraceConfig{
 		TraceID:        "trace-1",
 		TraceName:      "my-trace",
 		SpanName:       "my-span",
@@ -1416,12 +1418,12 @@ func TestComplete_RoutesToChatEndpoint(t *testing.T) {
 		successHandler(w, r)
 	})
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-chat",
-		Endpoint:  EndpointChat,
+		Endpoint:  cpn.EndpointChat,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -1450,15 +1452,15 @@ func TestComplete_RoutesToMessagesEndpoint(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewOpenRouterClient("test-key", "test-model")
+	client := NewClient("test-key", "test-model")
 	client.BaseURL = srv.URL
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "anthropic/claude-sonnet-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 10,
 		SessionID: "sess-msg",
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -1485,15 +1487,15 @@ func TestComplete_MessagesResponse_ThinkingBlocks(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewOpenRouterClient("test-key", "test-model")
+	client := NewClient("test-key", "test-model")
 	client.BaseURL = srv.URL
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "anthropic/claude-opus-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Think"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Think"}},
 		MaxTokens: 100,
 		SessionID: "sess-think",
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -1532,15 +1534,15 @@ func TestComplete_MessagesResponse_CacheTokens(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewOpenRouterClient("test-key", "test-model")
+	client := NewClient("test-key", "test-model")
 	client.BaseURL = srv.URL
 
-	resp, err := client.Complete(context.Background(), &LLMRequest{
+	resp, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "anthropic/claude-sonnet-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 		SessionID: "sess-cache",
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -1555,51 +1557,51 @@ func TestComplete_MessagesResponse_CacheTokens(t *testing.T) {
 
 // ── Retry Policy ────────────────────────────────────────────────────────────
 
-func TestOpenRouterRetryOn_PermanentErrors(t *testing.T) {
+func TestRetryOn_PermanentErrors(t *testing.T) {
 	permanentErrors := []error{
-		ErrBadRequest,
-		ErrUnauthorized,
-		ErrInsufficientCredits,
-		ErrForbidden,
-		ErrNotFound,
-		ErrPayloadTooLarge,
-		ErrUnprocessableEntity,
+		cpn.ErrBadRequest,
+		cpn.ErrUnauthorized,
+		cpn.ErrInsufficientCredits,
+		cpn.ErrForbidden,
+		cpn.ErrNotFound,
+		cpn.ErrPayloadTooLarge,
+		cpn.ErrUnprocessableEntity,
 	}
 
 	for _, err := range permanentErrors {
-		if OpenRouterRetryOn(err, 1) {
-			t.Errorf("OpenRouterRetryOn(%v) = true, want false (permanent)", err)
+		if RetryOn(err, 1) {
+			t.Errorf("RetryOn(%v) = true, want false (permanent)", err)
 		}
 	}
 }
 
-func TestOpenRouterRetryOn_TransientErrors(t *testing.T) {
+func TestRetryOn_TransientErrors(t *testing.T) {
 	transientErrors := []error{
-		ErrRequestTimeout,
-		ErrRateLimited,
-		ErrProviderUnavailable,
-		ErrEdgeTimeout,
-		ErrProviderOverloaded,
+		cpn.ErrRequestTimeout,
+		cpn.ErrRateLimited,
+		cpn.ErrProviderUnavailable,
+		cpn.ErrEdgeTimeout,
+		cpn.ErrProviderOverloaded,
 	}
 
 	for _, err := range transientErrors {
-		if !OpenRouterRetryOn(err, 1) {
-			t.Errorf("OpenRouterRetryOn(%v) = false, want true (transient)", err)
+		if !RetryOn(err, 1) {
+			t.Errorf("RetryOn(%v) = false, want true (transient)", err)
 		}
 	}
 }
 
-func TestOpenRouterRetryOn_ContextErrors(t *testing.T) {
-	if OpenRouterRetryOn(context.Canceled, 1) {
-		t.Error("OpenRouterRetryOn(context.Canceled) = true, want false")
+func TestRetryOn_ContextErrors(t *testing.T) {
+	if RetryOn(context.Canceled, 1) {
+		t.Error("RetryOn(context.Canceled) = true, want false")
 	}
-	if OpenRouterRetryOn(context.DeadlineExceeded, 1) {
-		t.Error("OpenRouterRetryOn(context.DeadlineExceeded) = true, want false")
+	if RetryOn(context.DeadlineExceeded, 1) {
+		t.Error("RetryOn(context.DeadlineExceeded) = true, want false")
 	}
 }
 
-func TestOpenRouterRetryPolicy(t *testing.T) {
-	policy := OpenRouterRetryPolicy()
+func TestRetryPolicy(t *testing.T) {
+	policy := RetryPolicy()
 
 	if policy.MaxAttempts != 3 {
 		t.Errorf("MaxAttempts = %d, want 3", policy.MaxAttempts)
@@ -1678,15 +1680,15 @@ func TestComplete_MessagesEndpoint_RecordsCacheTokens(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewOpenRouterClient("test-key", "test-model")
+	client := NewClient("test-key", "test-model")
 	client.BaseURL = srv.URL
 
-	_, err := client.Complete(context.Background(), &LLMRequest{
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "anthropic/claude-sonnet-4-6",
-		Messages:  []*LLMMessage{{Role: "user", Content: "Hi"}},
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
 		MaxTokens: 100,
 		SessionID: "sess-cache-ledger",
-		Endpoint:  EndpointMessages,
+		Endpoint:  cpn.EndpointMessages,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
@@ -1708,7 +1710,7 @@ func TestComplete_MessagesEndpoint_RecordsCacheTokens(t *testing.T) {
 
 func TestLLMConfig_BackwardCompatibility(t *testing.T) {
 	// v1.1 usage: only 6 original fields. Must still compile and work.
-	cfg := &LLMConfig{
+	cfg := &cpn.LLMConfig{
 		Model:        "reasoning",
 		MaxTokens:    1000,
 		Temperature:  0.7,
@@ -1748,13 +1750,13 @@ func TestLLMConfig_BackwardCompatibility(t *testing.T) {
 // ── Anthropic Messages: User Cache Control ──────────────────────────────────
 
 func TestFormatAnthropicMessages_UserCacheControl(t *testing.T) {
-	msgs := []*LLMMessage{
+	msgs := []*cpn.LLMMessage{
 		{Role: "system", Content: "System prompt"},
 		{Role: "user", Content: "Hello"},
 		{Role: "assistant", Content: "Hi there"},
 		{Role: "user", Content: "Follow up"},
 	}
-	cache := &CacheControlConfig{TTL: "5m"}
+	cache := &cpn.CacheControlConfig{TTL: "5m"}
 
 	formatted := formatAnthropicMessages(msgs, cache)
 

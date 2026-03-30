@@ -33,12 +33,6 @@ type HITLConfig struct {
 	MaxRevisions int
 }
 
-// GroupNotifier notifies the parent group of CPN state changes.
-// Implemented by GroupAgent (Block 11). Nil means no group coordination.
-type GroupNotifier interface {
-	SwitchCMP(cpnID string)
-}
-
 // fireHITL executes a single-turn HITL transition.
 //
 // Flow:

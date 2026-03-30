@@ -1,4 +1,4 @@
-package cpn
+package guardrails
 
 import (
 	"bytes"
@@ -8,14 +8,16 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
-// ── GuardrailsClient ────────────────────────────────────────────────────────
+// ── Client ────────────────────────────────────────────────────────
 
-// GuardrailsClient manages account-level spending guardrails via the
+// Client manages account-level spending guardrails via the
 // OpenRouter management API. Requires a management API key (separate
 // from the regular API key used by OpenRouterClient).
-type GuardrailsClient struct {
+type Client struct {
 	// apiKey is the management API key. Never logged or included in errors.
 	apiKey string
 
@@ -26,9 +28,9 @@ type GuardrailsClient struct {
 	HTTPClient *http.Client
 }
 
-// NewGuardrailsClient returns a configured client with sensible defaults.
-func NewGuardrailsClient(apiKey, baseURL string) *GuardrailsClient {
-	return &GuardrailsClient{
+// NewClient returns a configured client with sensible defaults.
+func NewClient(apiKey, baseURL string) *Client {
+	return &Client{
 		apiKey:  apiKey,
 		BaseURL: baseURL,
 		HTTPClient: &http.Client{
@@ -38,8 +40,8 @@ func NewGuardrailsClient(apiKey, baseURL string) *GuardrailsClient {
 }
 
 // String implements fmt.Stringer. Redacts the API key.
-func (c *GuardrailsClient) String() string {
-	return fmt.Sprintf("GuardrailsClient{base: %s}", c.BaseURL)
+func (c *Client) String() string {
+	return fmt.Sprintf("Client{base: %s}", c.BaseURL)
 }
 
 // ── Guardrail Type ──────────────────────────────────────────────────────────
@@ -151,7 +153,7 @@ func guardrailFromJSON(j *guardrailJSON) Guardrail {
 
 // Create creates a new guardrail.
 // POST /guardrails
-func (c *GuardrailsClient) Create(ctx context.Context, g *Guardrail) (Guardrail, error) {
+func (c *Client) Create(ctx context.Context, g *Guardrail) (Guardrail, error) {
 	body, err := json.Marshal(guardrailToJSON(g))
 	if err != nil {
 		return Guardrail{}, fmt.Errorf("marshal guardrail: %w", err)
@@ -177,7 +179,7 @@ func (c *GuardrailsClient) Create(ctx context.Context, g *Guardrail) (Guardrail,
 
 // Update updates an existing guardrail.
 // PUT /guardrails/{id}
-func (c *GuardrailsClient) Update(ctx context.Context, id string, g *Guardrail) (Guardrail, error) {
+func (c *Client) Update(ctx context.Context, id string, g *Guardrail) (Guardrail, error) {
 	body, err := json.Marshal(guardrailToJSON(g))
 	if err != nil {
 		return Guardrail{}, fmt.Errorf("marshal guardrail: %w", err)
@@ -203,7 +205,7 @@ func (c *GuardrailsClient) Update(ctx context.Context, id string, g *Guardrail) 
 
 // Delete removes a guardrail.
 // DELETE /guardrails/{id}
-func (c *GuardrailsClient) Delete(ctx context.Context, id string) error {
+func (c *Client) Delete(ctx context.Context, id string) error {
 	resp, err := c.doRequest(ctx, http.MethodDelete, "/guardrails/"+id, nil)
 	if err != nil {
 		return err
@@ -219,7 +221,7 @@ func (c *GuardrailsClient) Delete(ctx context.Context, id string) error {
 
 // List returns all guardrails for the account.
 // GET /guardrails
-func (c *GuardrailsClient) List(ctx context.Context) ([]Guardrail, error) {
+func (c *Client) List(ctx context.Context) ([]Guardrail, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/guardrails", nil)
 	if err != nil {
 		return nil, err
@@ -236,11 +238,11 @@ func (c *GuardrailsClient) List(ctx context.Context) ([]Guardrail, error) {
 		return nil, fmt.Errorf("decode guardrails list: %w", err)
 	}
 
-	guardrails := make([]Guardrail, len(listResp.Data))
+	gs := make([]Guardrail, len(listResp.Data))
 	for i := range listResp.Data {
-		guardrails[i] = guardrailFromJSON(&listResp.Data[i])
+		gs[i] = guardrailFromJSON(&listResp.Data[i])
 	}
-	return guardrails, nil
+	return gs, nil
 }
 
 // ── Key Management ──────────────────────────────────────────────────────────
@@ -248,7 +250,7 @@ func (c *GuardrailsClient) List(ctx context.Context) ([]Guardrail, error) {
 // AssignKeys assigns API key hashes to a guardrail.
 // POST /guardrails/{id}/keys
 // Returns the number of keys assigned.
-func (c *GuardrailsClient) AssignKeys(ctx context.Context, guardrailID string, keyHashes []string) (int, error) {
+func (c *Client) AssignKeys(ctx context.Context, guardrailID string, keyHashes []string) (int, error) {
 	body, err := json.Marshal(keysRequestJSON{KeyHashes: keyHashes})
 	if err != nil {
 		return 0, fmt.Errorf("marshal key hashes: %w", err)
@@ -275,7 +277,7 @@ func (c *GuardrailsClient) AssignKeys(ctx context.Context, guardrailID string, k
 // UnassignKeys removes API key hashes from a guardrail.
 // DELETE /guardrails/{id}/keys
 // Returns the number of keys unassigned.
-func (c *GuardrailsClient) UnassignKeys(ctx context.Context, guardrailID string, keyHashes []string) (int, error) {
+func (c *Client) UnassignKeys(ctx context.Context, guardrailID string, keyHashes []string) (int, error) {
 	body, err := json.Marshal(keysRequestJSON{KeyHashes: keyHashes})
 	if err != nil {
 		return 0, fmt.Errorf("marshal key hashes: %w", err)
@@ -304,7 +306,7 @@ func (c *GuardrailsClient) UnassignKeys(ctx context.Context, guardrailID string,
 // ApplicationInit is a startup helper that creates a daily spending guardrail
 // and assigns the application API key to it. Makes exactly 2 API calls:
 // Create + AssignKeys.
-func ApplicationInit(ctx context.Context, client *GuardrailsClient, dailyLimitUSD float64, apiKeyHash string) error {
+func ApplicationInit(ctx context.Context, client *Client, dailyLimitUSD float64, apiKeyHash string) error {
 	g, err := client.Create(ctx, &Guardrail{
 		Name:          "app-daily-limit",
 		LimitUSD:      dailyLimitUSD,
@@ -325,7 +327,7 @@ func ApplicationInit(ctx context.Context, client *GuardrailsClient, dailyLimitUS
 // ── HTTP helper ─────────────────────────────────────────────────────────────
 
 // doRequest builds and executes an HTTP request with the management API key.
-func (c *GuardrailsClient) doRequest(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
@@ -344,4 +346,39 @@ func (c *GuardrailsClient) doRequest(ctx context.Context, method, path string, b
 		return nil, fmt.Errorf("HTTP request: %w", err)
 	}
 	return resp, nil
+}
+
+// ── HTTP Error Mapping ───────────────────────────────────────────────────────
+
+// mapHTTPStatusToError maps OpenRouter HTTP status codes to sentinel errors.
+func mapHTTPStatusToError(status int) error {
+	switch status {
+	case 400:
+		return cpn.ErrBadRequest
+	case 401:
+		return cpn.ErrUnauthorized
+	case 402:
+		return cpn.ErrInsufficientCredits
+	case 403:
+		return cpn.ErrForbidden
+	case 404:
+		return cpn.ErrNotFound
+	case 408:
+		return cpn.ErrRequestTimeout
+	case 413:
+		return cpn.ErrPayloadTooLarge
+	case 422:
+		return cpn.ErrUnprocessableEntity
+	case 429:
+		return cpn.ErrRateLimited
+	case 524:
+		return cpn.ErrEdgeTimeout
+	case 529:
+		return cpn.ErrProviderOverloaded
+	default:
+		if status >= 500 && status < 600 {
+			return cpn.ErrProviderUnavailable
+		}
+		return fmt.Errorf("unexpected HTTP status %d", status)
+	}
 }

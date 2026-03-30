@@ -1,10 +1,12 @@
-package cpn
+package openrouter
 
 import (
 	"errors"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
 // sseReader creates a mock io.ReadCloser from SSE text.
@@ -477,7 +479,7 @@ data: {"type":"error","error":{"message":"overloaded"}}
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, ErrProviderUnavailable) {
+	if !errors.Is(err, cpn.ErrProviderUnavailable) {
 		t.Errorf("error = %v, want ErrProviderUnavailable", err)
 	}
 	if !strings.Contains(err.Error(), "overloaded") {

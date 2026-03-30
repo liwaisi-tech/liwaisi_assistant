@@ -1,4 +1,4 @@
-package cpn
+package openrouter
 
 import (
 	"bufio"
@@ -7,6 +7,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
 // StreamHandler parses SSE streams from both OpenRouter endpoint formats.
@@ -39,10 +41,10 @@ type blockAccumulator struct {
 // Assembles content from multiple delta chunks, accumulates tool calls
 // by index, and extracts usage from the final chunk.
 // Takes ownership of body (calls body.Close via defer).
-func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
+func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (cpn.LLMResponse, error) {
 	defer body.Close()
 
-	var resp LLMResponse
+	var resp cpn.LLMResponse
 	var content strings.Builder
 	toolCalls := make(map[int]*toolCallAccumulator)
 
@@ -122,7 +124,7 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return LLMResponse{}, err
+		return cpn.LLMResponse{}, err
 	}
 
 	resp.Content = content.String()
@@ -134,10 +136,10 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
 			indices = append(indices, idx)
 		}
 		sort.Ints(indices)
-		resp.ToolCalls = make([]*LLMToolCall, 0, len(indices))
+		resp.ToolCalls = make([]*cpn.LLMToolCall, 0, len(indices))
 		for _, idx := range indices {
 			acc := toolCalls[idx]
-			resp.ToolCalls = append(resp.ToolCalls, &LLMToolCall{
+			resp.ToolCalls = append(resp.ToolCalls, &cpn.LLMToolCall{
 				ID:        acc.id,
 				ToolName:  acc.name,
 				Arguments: json.RawMessage(acc.args.String()),
@@ -162,10 +164,10 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (LLMResponse, error) {
 // Thinking blocks accumulate via thinking_delta and are sealed by
 // signature_delta. The Signature field is preserved byte-for-byte.
 // Takes ownership of body (calls body.Close via defer).
-func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (LLMResponse, error) {
+func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (cpn.LLMResponse, error) {
 	defer body.Close()
 
-	var resp LLMResponse
+	var resp cpn.LLMResponse
 	var content strings.Builder
 	blocks := make(map[int]*blockAccumulator)
 	var currentEventType string
@@ -249,7 +251,7 @@ scanLoop:
 			case "signature_delta":
 				acc.signature = cbd.Delta.Signature
 				// Seal the thinking block.
-				resp.ThinkingBlocks = append(resp.ThinkingBlocks, ThinkingBlock{
+				resp.ThinkingBlocks = append(resp.ThinkingBlocks, cpn.ThinkingBlock{
 					Thinking:  acc.content.String(),
 					Signature: acc.signature,
 				})
@@ -282,16 +284,16 @@ scanLoop:
 				} `json:"error"`
 			}
 			if err := json.Unmarshal([]byte(data), &errEvt); err != nil {
-				return LLMResponse{}, fmt.Errorf("%w: %s", ErrProviderUnavailable, data)
+				return cpn.LLMResponse{}, fmt.Errorf("%w: %s", cpn.ErrProviderUnavailable, data)
 			}
-			return LLMResponse{}, fmt.Errorf("%w: %s", ErrProviderUnavailable, errEvt.Error.Message)
+			return cpn.LLMResponse{}, fmt.Errorf("%w: %s", cpn.ErrProviderUnavailable, errEvt.Error.Message)
 		}
 
 		currentEventType = ""
 	}
 
 	if err := scanner.Err(); err != nil {
-		return LLMResponse{}, err
+		return cpn.LLMResponse{}, err
 	}
 
 	resp.Content = content.String()

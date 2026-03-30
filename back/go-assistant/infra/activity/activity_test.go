@@ -1,4 +1,4 @@
-package cpn
+package activity
 
 import (
 	"context"
@@ -8,22 +8,25 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 )
 
 // ── Test Helper ─────────────────────────────────────────────────────────────
 
-func mockActivityServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *ActivityClient) {
+func mockActivityServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *Client) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	client := NewActivityClient("mgmt-api-key-secret", srv.URL)
+	client := NewClient("mgmt-api-key-secret", srv.URL)
 	return srv, client
 }
 
 // ── Constructor ─────────────────────────────────────────────────────────────
 
-func TestNewActivityClient(t *testing.T) {
-	client := NewActivityClient("mgmt-key", "https://openrouter.ai/api/v1")
+func TestNewClient(t *testing.T) {
+	client := NewClient("mgmt-key", "https://openrouter.ai/api/v1")
 
 	if client.BaseURL != "https://openrouter.ai/api/v1" {
 		t.Errorf("BaseURL = %q, want %q", client.BaseURL, "https://openrouter.ai/api/v1")
@@ -33,7 +36,7 @@ func TestNewActivityClient(t *testing.T) {
 	}
 
 	s := client.String()
-	if s != "ActivityClient{base: https://openrouter.ai/api/v1}" {
+	if s != "Client{base: https://openrouter.ai/api/v1}" {
 		t.Errorf("String() = %q, unexpected", s)
 	}
 }
@@ -237,7 +240,7 @@ func TestActivityClient_Fetch_HTTPError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 401 response")
 	}
-	if !errors.Is(err, ErrUnauthorized) {
+	if !errors.Is(err, cpn.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
@@ -252,7 +255,7 @@ func TestActivityClient_Fetch_HTTPError_500(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
-	if !errors.Is(err, ErrProviderUnavailable) {
+	if !errors.Is(err, cpn.ErrProviderUnavailable) {
 		t.Errorf("expected ErrProviderUnavailable, got %v", err)
 	}
 }
@@ -288,7 +291,7 @@ func TestSyncToLedger_AggregatesUsage(t *testing.T) {
 		})
 	})
 
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	err := client.SyncToLedger(context.Background(), ledger, "2026-03-27")
 	if err != nil {
@@ -315,7 +318,7 @@ func TestSyncToLedger_FetchError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"internal"}`))
 	})
 
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	err := client.SyncToLedger(context.Background(), ledger, "2026-03-27")
 	if err == nil {
@@ -332,7 +335,7 @@ func TestSyncToLedger_FetchError(t *testing.T) {
 // ── TokenLedger: SetDailyTotal / GetDailyTotal ─────────────────────────────
 
 func TestTokenLedger_SetDailyTotal(t *testing.T) {
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	ledger.SetDailyTotal("2026-03-27", 1.50)
 
@@ -359,7 +362,7 @@ func TestTokenLedger_SetDailyTotal(t *testing.T) {
 // ── TokenLedger: GetDailyTotal Not Synced ──────────────────────────────────
 
 func TestTokenLedger_GetDailyTotal_NotSynced(t *testing.T) {
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	total, ok := ledger.GetDailyTotal("2099-01-01")
 	if ok {
@@ -373,7 +376,7 @@ func TestTokenLedger_GetDailyTotal_NotSynced(t *testing.T) {
 // ── TokenLedger: Concurrent SetDailyTotal ──────────────────────────────────
 
 func TestTokenLedger_Concurrent_SetDailyTotal(t *testing.T) {
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	const goroutines = 100
 	var wg sync.WaitGroup
@@ -434,7 +437,7 @@ func TestSyncToLedger_EmptyActivity(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
 	})
 
-	ledger := NewTokenLedger()
+	ledger := openrouter.NewTokenLedger()
 
 	err := client.SyncToLedger(context.Background(), ledger, "2026-03-27")
 	if err != nil {
