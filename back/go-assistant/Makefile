@@ -16,7 +16,7 @@ LDFLAGS     := -s -w \
 
 .DEFAULT_GOAL := help
 
-.PHONY: build build-server test test-coverage lint fmt clean deps run help
+.PHONY: build build-server test test-coverage test-integration lint fmt clean deps run help
 
 ## build: Build the CLI binary
 build:
@@ -38,6 +38,10 @@ test:
 test-coverage:
 	$(GO) test $(GO_FLAGS) -coverprofile=$(COVERAGE_FILE) -count=1 ./...
 	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
+
+## test-integration: Run integration tests (requires OPENROUTER_API_KEY)
+test-integration:
+	$(GO) test $(GO_FLAGS) -tags integration -timeout 300s -count=1 -v ./integration/
 
 ## lint: Run golangci-lint
 lint:

@@ -104,9 +104,16 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 		"p-input":  cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
 		"p-output": cpn.NewPlace("p-output", cpn.ColorString, cpn.SpaceSurface),
 	}
+	tLLM := cpn.NewTransition("t-llm", cpn.NodeKindLLM,
+		[]string{"p-input"}, []string{"p-output"})
+	tLLM.SystemPrompt = "You are a helpful assistant. Be concise."
+	tLLM.LLMConfig = &cpn.LLMConfig{
+		MaxTokens:   1024,
+		Temperature: 0.7,
+	}
+
 	transitions := map[string]*cpn.Transition{
-		"t-llm": cpn.NewTransition("t-llm", cpn.NodeKindLLM,
-			[]string{"p-input"}, []string{"p-output"}),
+		"t-llm": tLLM,
 	}
 	c := cpn.NewCPN(
 		fmt.Sprintf("cpn-%s", sessionID),

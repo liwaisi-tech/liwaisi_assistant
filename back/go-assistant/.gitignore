@@ -9,6 +9,7 @@ coverage.html
 # Environment files
 .env
 *.env
+integration/testdata/.env
 
 # IDE
 .idea/

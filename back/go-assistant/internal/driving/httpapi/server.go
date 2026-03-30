@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -90,6 +91,13 @@ func (s *Server) Broker() *SSEBroker {
 func (s *Server) Start() error {
 	s.logger.Info("server starting", slog.String("addr", s.config.Addr))
 	return s.httpServer.ListenAndServe()
+}
+
+// Serve starts the server on the given listener.
+// Used by integration tests to start on a pre-bound :0 port.
+func (s *Server) Serve(ln net.Listener) error {
+	s.logger.Info("server serving", slog.String("addr", ln.Addr().String()))
+	return s.httpServer.Serve(ln)
 }
 
 // Shutdown gracefully stops the server, waiting for active connections to drain.

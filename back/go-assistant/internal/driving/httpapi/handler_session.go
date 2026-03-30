@@ -116,6 +116,10 @@ func (h *Handlers) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "session not found")
 			return
 		}
+		if errors.Is(err, app.ErrSessionBusy) {
+			writeError(w, http.StatusConflict, "session is busy")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
