@@ -23,6 +23,10 @@ func (m *mockLLMClient) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.
 	return cpn.LLMResponse{Content: "ok"}, nil
 }
 
+func (m *mockLLMClient) CompleteStream(ctx context.Context, req *cpn.LLMRequest, _ func(string)) (cpn.LLMResponse, error) {
+	return m.Complete(ctx, req)
+}
+
 func (m *mockLLMClient) EstimateCost(_ *cpn.LLMRequest) (float64, error) {
 	return 0.001, nil
 }

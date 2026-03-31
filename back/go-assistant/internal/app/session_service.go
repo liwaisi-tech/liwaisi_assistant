@@ -192,6 +192,9 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 			st.streamClosed.Do(func() { close(session.Stream) })
 			return
 		}
+		// Check if any LLM transition used streaming (content already delivered via EventSink).
+		streamingActive := hasStreamingTransition(session.Root)
+
 		// Collect output from terminal places and append as assistant messages.
 		for _, p := range session.Root.TerminalPlaces() {
 			for {
@@ -203,6 +206,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 				if !ok {
 					continue
 				}
+				// Always persist to session history.
 				session.AppendMessage(&cpn.Message{
 					ID:        sessionID + "-resp-" + fmt.Sprintf("%d", time.Now().UnixNano()),
 					Role:      cpn.RoleAssistant,
@@ -212,16 +216,19 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 					CPNDepth:  session.Root.Depth,
 					Timestamp: time.Now(),
 				})
-				select {
-				case session.Stream <- cpn.StreamChunk{
-					SessionID: sessionID,
-					CPNID:     session.Root.ID,
-					CPNRole:   session.Root.Role,
-					Content:   content,
-					Done:      false,
-				}:
-				default:
-					s.logger.Warn("stream buffer full, chunk dropped", "session_id", sessionID)
+				// Only send content via Stream if it was NOT already streamed via the broker.
+				if !streamingActive {
+					select {
+					case session.Stream <- cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     session.Root.ID,
+						CPNRole:   session.Root.Role,
+						Content:   content,
+						Done:      false,
+					}:
+					default:
+						s.logger.Warn("stream buffer full, chunk dropped", "session_id", sessionID)
+					}
 				}
 			}
 		}
@@ -351,6 +358,16 @@ func generateSessionID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hasStreamingTransition returns true if any LLM transition in the CPN has StreamOutput enabled.
+func hasStreamingTransition(c *cpn.CPN) bool {
+	for _, t := range c.Transitions {
+		if t.Kind == cpn.NodeKindLLM && t.LLMConfig != nil && t.LLMConfig.StreamOutput {
+			return true
+		}
+	}
+	return false
 }
 
 // findSourcePlace returns the first place with no incoming transitions (source).

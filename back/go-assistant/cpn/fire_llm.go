@@ -87,7 +87,31 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	}
 
 	// Step 3: LLM call.
-	resp, err := c.LLMClient.Complete(ctx, req)
+	var resp LLMResponse
+	var err error
+
+	streamOutput := t.LLMConfig.StreamOutput
+	var onChunk func(string)
+	if streamOutput {
+		req.Stream = true
+		onChunk = func(chunk string) {
+			c.emit(&Event{
+				Type:           EventStreamChunk,
+				TransitionID:   t.ID,
+				TransitionKind: NodeKindLLM,
+				Payload: StreamChunk{
+					SessionID: c.SessionID,
+					CPNID:     c.ID,
+					CPNRole:   c.Role,
+					Content:   chunk,
+					Done:      false,
+				},
+			})
+		}
+		resp, err = c.LLMClient.CompleteStream(ctx, req, onChunk)
+	} else {
+		resp, err = c.LLMClient.Complete(ctx, req)
+	}
 	if err != nil {
 		return fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
@@ -95,12 +119,28 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	// Step 4: Tool-call loop.
 	var content string
 	if len(resp.ToolCalls) > 0 {
-		content, err = handleToolCalls(ctx, &resp, t, c, messages)
+		content, err = handleToolCalls(ctx, &resp, t, c, messages, streamOutput, onChunk)
 		if err != nil {
 			return err
 		}
 	} else {
 		content = resp.Content
+	}
+
+	// Emit done sentinel if streaming was active.
+	if streamOutput {
+		c.emit(&Event{
+			Type:           EventStreamChunk,
+			TransitionID:   t.ID,
+			TransitionKind: NodeKindLLM,
+			Payload: StreamChunk{
+				SessionID: c.SessionID,
+				CPNID:     c.ID,
+				CPNRole:   c.Role,
+				Content:   "",
+				Done:      true,
+			},
+		})
 	}
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
@@ -151,7 +191,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 
 // handleToolCalls executes the agentic tool-call loop.
 // Returns the final content string when the LLM stops requesting tools.
-func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage) (string, error) {
+func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage, streamOutput bool, onChunk func(string)) (string, error) {
 	// Build allowlist for O(1) lookup (PAT-003).
 	allowed := make(map[string]bool, len(t.LLMTools))
 	for _, id := range t.LLMTools {
@@ -241,7 +281,16 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			req.ResponseFmt = "json_object"
 		}
 
-		newResp, err := c.LLMClient.Complete(ctx, req)
+		var (
+			newResp LLMResponse
+			err     error
+		)
+		if streamOutput {
+			req.Stream = true
+			newResp, err = c.LLMClient.CompleteStream(ctx, req, onChunk)
+		} else {
+			newResp, err = c.LLMClient.Complete(ctx, req)
+		}
 		if err != nil {
 			return "", fmt.Errorf("transition %s: LLM re-call (iteration %d): %w", t.ID, i+1, err)
 		}

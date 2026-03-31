@@ -69,6 +69,12 @@ func main() {
 
 	// Wire event callback: CPN events → SSE broker.
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {
+		if evt.Type == cpn.EventStreamChunk {
+			if chunk, ok := evt.Payload.(cpn.StreamChunk); ok {
+				srv.Broker().PublishStreamChunk(sessionID, chunk)
+				return
+			}
+		}
 		srv.Broker().PublishEvent(sessionID, &evt)
 	})
 
@@ -121,8 +127,9 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 		[]string{"p-input"}, []string{"p-output"})
 	tLLM.SystemPrompt = "You are a helpful assistant. Be concise."
 	tLLM.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   1024,
-		Temperature: 0.7,
+		MaxTokens:    1024,
+		Temperature:  0.7,
+		StreamOutput: true,
 	}
 
 	transitions := map[string]*cpn.Transition{
@@ -159,8 +166,9 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	tPlan.SystemPrompt = "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. " +
 		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\""
 	tPlan.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   1024,
-		Temperature: 0.7,
+		MaxTokens:    1024,
+		Temperature:  0.7,
+		StreamOutput: true,
 	}
 
 	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
@@ -174,8 +182,9 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	tExecute.SystemPrompt = "You are a helpful assistant. The user approved the following plan. " +
 		"Execute it thoroughly and provide the final result."
 	tExecute.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   2048,
-		Temperature: 0.7,
+		MaxTokens:    2048,
+		Temperature:  0.7,
+		StreamOutput: true,
 	}
 
 	transitions := map[string]*cpn.Transition{

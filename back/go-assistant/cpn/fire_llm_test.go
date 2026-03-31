@@ -14,10 +14,11 @@ import (
 // ── Mock LLMClient ───────────────────────────────────────────────────────────
 
 type mockLLMClient struct {
-	completeFunc     func(ctx context.Context, req *LLMRequest) (LLMResponse, error)
-	estimateCostFunc func(req *LLMRequest) (float64, error)
-	mu               sync.Mutex
-	calls            []*LLMRequest
+	completeFunc       func(ctx context.Context, req *LLMRequest) (LLMResponse, error)
+	completeStreamFunc func(ctx context.Context, req *LLMRequest, onChunk func(string)) (LLMResponse, error)
+	estimateCostFunc   func(req *LLMRequest) (float64, error)
+	mu                 sync.Mutex
+	calls              []*LLMRequest
 }
 
 func (m *mockLLMClient) Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
@@ -28,6 +29,17 @@ func (m *mockLLMClient) Complete(ctx context.Context, req *LLMRequest) (LLMRespo
 		return m.completeFunc(ctx, req)
 	}
 	return LLMResponse{Content: "default response"}, nil
+}
+
+func (m *mockLLMClient) CompleteStream(ctx context.Context, req *LLMRequest, onChunk func(string)) (LLMResponse, error) {
+	if m.completeStreamFunc != nil {
+		m.mu.Lock()
+		m.calls = append(m.calls, req)
+		m.mu.Unlock()
+		return m.completeStreamFunc(ctx, req, onChunk)
+	}
+	// Default: delegate to Complete, no streaming.
+	return m.Complete(ctx, req)
 }
 
 func (m *mockLLMClient) EstimateCost(req *LLMRequest) (float64, error) {
@@ -803,5 +815,127 @@ func TestFireLLM_SetsTrace(t *testing.T) {
 	}
 	if trace.GenerationName != "t-reason" {
 		t.Errorf("GenerationName = %q, want %q", trace.GenerationName, "t-reason")
+	}
+}
+
+// ── Streaming Tests ────────────────────────────────────────────────────────
+
+func TestFireLLM_StreamOutput_EmitsChunks(t *testing.T) {
+	deltas := []string{"Hello", ", ", "world", "!"}
+	mock := &mockLLMClient{
+		completeStreamFunc: func(ctx context.Context, req *LLMRequest, onChunk func(string)) (LLMResponse, error) {
+			if !req.Stream {
+				t.Error("expected req.Stream=true")
+			}
+			for _, d := range deltas {
+				onChunk(d)
+			}
+			return LLMResponse{Content: "Hello, world!"}, nil
+		},
+	}
+
+	trans := newBasicLLMTransition()
+	trans.LLMConfig.StreamOutput = true
+
+	ec := &eventCollector{}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.EventSink = ec.sink
+
+	consumed := []Token{{Color: ColorString, Payload: "input"}}
+
+	err := fireLLM(context.Background(), trans, cpn, consumed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := ec.getEvents()
+
+	// Count stream chunk events (excluding done sentinel).
+	var chunkEvents []Event
+	var doneEvents []Event
+	for _, e := range events {
+		if e.Type != EventStreamChunk {
+			continue
+		}
+		chunk, ok := e.Payload.(StreamChunk)
+		if !ok {
+			t.Fatalf("expected StreamChunk payload, got %T", e.Payload)
+		}
+		if chunk.Done {
+			doneEvents = append(doneEvents, e)
+		} else {
+			chunkEvents = append(chunkEvents, e)
+		}
+	}
+
+	if len(chunkEvents) != len(deltas) {
+		t.Fatalf("expected %d chunk events, got %d", len(deltas), len(chunkEvents))
+	}
+
+	for i, e := range chunkEvents {
+		chunk := e.Payload.(StreamChunk)
+		if chunk.Content != deltas[i] {
+			t.Errorf("chunk[%d]: expected %q, got %q", i, deltas[i], chunk.Content)
+		}
+		if chunk.SessionID != "session-1" {
+			t.Errorf("chunk[%d]: expected SessionID=session-1, got %q", i, chunk.SessionID)
+		}
+		if chunk.CPNID != "test-cpn" {
+			t.Errorf("chunk[%d]: expected CPNID=test-cpn, got %q", i, chunk.CPNID)
+		}
+		if chunk.CPNRole != "worker" {
+			t.Errorf("chunk[%d]: expected CPNRole=worker, got %q", i, chunk.CPNRole)
+		}
+	}
+
+	// Verify done sentinel.
+	if len(doneEvents) != 1 {
+		t.Fatalf("expected 1 done sentinel, got %d", len(doneEvents))
+	}
+	doneSentinel := doneEvents[0].Payload.(StreamChunk)
+	if doneSentinel.Content != "" {
+		t.Errorf("done sentinel content should be empty, got %q", doneSentinel.Content)
+	}
+
+	// Verify output was still deposited.
+	output := cpn.Places["P:OUTPUT"]
+	if output.Len() != 1 {
+		t.Fatalf("expected 1 output token, got %d", output.Len())
+	}
+	tokens, _ := output.Peek()
+	if tokens[0].Payload != "Hello, world!" {
+		t.Errorf("expected 'Hello, world!', got %v", tokens[0].Payload)
+	}
+}
+
+func TestFireLLM_StreamOutput_False_NoChunks(t *testing.T) {
+	mock := &mockLLMClient{
+		completeFunc: func(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
+			if req.Stream {
+				t.Error("expected req.Stream=false")
+			}
+			return LLMResponse{Content: "no stream"}, nil
+		},
+	}
+
+	trans := newBasicLLMTransition()
+	trans.LLMConfig.StreamOutput = false
+
+	ec := &eventCollector{}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.EventSink = ec.sink
+
+	consumed := []Token{{Color: ColorString, Payload: "input"}}
+
+	err := fireLLM(context.Background(), trans, cpn, consumed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	events := ec.getEvents()
+	for _, e := range events {
+		if e.Type == EventStreamChunk {
+			t.Error("expected no EventStreamChunk when StreamOutput=false")
+		}
 	}
 }
