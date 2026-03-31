@@ -149,7 +149,7 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	places := map[string]*cpn.Place{
 		"p-input":    cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
-		"p-plan":     cpn.NewPlace("p-plan", cpn.ColorString, cpn.SpaceSurface),
+		"p-plan":     cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
 		"p-reviewed": cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
 		"p-output":   cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
 	}
