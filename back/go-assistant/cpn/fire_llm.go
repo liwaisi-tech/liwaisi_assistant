@@ -44,10 +44,18 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	messages = append(messages, cw.Messages...)
 
 	// Append consumed tokens as user message (REQ-002).
-	if len(consumed) > 0 {
+	// Skip tokens with non-user colors (JSON from classifiers, Human from HITL)
+	// — the conversation history already provides context for downstream transitions.
+	var userTokens []Token
+	for i := range consumed {
+		if consumed[i].Color == ColorString || consumed[i].Color == ColorArtifact {
+			userTokens = append(userTokens, consumed[i])
+		}
+	}
+	if len(userTokens) > 0 {
 		messages = append(messages, &LLMMessage{
 			Role:    "user",
-			Content: formatTokenPayload(consumed),
+			Content: formatTokenPayload(userTokens),
 		})
 	}
 
@@ -144,10 +152,11 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	}
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
-	if len(consumed) > 0 {
+	// Only append user-relevant tokens (skip routing metadata like classifier JSON).
+	if len(userTokens) > 0 {
 		c.History = append(c.History, &Message{
 			Role:      RoleUser,
-			Content:   formatTokenPayload(consumed),
+			Content:   formatTokenPayload(userTokens),
 			Timestamp: time.Now(),
 		})
 	}

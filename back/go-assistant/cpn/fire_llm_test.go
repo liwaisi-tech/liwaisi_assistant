@@ -501,9 +501,10 @@ func TestFireLLM_MultipleInputPlaces(t *testing.T) {
 	trans := newBasicLLMTransition()
 	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
 
+	// Two ColorString tokens → both forwarded as labeled sections.
 	consumed := []Token{
 		{Color: ColorString, Payload: "first input"},
-		{Color: ColorJSON, Payload: `{"key":"value"}`},
+		{Color: ColorString, Payload: "second input"},
 	}
 
 	err := fireLLM(context.Background(), trans, cpn, consumed)
@@ -515,6 +516,30 @@ func TestFireLLM_MultipleInputPlaces(t *testing.T) {
 	last := calls[0].Messages[len(calls[0].Messages)-1]
 	if !strings.Contains(last.Content, "Token 1") || !strings.Contains(last.Content, "Token 2") {
 		t.Errorf("expected labeled sections for multiple tokens, got: %q", last.Content)
+	}
+}
+
+func TestFireLLM_SkipsNonUserTokenColors(t *testing.T) {
+	mock := &mockLLMClient{}
+	trans := newBasicLLMTransition()
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+
+	// ColorJSON tokens (e.g. from classifier) should be filtered out.
+	consumed := []Token{
+		{Color: ColorJSON, Payload: `{"intent":"conversation"}`},
+	}
+
+	err := fireLLM(context.Background(), trans, cpn, consumed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := mock.getCalls()
+	// Only system prompt should be present — no user message from JSON token.
+	for _, msg := range calls[0].Messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, "intent") {
+			t.Errorf("JSON routing token should not appear as user message, got: %q", msg.Content)
+		}
 	}
 }
 
