@@ -1,3 +1,5 @@
+export type HITLAction = 'approve' | 'reject';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -6,4 +8,7 @@ export interface ChatMessage {
   cpnId?: string;
   cpnRole?: string;
   timestamp: Date;
+  hitlTransitionId?: string;
+  hitlActions?: HITLAction[];
+  hitlResolved?: HITLAction;
 }

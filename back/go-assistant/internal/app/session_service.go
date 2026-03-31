@@ -95,6 +95,22 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	}
 
 	session := cpn.NewSession(id, userID, channel, root)
+
+	// Wire HITL channels: walk transitions, create channels, register with session.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterHITL(t.ID, ch); err != nil {
+			s.logger.Error("register HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
 	st := &sessionState{state: cpn.StateIdle}
 
 	s.mu.Lock()

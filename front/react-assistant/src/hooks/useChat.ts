@@ -1,8 +1,8 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SessionState } from '../types/api';
-import type { StreamChunkData } from '../types/sse';
-import type { ChatMessage } from '../types/chat';
-import { createSession, getSession, sendMessage as apiSendMessage, ApiError } from '../services/api';
+import type { StreamChunkData, CPNEventData } from '../types/sse';
+import type { ChatMessage, HITLAction } from '../types/chat';
+import { createSession, getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE } from './useSSE';
 
 interface ChatState {
@@ -21,7 +21,9 @@ type ChatAction =
   | { type: 'SESSION_FAILED' }
   | { type: 'SET_SENDING' }
   | { type: 'SET_ERROR'; error: string }
-  | { type: 'CLEAR_ERROR' };
+  | { type: 'CLEAR_ERROR' }
+  | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string }
+  | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -125,6 +127,37 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'CLEAR_ERROR':
       return { ...state, error: null };
 
+    case 'HITL_REQUESTED':
+      return {
+        ...state,
+        sessionState: 'waiting',
+        messages: [
+          ...state.messages,
+          {
+            id: `hitl-${action.transitionId}-${Date.now()}`,
+            role: 'assistant',
+            content: action.prompt,
+            isStreaming: false,
+            cpnId: action.cpnId,
+            cpnRole: action.cpnRole,
+            timestamp: new Date(),
+            hitlTransitionId: action.transitionId,
+            hitlActions: ['approve', 'reject'],
+          },
+        ],
+      };
+
+    case 'HITL_RESOLVED':
+      return {
+        ...state,
+        sessionState: 'running',
+        messages: state.messages.map((m) =>
+          m.hitlTransitionId === action.transitionId
+            ? { ...m, hitlResolved: action.action, hitlActions: undefined }
+            : m
+        ),
+      };
+
     default:
       return state;
   }
@@ -194,12 +227,39 @@ export function useChat(userId: string) {
     dispatch({ type: 'SESSION_FAILED' });
   }, []);
 
+  const onHITLRequested = useCallback((data: CPNEventData) => {
+    const prompt = typeof data.Payload === 'string'
+      ? data.Payload
+      : 'Please review and confirm.';
+    dispatch({
+      type: 'HITL_REQUESTED',
+      transitionId: data.TransitionID,
+      prompt,
+      cpnId: data.CPNID,
+      cpnRole: data.CPNRole,
+    });
+  }, []);
+
   const { isConnected } = useSSE({
     sessionId: state.sessionId,
     onStreamChunk,
     onSessionCompleted,
     onSessionFailed,
+    onHITLRequested,
   });
+
+  const handleResolveHITL = useCallback(
+    async (transitionId: string, action: HITLAction) => {
+      if (!state.sessionId) return;
+      dispatch({ type: 'HITL_RESOLVED', transitionId, action });
+      try {
+        await apiResolveHITL(state.sessionId, transitionId, { action });
+      } catch (err) {
+        dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
+      }
+    },
+    [state.sessionId]
+  );
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -244,6 +304,7 @@ export function useChat(userId: string) {
     sessionId: state.sessionId,
     isConnected,
     sendMessage,
+    resolveHITL: handleResolveHITL,
     error: state.error,
   };
 }

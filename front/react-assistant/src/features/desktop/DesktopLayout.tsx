@@ -9,7 +9,7 @@ interface DesktopLayoutProps {
 }
 
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
-  const { messages, sessionState, isConnected, sendMessage, error } = useChat(userId);
+  const { messages, sessionState, isConnected, sendMessage, resolveHITL, error } = useChat(userId);
 
   return (
     <div className="scan-lines flex flex-col h-dvh relative" style={{ backgroundColor: 'var(--bg-deep)' }}>
@@ -19,12 +19,14 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
         messages={messages}
         sessionState={sessionState}
         onSuggestionClick={sendMessage}
+        onHITLAction={resolveHITL}
       />
 
       <div className="pb-20">
         <MessageInput
           onSend={sendMessage}
-          disabled={sessionState === 'running'}
+          disabled={sessionState === 'running' || sessionState === 'waiting'}
+          sessionState={sessionState}
           error={error}
         />
       </div>

@@ -1,12 +1,14 @@
 import { useRef, useCallback } from 'react';
+import type { SessionState } from '../../types/api';
 
 interface MessageInputProps {
   onSend: (content: string) => void;
   disabled: boolean;
+  sessionState?: SessionState;
   error: string | null;
 }
 
-export function MessageInput({ onSend, disabled, error }: MessageInputProps) {
+export function MessageInput({ onSend, disabled, sessionState, error }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = useCallback(() => {
@@ -42,7 +44,9 @@ export function MessageInput({ onSend, disabled, error }: MessageInputProps) {
             ref={textareaRef}
             className="message-textarea flex-1 bg-transparent text-sm leading-relaxed placeholder:text-slate-500 focus:outline-none"
             style={{ color: 'var(--text-primary)', fontFamily: "'DM Sans', system-ui, sans-serif" }}
-            placeholder={disabled ? 'Waiting for response...' : 'Type a message...'}
+            placeholder={disabled
+              ? (sessionState === 'waiting' ? 'Review the plan above...' : 'Waiting for response...')
+              : 'Type a message...'}
             disabled={disabled}
             onKeyDown={handleKeyDown}
             rows={1}

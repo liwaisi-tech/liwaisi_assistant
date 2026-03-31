@@ -49,8 +49,17 @@ func main() {
 	llmClient := openrouter.NewClient(apiKey, defaultModel)
 	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
 
+	// ── Topology selection ──────────────────────────────────────────
+	var topologyFactory app.TopologyFactory
+	switch envOr("TOPOLOGY", "hitl") {
+	case "simple":
+		topologyFactory = defaultTopologyFactory
+	default:
+		topologyFactory = hitlTopologyFactory
+	}
+
 	// ── Application layer ───────────────────────────────────────────
-	appService := app.NewSessionService(llmClient, costProvider, logger, defaultTopologyFactory)
+	appService := app.NewSessionService(llmClient, costProvider, logger, topologyFactory)
 
 	// ── Billing adapter ────────────────────────────────────────────
 	billingClient := billing.NewClient(apiKey, "https://openrouter.ai/api/v1")
@@ -119,6 +128,62 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 	transitions := map[string]*cpn.Transition{
 		"t-llm": tLLM,
 	}
+	c := cpn.NewCPN(
+		fmt.Sprintf("cpn-%s", sessionID),
+		"assistant",
+		0,
+		cpn.ModeMAS,
+		sessionID,
+		places,
+		transitions,
+	)
+	c.ContextWindowSize = 10
+	return c
+}
+
+// hitlTopologyFactory creates a CPN topology with a human-review gate:
+// p-input → t-plan (LLM) → p-plan → t-review (HITL) → p-reviewed → t-execute (LLM) → p-output.
+//
+// The assistant first presents a plan, waits for user approval, then executes.
+// Channel on t-review is left nil — wired by SessionService.CreateSession.
+func hitlTopologyFactory(sessionID string) *cpn.CPN {
+	places := map[string]*cpn.Place{
+		"p-input":    cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
+		"p-plan":     cpn.NewPlace("p-plan", cpn.ColorString, cpn.SpaceSurface),
+		"p-reviewed": cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
+		"p-output":   cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
+	}
+
+	tPlan := cpn.NewTransition("t-plan", cpn.NodeKindLLM,
+		[]string{"p-input"}, []string{"p-plan"})
+	tPlan.SystemPrompt = "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. " +
+		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\""
+	tPlan.LLMConfig = &cpn.LLMConfig{
+		MaxTokens:   1024,
+		Temperature: 0.7,
+	}
+
+	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
+		[]string{"p-plan"}, []string{"p-reviewed"})
+	tReview.HITLConfig = &cpn.HITLConfig{
+		Prompt: "Please review the plan above.",
+	}
+
+	tExecute := cpn.NewTransition("t-execute", cpn.NodeKindLLM,
+		[]string{"p-reviewed"}, []string{"p-output"})
+	tExecute.SystemPrompt = "You are a helpful assistant. The user approved the following plan. " +
+		"Execute it thoroughly and provide the final result."
+	tExecute.LLMConfig = &cpn.LLMConfig{
+		MaxTokens:   2048,
+		Temperature: 0.7,
+	}
+
+	transitions := map[string]*cpn.Transition{
+		"t-plan":    tPlan,
+		"t-review":  tReview,
+		"t-execute": tExecute,
+	}
+
 	c := cpn.NewCPN(
 		fmt.Sprintf("cpn-%s", sessionID),
 		"assistant",

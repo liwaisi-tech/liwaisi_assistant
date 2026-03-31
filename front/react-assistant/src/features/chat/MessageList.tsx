@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { StreamingIndicator } from './StreamingIndicator';
 import type { SessionState } from '../../types/api';
-import type { ChatMessage } from '../../types/chat';
+import type { ChatMessage, HITLAction } from '../../types/chat';
 
 const SUGGESTIONS = [
   'Explain CPN architecture',
@@ -15,9 +15,10 @@ interface MessageListProps {
   messages: ChatMessage[];
   sessionState: SessionState;
   onSuggestionClick?: (prompt: string) => void;
+  onHITLAction?: (transitionId: string, action: HITLAction) => void;
 }
 
-export function MessageList({ messages, sessionState, onSuggestionClick }: MessageListProps) {
+export function MessageList({ messages, sessionState, onSuggestionClick, onHITLAction }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const lastMessage = messages.at(-1);
@@ -102,6 +103,10 @@ export function MessageList({ messages, sessionState, onSuggestionClick }: Messa
             cpnRole={msg.cpnRole}
             timestamp={msg.timestamp}
             isStreaming={msg.isStreaming}
+            hitlTransitionId={msg.hitlTransitionId}
+            hitlActions={msg.hitlActions}
+            hitlResolved={msg.hitlResolved}
+            onHITLAction={onHITLAction}
           />
         ))}
 
