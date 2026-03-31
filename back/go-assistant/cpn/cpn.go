@@ -306,6 +306,23 @@ func (c *CPN) registerSubNetBus(childID string, bus <-chan Event) {
 	c.subNetBuses[childID] = bus
 }
 
+// Reset clears all places' token buffers and resets state to StateIdle.
+// Called before re-running a CPN that previously failed (e.g., after HITL rejection)
+// to prevent stale tokens from interfering with the next execution.
+// Also clears History since the caller re-populates it from the session.
+func (c *CPN) Reset() {
+	c.mu.Lock()
+	c.State = StateIdle
+	c.Error = nil
+	c.Mode = ModeMAS
+	c.History = nil
+	c.mu.Unlock()
+
+	for _, p := range c.Places {
+		p.Clear()
+	}
+}
+
 // IsComplete returns true when ALL terminal places have at least one token.
 // Returns false if there are no terminal places.
 func (c *CPN) IsComplete() bool {

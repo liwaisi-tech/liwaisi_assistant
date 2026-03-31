@@ -314,6 +314,42 @@ func TestPlace_Concurrent_DepositPeek(t *testing.T) {
 	}
 }
 
+func TestPlace_Clear(t *testing.T) {
+	p := NewPlace("clear-test", ColorString, SpaceSurface)
+
+	// Deposit several tokens.
+	for i := 0; i < 5; i++ {
+		if err := p.Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: i}); err != nil {
+			t.Fatalf("deposit %d: %v", i, err)
+		}
+	}
+	if p.Len() != 5 {
+		t.Fatalf("before Clear: Len = %d, want 5", p.Len())
+	}
+
+	p.Clear()
+
+	if p.Len() != 0 {
+		t.Fatalf("after Clear: Len = %d, want 0", p.Len())
+	}
+
+	// Verify the place is still usable after Clear.
+	if err := p.Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "after-clear"}); err != nil {
+		t.Fatalf("deposit after Clear: %v", err)
+	}
+	if p.Len() != 1 {
+		t.Fatalf("after re-deposit: Len = %d, want 1", p.Len())
+	}
+}
+
+func TestPlace_Clear_Empty(t *testing.T) {
+	p := NewPlace("clear-empty", ColorString, SpaceSurface)
+	p.Clear() // should not panic
+	if p.Len() != 0 {
+		t.Fatalf("after Clear on empty: Len = %d, want 0", p.Len())
+	}
+}
+
 func TestPlace_Concurrent_MultipleConsumers(t *testing.T) {
 	p := NewPlace("multi-consumer", ColorString, SpaceSurface)
 	const total = 1000

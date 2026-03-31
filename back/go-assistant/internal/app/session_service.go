@@ -44,7 +44,7 @@ type sessionState struct {
 	mu           sync.RWMutex
 	state        cpn.State
 	cancel       context.CancelFunc
-	streamClosed sync.Once
+	streamClosed sync.Once // guards explicit session teardown in CloseStream
 }
 
 func (ss *sessionState) set(s cpn.State) {
@@ -154,6 +154,20 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	}
 	session.AppendMessage(msg)
 
+	// Reset CPN before each run to clear stale tokens from previous
+	// failed runs (e.g., HITL rejection leaving tokens in p-classified/p-plan).
+	session.Root.Reset()
+
+	// Sync conversation history to CPN so LLM transitions have context.
+	// Must happen AFTER Reset (which clears History).
+	msgs := session.Messages()
+	history := make([]*cpn.Message, len(msgs))
+	for i := range msgs {
+		history[i] = &msgs[i]
+	}
+	session.Root.History = history
+	historyLen := len(session.Root.History)
+
 	tok := &cpn.Token{
 		Color:     cpn.ColorString,
 		Payload:   content,
@@ -176,22 +190,50 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 
 	st.set(cpn.StateRunning)
 
-	// Sync conversation history to CPN so LLM transitions have context.
-	msgs := session.Messages()
-	history := make([]*cpn.Message, len(msgs))
-	for i := range msgs {
-		history[i] = &msgs[i]
-	}
-	session.Root.History = history
-
 	go func() {
 		defer cancel()
-		if err := session.Root.Run(bgCtx); err != nil {
-			s.logger.Error("CPN run failed", "session_id", sessionID, "error", err)
-			st.set(cpn.StateFailed)
-			st.streamClosed.Do(func() { close(session.Stream) })
+
+		runErr := session.Root.Run(bgCtx)
+
+		// Sync new history entries from CPN back to session on ALL exit paths.
+		// fireLLM appends assistant responses to c.History during execution;
+		// without this sync, those responses are lost when the CPN fails.
+		if len(session.Root.History) > historyLen {
+			for _, m := range session.Root.History[historyLen:] {
+				if m.Role != cpn.RoleAssistant {
+					continue // user messages already in session history
+				}
+				session.AppendMessage(&cpn.Message{
+					ID:        sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					Role:      m.Role,
+					Content:   m.Content,
+					CPNID:     m.CPNID,
+					CPNRole:   m.CPNRole,
+					CPNDepth:  m.CPNDepth,
+					Timestamp: m.Timestamp,
+				})
+			}
+		}
+
+		if runErr != nil {
+			s.logger.Error("CPN run failed", "session_id", sessionID, "error", runErr)
+			// Send done sentinel so the frontend knows the response is complete.
+			select {
+			case session.Stream <- cpn.StreamChunk{
+				SessionID: sessionID,
+				CPNID:     session.Root.ID,
+				CPNRole:   session.Root.Role,
+				Content:   "",
+				Done:      true,
+			}:
+			default:
+			}
+			// Set idle — HITL rejection is a normal conversational event,
+			// not a terminal failure. The session remains usable.
+			st.set(cpn.StateIdle)
 			return
 		}
+
 		// Check if any LLM transition used streaming (content already delivered via EventSink).
 		streamingActive := hasStreamingTransition(session.Root)
 

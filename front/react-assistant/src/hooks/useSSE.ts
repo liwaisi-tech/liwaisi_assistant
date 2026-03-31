@@ -72,10 +72,9 @@ export function useSSE({
     });
 
     es.addEventListener('session_failed', () => {
-      sessionTerminalRef.current = true;
       callbacksRef.current.onSessionFailed();
-      es.close();
-      setIsConnected(false);
+      // Do NOT set sessionTerminalRef or close EventSource —
+      // the session remains usable after HITL rejection or recoverable errors.
     });
 
     es.addEventListener('hitl_requested', (evt) => {

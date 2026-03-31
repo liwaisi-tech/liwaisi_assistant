@@ -115,7 +115,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SESSION_FAILED':
       return {
         ...state,
-        sessionState: 'failed',
+        sessionState: 'idle',
         messages: state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false } : m
         ),
@@ -293,7 +293,7 @@ export function useChat(userId: string) {
 
       // If session is terminal (completed/failed), create a new session first
       let sessionId = state.sessionId;
-      if (!sessionId || state.sessionState === 'completed' || state.sessionState === 'failed') {
+      if (!sessionId || state.sessionState === 'completed') {
         try {
           const session = await createSession(userId, 'web');
           sessionId = session.id;

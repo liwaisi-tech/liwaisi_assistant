@@ -165,6 +165,54 @@ func TestCPN_IsComplete_NoTerminals(t *testing.T) {
 	}
 }
 
+func TestCPN_Reset(t *testing.T) {
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:MID": NewPlace("P:MID", ColorJSON, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorArtifact, SpaceSurface),
+	}
+	transitions := map[string]*Transition{
+		"T:A": NewTransition("T:A", NodeKindLLM, []string{"P:IN"}, []string{"P:MID"}),
+		"T:B": NewTransition("T:B", NodeKindLLM, []string{"P:MID"}, []string{"P:OUT"}),
+	}
+
+	c := NewCPN("test", "w", 0, ModeMAS, "s", places, transitions)
+
+	// Simulate a failed run with stale tokens in intermediate places.
+	_ = places["P:MID"].Deposit(&Token{Color: ColorJSON, Space: SpaceSurface, Payload: `{"intent":"task"}`})
+	_ = places["P:OUT"].Deposit(&Token{Color: ColorArtifact, Space: SpaceSurface, Payload: "stale plan"})
+	c.State = StateFailed
+	c.Error = ErrDeadlock
+	c.Mode = ModeCentaurian
+	c.History = []*Message{{Role: RoleUser, Content: "old"}}
+
+	c.Reset()
+
+	if c.State != StateIdle {
+		t.Fatalf("State = %q, want %q", c.State, StateIdle)
+	}
+	if c.Error != nil {
+		t.Fatalf("Error = %v, want nil", c.Error)
+	}
+	if c.Mode != ModeMAS {
+		t.Fatalf("Mode = %q, want %q", c.Mode, ModeMAS)
+	}
+	if c.History != nil {
+		t.Fatalf("History = %v, want nil", c.History)
+	}
+	for id, p := range places {
+		if p.Len() != 0 {
+			t.Fatalf("place %s has %d tokens after Reset, want 0", id, p.Len())
+		}
+	}
+
+	// Verify the CPN is still usable after Reset.
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "new input"})
+	if places["P:IN"].Len() != 1 {
+		t.Fatal("place P:IN should accept tokens after Reset")
+	}
+}
+
 func TestCPN_SetGetState_ThreadSafety(t *testing.T) {
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 
