@@ -51,11 +51,11 @@ func main() {
 
 	// ── Topology selection ──────────────────────────────────────────
 	var topologyFactory app.TopologyFactory
-	switch envOr("TOPOLOGY", "hitl") {
-	case "simple":
-		topologyFactory = defaultTopologyFactory
-	default:
+	switch envOr("TOPOLOGY", "simple") {
+	case "hitl":
 		topologyFactory = hitlTopologyFactory
+	default:
+		topologyFactory = defaultTopologyFactory
 	}
 
 	// ── Application layer ───────────────────────────────────────────

@@ -44,37 +44,21 @@ type HITLConfig struct {
 //  6. Set StateRunning, notify group, emit EventHITLResolved
 //  7. Deposit token into OutputPlaces (space bridging)
 //  8. Check Centaurian mode switch
-func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
 		return fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
 	}
 
-	// Build payload with prompt and consumed token content so the frontend
-	// can display the intermediate output (e.g. a plan) alongside the prompt.
-	payload := map[string]any{
-		"prompt": cfg.Prompt,
-	}
-	if len(consumed) > 0 {
-		var content string
-		if len(consumed) == 1 {
-			content = fmt.Sprintf("%v", consumed[0].Payload)
-		} else {
-			parts := make([]string, len(consumed))
-			for i := range consumed {
-				parts[i] = fmt.Sprintf("%v", consumed[i].Payload)
-			}
-			content = fmt.Sprintf("%v", parts)
-		}
-		payload["content"] = content
-	}
-
 	// REQ-002: Emit EventHITLRequested with the prompt before blocking.
+	// Note: consumed token content is NOT included in the payload because
+	// upstream LLM transitions with StreamOutput=true already stream
+	// their output to the frontend. Including it would cause duplication.
 	c.emit(&Event{
 		Type:           EventHITLRequested,
 		TransitionID:   t.ID,
 		TransitionKind: NodeKindHITL,
-		Payload:        payload,
+		Payload:        cfg.Prompt,
 	})
 
 	// REQ-003: Set StateWaiting before blocking on channel.
