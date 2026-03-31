@@ -1,3 +1,5 @@
+import { MarkdownContent } from './MarkdownContent.tsx';
+
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
   content: string;
@@ -27,10 +29,14 @@ export function MessageBubble({ role, content, cpnRole, timestamp, isStreaming }
           </span>
         )}
 
-        <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${isStreaming ? 'streaming-cursor' : ''}`}
-           style={{ color: 'var(--text-primary)', margin: 0 }}>
-          {content}
-        </p>
+        {isUser ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words"
+             style={{ color: 'var(--text-primary)', margin: 0 }}>
+            {content}
+          </p>
+        ) : (
+          <MarkdownContent content={content} isStreaming={isStreaming ?? false} />
+        )}
 
         <time className="block text-[10px] mt-2 tabular-nums"
               style={{ color: 'var(--text-muted)' }}
