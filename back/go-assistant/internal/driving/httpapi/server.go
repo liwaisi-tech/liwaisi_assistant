@@ -48,13 +48,14 @@ type Server struct {
 }
 
 // NewServer creates an HTTP server with all routes and middleware wired.
-func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Logger) *Server {
+func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Logger, billingFetcher BillingFetcher) *Server {
 	broker := NewSSEBroker(logger)
 
 	handlers := &Handlers{
-		App:    appService,
-		Broker: broker,
-		Logger: logger,
+		App:            appService,
+		Broker:         broker,
+		Logger:         logger,
+		BillingFetcher: billingFetcher,
 	}
 
 	mux := http.NewServeMux()

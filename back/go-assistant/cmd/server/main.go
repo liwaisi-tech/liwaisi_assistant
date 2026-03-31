@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/driving/httpapi"
@@ -51,8 +52,11 @@ func main() {
 	// ── Application layer ───────────────────────────────────────────
 	appService := app.NewSessionService(llmClient, costProvider, logger, defaultTopologyFactory)
 
+	// ── Billing adapter ────────────────────────────────────────────
+	billingClient := billing.NewClient(apiKey, "https://openrouter.ai/api/v1")
+
 	// ── Driving adapter (HTTP server) ───────────────────────────────
-	srv := httpapi.NewServer(cfg, appService, logger)
+	srv := httpapi.NewServer(cfg, appService, logger, billingClient)
 
 	// Wire event callback: CPN events → SSE broker.
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {

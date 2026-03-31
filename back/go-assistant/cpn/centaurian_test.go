@@ -228,6 +228,48 @@ func TestEffectiveGuard_Centaurian_CompTransition_CustomRejects(t *testing.T) {
 	}
 }
 
+func TestEffectiveGuard_Centaurian_HITLExempt(t *testing.T) {
+	// HITL transitions with Computation output should NOT get centaurianGuard.
+	// HITL is the mechanism for producing human tokens — requiring one would deadlock.
+	places := map[string]*Place{
+		"P1": NewPlace("P1", ColorHuman, SpaceComputation),
+	}
+	tr := NewTransition("T1", NodeKindHITL, nil, []string{"P1"})
+	tr.Guard = nil
+
+	c := &CPN{Mode: ModeCentaurian, Places: places}
+
+	got := c.effectiveGuard(tr)
+	if got != nil {
+		t.Fatal("effectiveGuard should return nil for HITL transition in Centaurian mode (exempt)")
+	}
+}
+
+func TestEffectiveGuard_Centaurian_HITLExempt_WithCustomGuard(t *testing.T) {
+	// HITL with custom guard should return the custom guard, not centaurianGuard.
+	places := map[string]*Place{
+		"P1": NewPlace("P1", ColorHuman, SpaceComputation),
+	}
+	customCalled := false
+	tr := NewTransition("T1", NodeKindHITL, nil, []string{"P1"})
+	tr.Guard = func(_ []*Token) bool {
+		customCalled = true
+		return true
+	}
+
+	c := &CPN{Mode: ModeCentaurian, Places: places}
+
+	got := c.effectiveGuard(tr)
+	if got == nil {
+		t.Fatal("effectiveGuard should return custom guard for HITL in Centaurian mode")
+	}
+	// Should be the custom guard, NOT centaurianGuard.
+	got([]*Token{aiToken()}) // only AI token — centaurianGuard would reject this
+	if !customCalled {
+		t.Fatal("should have called custom guard, not centaurianGuard")
+	}
+}
+
 func TestEffectiveGuard_Centaurian_NonCompTransition(t *testing.T) {
 	places := map[string]*Place{
 		"P1": NewPlace("P1", ColorString, SpaceSurface),

@@ -12,9 +12,10 @@ import (
 
 // Handlers holds dependencies for HTTP handlers.
 type Handlers struct {
-	App    *app.SessionService
-	Broker *SSEBroker
-	Logger *slog.Logger
+	App            *app.SessionService
+	Broker         *SSEBroker
+	Logger         *slog.Logger
+	BillingFetcher BillingFetcher
 }
 
 // HandleCreateSession creates a new session.

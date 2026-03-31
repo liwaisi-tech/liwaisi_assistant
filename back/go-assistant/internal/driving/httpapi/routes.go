@@ -9,6 +9,9 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("GET /api/v1/health", handleHealth)
 	mux.HandleFunc("GET /api/v1/version", handleVersion)
 
+	// Billing
+	mux.HandleFunc("GET /api/v1/billing/balance", h.HandleGetBalance)
+
 	// Sessions
 	mux.HandleFunc("POST /api/v1/sessions", h.HandleCreateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}", h.HandleGetSession)
