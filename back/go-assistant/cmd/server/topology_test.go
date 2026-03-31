@@ -90,6 +90,111 @@ func TestHITLTopology_SpaceAssignment(t *testing.T) {
 	}
 }
 
+// ── Unified Topology Tests ──────────────────────────────────────────────────
+
+func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	expectedPlaces := []string{"p-input", "p-classified", "p-plan", "p-reviewed", "p-output"}
+	for _, id := range expectedPlaces {
+		if _, ok := c.Places[id]; !ok {
+			t.Errorf("missing place %q", id)
+		}
+	}
+
+	expectedTransitions := []string{"t-classify", "t-direct", "t-plan", "t-review", "t-execute"}
+	for _, id := range expectedTransitions {
+		if _, ok := c.Transitions[id]; !ok {
+			t.Errorf("missing transition %q", id)
+		}
+	}
+}
+
+func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	tc := c.Transitions["t-classify"]
+	if tc.Kind != cpn.NodeKindLLM {
+		t.Errorf("t-classify kind = %q, want llm", tc.Kind)
+	}
+	if tc.LLMConfig == nil {
+		t.Fatal("t-classify LLMConfig is nil")
+	}
+	if tc.LLMConfig.Model != "classifier" {
+		t.Errorf("t-classify model = %q, want 'classifier'", tc.LLMConfig.Model)
+	}
+	if !tc.LLMConfig.RequireJSON {
+		t.Error("t-classify should have RequireJSON=true")
+	}
+	if tc.LLMConfig.StreamOutput {
+		t.Error("t-classify should have StreamOutput=false")
+	}
+	if tc.LLMConfig.MaxTokens != 64 {
+		t.Errorf("t-classify MaxTokens = %d, want 64", tc.LLMConfig.MaxTokens)
+	}
+}
+
+func TestUnifiedTopology_DirectGuardMatchesConversation(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	tDirect := c.Transitions["t-direct"]
+	if tDirect.Guard == nil {
+		t.Fatal("t-direct guard is nil")
+	}
+
+	conv := &cpn.Token{Payload: `{"intent":"conversation"}`}
+	task := &cpn.Token{Payload: `{"intent":"task"}`}
+
+	if !tDirect.Guard([]*cpn.Token{conv}) {
+		t.Error("t-direct guard should match conversation intent")
+	}
+	if tDirect.Guard([]*cpn.Token{task}) {
+		t.Error("t-direct guard should NOT match task intent")
+	}
+}
+
+func TestUnifiedTopology_PlanGuardMatchesTask(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	tPlan := c.Transitions["t-plan"]
+	if tPlan.Guard == nil {
+		t.Fatal("t-plan guard is nil")
+	}
+
+	task := &cpn.Token{Payload: `{"intent":"task"}`}
+	conv := &cpn.Token{Payload: `{"intent":"conversation"}`}
+
+	if !tPlan.Guard([]*cpn.Token{task}) {
+		t.Error("t-plan guard should match task intent")
+	}
+	if tPlan.Guard([]*cpn.Token{conv}) {
+		t.Error("t-plan guard should NOT match conversation intent")
+	}
+}
+
+func TestUnifiedTopology_PlanGuardDefaultsToTaskOnAmbiguity(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	tPlan := c.Transitions["t-plan"]
+
+	// Non-string payload — ambiguous
+	ambiguous := &cpn.Token{Payload: 42}
+	if !tPlan.Guard([]*cpn.Token{ambiguous}) {
+		t.Error("t-plan guard should default to true on ambiguous input")
+	}
+}
+
+func TestUnifiedTopology_PassesValidationAfterWiring(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	for _, tr := range c.Transitions {
+		if tr.Kind == cpn.NodeKindHITL && tr.HITLConfig != nil {
+			tr.HITLConfig.Channel = make(chan cpn.Token, 1)
+		}
+	}
+
+	if err := cpn.Validate(c.Places, c.Transitions); err != nil {
+		t.Errorf("topology validation failed: %v", err)
+	}
+}
+
 func TestDefaultTopology_StillWorks(t *testing.T) {
 	c := defaultTopologyFactory("test-session")
 
