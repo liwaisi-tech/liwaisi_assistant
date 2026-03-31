@@ -62,3 +62,13 @@ type VersionResponse struct {
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
+
+// BalanceResponse is the billing balance response.
+type BalanceResponse struct {
+	LimitRemaining *float64 `json:"limit_remaining"`
+	Usage          float64  `json:"usage"`
+	UsageDaily     float64  `json:"usage_daily"`
+	UsageWeekly    float64  `json:"usage_weekly"`
+	UsageMonthly   float64  `json:"usage_monthly"`
+	IsFreeTier     bool     `json:"is_free_tier"`
+}

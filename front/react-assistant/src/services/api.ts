@@ -1,4 +1,4 @@
-import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest } from '../types/api';
+import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse } from '../types/api';
 
 const BASE_URL = '/api/v1';
 
@@ -48,4 +48,8 @@ export async function resolveHITL(sessionId: string, transitionId: string, req: 
 
 export async function healthCheck(): Promise<{ status: string }> {
   return request<{ status: string }>('/health');
+}
+
+export async function getBalance(): Promise<BalanceResponse> {
+  return request<BalanceResponse>('/billing/balance');
 }

@@ -1,5 +1,5 @@
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ChatContainer } from './features/chat/ChatContainer';
+import { DesktopLayout } from './features/desktop/DesktopLayout';
 import { LoginScreen } from './features/auth/LoginScreen';
 
 const hasGoogleAuth = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -12,7 +12,7 @@ function AppContent() {
   }
 
   const userId = user?.email ?? 'dev-user';
-  return <ChatContainer userId={userId} />;
+  return <DesktopLayout userId={userId} />;
 }
 
 function App() {

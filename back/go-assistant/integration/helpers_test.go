@@ -67,7 +67,7 @@ func TestMain(m *testing.M) {
 		ShutdownTimeout: 10 * time.Second,
 		AllowedOrigins:  []string{"*"},
 	}
-	srv := httpapi.NewServer(cfg, appService, logger)
+	srv := httpapi.NewServer(cfg, appService, logger, nil)
 
 	// Wire event callback
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {
