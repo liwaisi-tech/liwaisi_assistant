@@ -103,6 +103,23 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 		content = resp.Content
 	}
 
+	// Append consumed input and LLM output to CPN history for downstream transitions.
+	if len(consumed) > 0 {
+		c.History = append(c.History, &Message{
+			Role:      RoleUser,
+			Content:   formatTokenPayload(consumed),
+			Timestamp: time.Now(),
+		})
+	}
+	c.History = append(c.History, &Message{
+		Role:      RoleAssistant,
+		Content:   content,
+		CPNID:     c.ID,
+		CPNRole:   c.Role,
+		CPNDepth:  c.Depth,
+		Timestamp: time.Now(),
+	})
+
 	// Step 5: Deposit output token.
 	// Output color is determined by REQ-012. Output places MUST have
 	// matching Color (ColorArtifact or ColorJSON for RequireJSON).

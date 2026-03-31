@@ -176,6 +176,14 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 
 	st.set(cpn.StateRunning)
 
+	// Sync conversation history to CPN so LLM transitions have context.
+	msgs := session.Messages()
+	history := make([]*cpn.Message, len(msgs))
+	for i := range msgs {
+		history[i] = &msgs[i]
+	}
+	session.Root.History = history
+
 	go func() {
 		defer cancel()
 		if err := session.Root.Run(bgCtx); err != nil {
