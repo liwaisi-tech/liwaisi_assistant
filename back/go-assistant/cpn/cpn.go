@@ -217,8 +217,16 @@ func (c *CPN) isComputationTransition(t *Transition) bool {
 // In ModeCentaurian + computation transition: injects centaurianGuard.
 // Composes with custom guard if one exists (AND semantics).
 // In ModeMAS or for non-computation transitions: returns t.Guard unchanged.
+//
+// GUD-001: NodeKindHITL is exempt from centaurianGuard — HITL transitions
+// are the mechanism for PRODUCING human tokens. Requiring a human token
+// to fire would create a deadlock (the token doesn't exist until HITL fires).
+// This matches the Validate exemption in validate.go.
 func (c *CPN) effectiveGuard(t *Transition) func([]*Token) bool {
 	if c.getMode() != ModeCentaurian {
+		return t.Guard
+	}
+	if t.Kind == NodeKindHITL {
 		return t.Guard
 	}
 	if !c.isComputationTransition(t) {

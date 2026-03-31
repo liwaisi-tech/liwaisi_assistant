@@ -2,11 +2,18 @@ package cpn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 )
+
+// errChildrenCompleted is an internal sentinel returned by checkCompletionOrDeadlock
+// when children have finished but the parent is not yet complete. Signals the main
+// loop to re-evaluate firable transitions (children may have deposited tokens that
+// enable parent transitions like a merge).
+var errChildrenCompleted = errors.New("children completed, re-evaluate")
 
 // fireResult communicates errors from fire goroutines back to the main loop.
 type fireResult struct {
@@ -77,7 +84,11 @@ func (c *CPN) Run(ctx context.Context) error {
 
 		// REQ-014: No firable transitions.
 		if len(firable) == 0 {
-			return c.checkCompletionOrDeadlock()
+			if err := c.checkCompletionOrDeadlock(); err == errChildrenCompleted {
+				continue // Children deposited tokens — re-evaluate firable transitions.
+			} else {
+				return err
+			}
 		}
 
 		// REQ-020: Sort firable by ID for deterministic behavior.
@@ -102,7 +113,11 @@ func (c *CPN) Run(ctx context.Context) error {
 
 		if len(firings) == 0 {
 			// All became unfirable after re-check.
-			return c.checkCompletionOrDeadlock()
+			if err := c.checkCompletionOrDeadlock(); err == errChildrenCompleted {
+				continue
+			} else {
+				return err
+			}
 		}
 
 		// PAT-003: WaitGroup + error channel.
@@ -201,6 +216,10 @@ func (c *CPN) checkCompletionOrDeadlock() error {
 		if c.getState() == StateFailed {
 			return c.getError()
 		}
+		// Children deposited tokens but parent isn't complete yet.
+		// Signal the main loop to re-evaluate — child output tokens may
+		// enable parent transitions (e.g., a merge after two children).
+		return errChildrenCompleted
 	}
 
 	c.setFailed(ErrDeadlock)
