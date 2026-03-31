@@ -58,8 +58,10 @@ export function useSSE({
     };
 
     es.addEventListener('stream_chunk', (evt) => {
-      const data: StreamChunkData = JSON.parse(evt.data);
-      callbacksRef.current.onStreamChunk(data);
+      try {
+        const data: StreamChunkData = JSON.parse(evt.data);
+        callbacksRef.current.onStreamChunk(data);
+      } catch { /* malformed SSE data — skip chunk */ }
     });
 
     es.addEventListener('session_completed', () => {
@@ -77,13 +79,17 @@ export function useSSE({
     });
 
     es.addEventListener('hitl_requested', (evt) => {
-      const data: CPNEventData = JSON.parse(evt.data);
-      callbacksRef.current.onHITLRequested?.(data);
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onHITLRequested?.(data);
+      } catch { /* malformed SSE data — skip event */ }
     });
 
     es.addEventListener('transition_fired', (evt) => {
-      const data: CPNEventData = JSON.parse(evt.data);
-      callbacksRef.current.onTransitionFired?.(data);
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onTransitionFired?.(data);
+      } catch { /* malformed SSE data — skip event */ }
     });
 
     return es;
