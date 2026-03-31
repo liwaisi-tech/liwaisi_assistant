@@ -325,6 +325,58 @@ func TestOpenRouterClient_Complete_NoSessionIdWhenEmpty(t *testing.T) {
 	}
 }
 
+// ── Complete: App Identification Headers ─────────────────────────────────────
+
+func TestOpenRouterClient_Complete_AppHeaders(t *testing.T) {
+	var gotReferer, gotTitle string
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotReferer = r.Header.Get("HTTP-Referer")
+		gotTitle = r.Header.Get("X-Title")
+		successHandler(w, r)
+	})
+	client.AppURL = "https://liwaisi.example.com"
+	client.AppTitle = "Liwaisi Assistant"
+
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
+		Model:     "test-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if gotReferer != "https://liwaisi.example.com" {
+		t.Errorf("HTTP-Referer = %q, want %q", gotReferer, "https://liwaisi.example.com")
+	}
+	if gotTitle != "Liwaisi Assistant" {
+		t.Errorf("X-Title = %q, want %q", gotTitle, "Liwaisi Assistant")
+	}
+}
+
+func TestOpenRouterClient_Complete_NoAppHeadersWhenEmpty(t *testing.T) {
+	var hasReferer, hasTitle bool
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		hasReferer = r.Header.Get("HTTP-Referer") != ""
+		hasTitle = r.Header.Get("X-Title") != ""
+		successHandler(w, r)
+	})
+
+	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
+		Model:     "test-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if hasReferer {
+		t.Error("HTTP-Referer header should be absent when AppURL is empty")
+	}
+	if hasTitle {
+		t.Error("X-Title header should be absent when AppTitle is empty")
+	}
+}
+
 // ── Complete: Records to Ledger ──────────────────────────────────────────────
 
 func TestOpenRouterClient_Complete_RecordsToLedger(t *testing.T) {
@@ -1792,14 +1844,65 @@ func TestFormatAnthropicMessages_UserCacheControl(t *testing.T) {
 	}
 }
 
-// ── ModelRegistry: Thinking Entry ───────────────────────────────────────────
+// ── ModelRegistry ───────────────────────────────────────────────────────────
 
 func TestModelRegistry_ThinkingEntry(t *testing.T) {
-	model, ok := ModelRegistry["thinking"]
+	client := NewClient("key", "model")
+	model, ok := client.ModelRegistry["thinking"]
 	if !ok {
 		t.Fatal("ModelRegistry missing 'thinking' entry")
 	}
 	if model != "anthropic/claude-opus-4-6" {
 		t.Errorf("thinking model = %q, want anthropic/claude-opus-4-6", model)
+	}
+}
+
+func TestBuildModelRegistry_Defaults(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	registry := buildModelRegistry(noEnv)
+
+	for key, want := range defaultModelRegistry {
+		if got := registry[key]; got != want {
+			t.Errorf("registry[%q] = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestBuildModelRegistry_EnvOverride(t *testing.T) {
+	env := map[string]string{"MODEL_CLASSIFIER": "custom/my-classifier"}
+	registry := buildModelRegistry(func(key string) string { return env[key] })
+
+	if got := registry["classifier"]; got != "custom/my-classifier" {
+		t.Errorf("classifier = %q, want %q", got, "custom/my-classifier")
+	}
+	// Other keys must remain at their defaults.
+	if got := registry["reasoning"]; got != defaultModelRegistry["reasoning"] {
+		t.Errorf("reasoning = %q, want default %q", got, defaultModelRegistry["reasoning"])
+	}
+}
+
+func TestBuildModelRegistry_AllOverrides(t *testing.T) {
+	env := map[string]string{
+		"MODEL_CLASSIFIER":   "custom/classifier",
+		"MODEL_STRUCTURED":   "custom/structured",
+		"MODEL_REASONING":    "custom/reasoning",
+		"MODEL_LONG_CONTEXT": "custom/long-context",
+		"MODEL_SUMMARIZE":    "custom/summarize",
+		"MODEL_THINKING":     "custom/thinking",
+	}
+	registry := buildModelRegistry(func(key string) string { return env[key] })
+
+	want := map[string]string{
+		"classifier":   "custom/classifier",
+		"structured":   "custom/structured",
+		"reasoning":    "custom/reasoning",
+		"long-context": "custom/long-context",
+		"summarize":    "custom/summarize",
+		"thinking":     "custom/thinking",
+	}
+	for key, wantModel := range want {
+		if got := registry[key]; got != wantModel {
+			t.Errorf("registry[%q] = %q, want %q", key, got, wantModel)
+		}
 	}
 }
