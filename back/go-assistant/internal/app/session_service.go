@@ -293,6 +293,37 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	return nil
 }
 
+// DeleteSession removes a session and releases its resources.
+// If the CPN is running, it is canceled via its context. The session is
+// removed from the service maps so no new operations can target it.
+// The stream channel is NOT closed here — the background goroutine from
+// SendMessage owns the channel lifecycle and will exit on context cancellation.
+func (s *SessionService) DeleteSession(sessionID string) error {
+	s.mu.Lock()
+	_, ok := s.sessions[sessionID]
+	st := s.states[sessionID]
+	delete(s.sessions, sessionID)
+	delete(s.states, sessionID)
+	s.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+
+	// Cancel running CPN if active.
+	if st != nil {
+		st.mu.RLock()
+		cancel := st.cancel
+		st.mu.RUnlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+
+	s.logger.Info("session deleted", "session_id", sessionID)
+	return nil
+}
+
 // CancelSession cancels a running CPN session.
 func (s *SessionService) CancelSession(sessionID string) {
 	s.mu.RLock()

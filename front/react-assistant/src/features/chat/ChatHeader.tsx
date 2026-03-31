@@ -4,6 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 interface ChatHeaderProps {
   sessionState: SessionState;
   isConnected: boolean;
+  onClearConversation: () => void;
+  clearDisabled: boolean;
 }
 
 const stateConfig: Record<SessionState, { label: string; className: string }> = {
@@ -14,7 +16,7 @@ const stateConfig: Record<SessionState, { label: string; className: string }> = 
   failed:    { label: 'Failed',    className: 'bg-red-500/20 text-red-400' },
 };
 
-export function ChatHeader({ sessionState, isConnected }: ChatHeaderProps) {
+export function ChatHeader({ sessionState, isConnected, onClearConversation, clearDisabled }: ChatHeaderProps) {
   const state = stateConfig[sessionState];
   const { user, logout } = useAuth();
 
@@ -29,6 +31,21 @@ export function ChatHeader({ sessionState, isConnected }: ChatHeaderProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        <button
+          onClick={onClearConversation}
+          disabled={clearDisabled}
+          className="p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          style={{ color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.color = 'var(--accent)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          aria-label="New conversation"
+          title="New conversation"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+
         {user && (
           <div className="flex items-center gap-2">
             <img

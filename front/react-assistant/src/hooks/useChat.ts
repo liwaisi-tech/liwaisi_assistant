@@ -2,7 +2,7 @@ import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
-import { createSession, getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
+import { createSession, getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, deleteSession as apiDeleteSession, ApiError } from '../services/api';
 import { useSSE } from './useSSE';
 
 interface ChatState {
@@ -23,7 +23,8 @@ type ChatAction =
   | { type: 'SET_ERROR'; error: string }
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string }
-  | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction };
+  | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
+  | { type: 'CLEAR_CONVERSATION' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -158,6 +159,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ),
       };
 
+    case 'CLEAR_CONVERSATION':
+      return { ...initialState };
+
     default:
       return state;
   }
@@ -284,6 +288,29 @@ export function useChat(userId: string) {
     [state.sessionId]
   );
 
+  const clearConversation = useCallback(async () => {
+    const oldSessionId = state.sessionId;
+
+    // Optimistic reset — UI clears immediately.
+    dispatch({ type: 'CLEAR_CONVERSATION' });
+    initRef.current = false;
+
+    // Fire-and-forget cleanup of old session.
+    if (oldSessionId) {
+      apiDeleteSession(oldSessionId).catch(() => {});
+    }
+
+    // Create new session.
+    try {
+      const session = await createSession(userId, 'web');
+      localStorage.setItem(storageKey, session.id);
+      dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
+      initRef.current = true;
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to create session' });
+    }
+  }, [state.sessionId, userId, storageKey]);
+
   const sendMessage = useCallback(
     async (content: string) => {
       if (!content.trim()) return;
@@ -327,6 +354,7 @@ export function useChat(userId: string) {
     sessionId: state.sessionId,
     isConnected,
     sendMessage,
+    clearConversation,
     resolveHITL: handleResolveHITL,
     error: state.error,
   };
