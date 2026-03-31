@@ -1792,14 +1792,82 @@ func TestFormatAnthropicMessages_UserCacheControl(t *testing.T) {
 	}
 }
 
-// ── ModelRegistry: Thinking Entry ───────────────────────────────────────────
+// ── ModelRegistry ──────────────────────────────────────────────────────────
 
 func TestModelRegistry_ThinkingEntry(t *testing.T) {
-	model, ok := ModelRegistry["thinking"]
+	client := NewClient("key", "default")
+	model, ok := client.ModelRegistry["thinking"]
 	if !ok {
 		t.Fatal("ModelRegistry missing 'thinking' entry")
 	}
 	if model != "anthropic/claude-opus-4-6" {
 		t.Errorf("thinking model = %q, want anthropic/claude-opus-4-6", model)
+	}
+}
+
+func TestBuildModelRegistry_Defaults(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	registry := buildModelRegistry(noEnv)
+
+	for role, want := range defaultModelRegistry {
+		got, ok := registry[role]
+		if !ok {
+			t.Errorf("missing role %q", role)
+			continue
+		}
+		if got != want {
+			t.Errorf("role %q = %q, want %q", role, got, want)
+		}
+	}
+}
+
+func TestBuildModelRegistry_EnvOverride(t *testing.T) {
+	custom := "custom/my-classifier-model"
+	getEnv := func(key string) string {
+		if key == "MODEL_CLASSIFIER" {
+			return custom
+		}
+		return ""
+	}
+	registry := buildModelRegistry(getEnv)
+
+	if got := registry["classifier"]; got != custom {
+		t.Errorf("classifier = %q, want %q", got, custom)
+	}
+	// Other roles should keep defaults.
+	for role, want := range defaultModelRegistry {
+		if role == "classifier" {
+			continue
+		}
+		if got := registry[role]; got != want {
+			t.Errorf("role %q = %q, want default %q", role, got, want)
+		}
+	}
+}
+
+func TestBuildModelRegistry_AllOverrides(t *testing.T) {
+	overrides := map[string]string{
+		"MODEL_CLASSIFIER":   "custom/classifier",
+		"MODEL_STRUCTURED":   "custom/structured",
+		"MODEL_REASONING":    "custom/reasoning",
+		"MODEL_LONG_CONTEXT": "custom/long-context",
+		"MODEL_SUMMARIZE":    "custom/summarize",
+		"MODEL_THINKING":     "custom/thinking",
+	}
+	getEnv := func(key string) string { return overrides[key] }
+	registry := buildModelRegistry(getEnv)
+
+	expected := map[string]string{
+		"classifier":   "custom/classifier",
+		"structured":   "custom/structured",
+		"reasoning":    "custom/reasoning",
+		"long-context": "custom/long-context",
+		"summarize":    "custom/summarize",
+		"thinking":     "custom/thinking",
+	}
+	for role, want := range expected {
+		if got := registry[role]; got != want {
+			t.Errorf("role %q = %q, want %q", role, got, want)
+		}
 	}
 }

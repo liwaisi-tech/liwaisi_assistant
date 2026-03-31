@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -18,15 +19,41 @@ var _ cpn.LLMClient = (*Client)(nil)
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
-// ModelRegistry maps task roles to OpenRouter model strings.
+// defaultModelRegistry maps task roles to OpenRouter model strings.
 // Using the cheapest model that can do the job operationalizes Axiom A11.
-var ModelRegistry = map[string]string{
+var defaultModelRegistry = map[string]string{
 	"classifier":   "google/gemini-2.0-flash-001",
 	"structured":   "anthropic/claude-haiku-4-5-20251001",
 	"reasoning":    "anthropic/claude-sonnet-4-6",
 	"long-context": "google/gemini-2.0-pro-001",
 	"summarize":    "meta-llama/llama-3.3-8b-instruct",
 	"thinking":     "anthropic/claude-opus-4-6",
+}
+
+// modelEnvVars maps registry keys to environment variable names.
+var modelEnvVars = map[string]string{
+	"classifier":   "MODEL_CLASSIFIER",
+	"structured":   "MODEL_STRUCTURED",
+	"reasoning":    "MODEL_REASONING",
+	"long-context": "MODEL_LONG_CONTEXT",
+	"summarize":    "MODEL_SUMMARIZE",
+	"thinking":     "MODEL_THINKING",
+}
+
+// buildModelRegistry builds the model registry by reading env vars with
+// fallback to defaults. Accepts a lookup function for testability.
+func buildModelRegistry(getEnv func(string) string) map[string]string {
+	registry := make(map[string]string, len(defaultModelRegistry))
+	for role, defaultModel := range defaultModelRegistry {
+		if envVar, ok := modelEnvVars[role]; ok {
+			if val := getEnv(envVar); val != "" {
+				registry[role] = val
+				continue
+			}
+		}
+		registry[role] = defaultModel
+	}
+	return registry
 }
 
 // modelCostTable holds per-model pricing in USD per 1M tokens.
@@ -58,18 +85,23 @@ type Client struct {
 
 	// TokenLedger tracks per-session token usage and cost.
 	TokenLedger *TokenLedger
+
+	// ModelRegistry maps task roles to model strings.
+	// Built from defaults + env var overrides at construction time.
+	ModelRegistry map[string]string
 }
 
 // NewClient returns a configured client with sensible defaults.
 func NewClient(apiKey, defaultModel string) *Client {
 	return &Client{
-		apiKey:       apiKey,
-		DefaultModel: defaultModel,
-		BaseURL:      "https://openrouter.ai/api/v1",
+		apiKey:        apiKey,
+		DefaultModel:  defaultModel,
+		BaseURL:       "https://openrouter.ai/api/v1",
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
-		TokenLedger: NewTokenLedger(),
+		TokenLedger:   NewTokenLedger(),
+		ModelRegistry: buildModelRegistry(os.Getenv),
 	}
 }
 
@@ -180,7 +212,7 @@ func (c *Client) resolveModel(model string) string {
 	if model == "" {
 		return c.DefaultModel
 	}
-	if resolved, ok := ModelRegistry[model]; ok {
+	if resolved, ok := c.ModelRegistry[model]; ok {
 		return resolved
 	}
 	return model
