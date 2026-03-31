@@ -33,6 +33,11 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	if ctxWindowSize == 0 {
 		ctxWindowSize = DefaultContextWindowSize
 	}
+	// SkipHistory: classifier transitions must classify each message
+	// independently without bias from prior conversation history.
+	if t.LLMConfig.SkipHistory {
+		ctxWindowSize = 0
+	}
 	cw := BuildContext(t.SystemPrompt, c.History, ctxWindowSize)
 
 	// Assemble messages: system prompt + context window messages + consumed tokens.

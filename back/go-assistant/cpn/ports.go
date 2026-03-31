@@ -195,6 +195,12 @@ type LLMConfig struct {
 
 	// CacheControl configures Anthropic prompt caching.
 	CacheControl *CacheControlConfig
+
+	// SkipHistory, when true, prevents BuildContext from including
+	// conversation history. The LLM only sees its system prompt and the
+	// consumed tokens. Used by classifier transitions that must classify
+	// each message independently, without bias from prior conversation.
+	SkipHistory bool
 }
 
 // ── v1.2 Sub-Types ──────────────────────────────────────────────────────────

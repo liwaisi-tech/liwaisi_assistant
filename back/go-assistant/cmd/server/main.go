@@ -250,6 +250,7 @@ Respond ONLY with the JSON object.`
 		Temperature:  0.0,
 		RequireJSON:  true,
 		StreamOutput: false,
+		SkipHistory:  true, // Classify each message independently, without conversation bias.
 	}
 
 	// t-direct: fires for conversation intent — direct streaming response.
@@ -264,7 +265,7 @@ Respond ONLY with the JSON object.`
 	tDirect.Guard = func(tokens []*cpn.Token) bool {
 		for _, tok := range tokens {
 			if s, ok := tok.Payload.(string); ok {
-				return strings.Contains(s, `"conversation"`)
+				return strings.Contains(strings.ToLower(s), `"conversation"`)
 			}
 		}
 		return false
@@ -283,7 +284,7 @@ Respond ONLY with the JSON object.`
 	tPlan.Guard = func(tokens []*cpn.Token) bool {
 		for _, tok := range tokens {
 			if s, ok := tok.Payload.(string); ok {
-				return !strings.Contains(s, `"conversation"`)
+				return !strings.Contains(strings.ToLower(s), `"conversation"`)
 			}
 		}
 		return true // ambiguous → default to task (safer)
