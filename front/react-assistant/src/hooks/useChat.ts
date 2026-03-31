@@ -228,9 +228,32 @@ export function useChat(userId: string) {
   }, []);
 
   const onHITLRequested = useCallback((data: CPNEventData) => {
-    const prompt = typeof data.Payload === 'string'
-      ? data.Payload
-      : 'Please review and confirm.';
+    // Payload can be a string (legacy) or {prompt, content} (with intermediate output).
+    let planContent = '';
+    let prompt = 'Please review and confirm.';
+
+    if (typeof data.Payload === 'string') {
+      prompt = data.Payload;
+    } else if (data.Payload && typeof data.Payload === 'object') {
+      const p = data.Payload as Record<string, unknown>;
+      if (typeof p.prompt === 'string') prompt = p.prompt;
+      if (typeof p.content === 'string') planContent = p.content;
+    }
+
+    // If there's intermediate content (e.g. a plan), show it as a regular message first.
+    if (planContent) {
+      dispatch({
+        type: 'STREAM_CHUNK',
+        data: {
+          SessionID: data.SessionID,
+          CPNID: data.CPNID,
+          CPNRole: data.CPNRole,
+          Content: planContent,
+          Done: true,
+        },
+      });
+    }
+
     dispatch({
       type: 'HITL_REQUESTED',
       transitionId: data.TransitionID,

@@ -252,8 +252,11 @@ func TestFireHITL_EmitsEvents(t *testing.T) {
 		switch e.Type {
 		case EventHITLRequested:
 			hasRequested = true
-			if e.Payload != "Please approve" {
-				t.Errorf("expected prompt payload, got %v", e.Payload)
+			pm, ok := e.Payload.(map[string]any)
+			if !ok {
+				t.Errorf("expected map payload, got %T", e.Payload)
+			} else if pm["prompt"] != "Please approve" {
+				t.Errorf("expected prompt='Please approve', got %v", pm["prompt"])
 			}
 			if e.CPNID != "test-cpn" {
 				t.Errorf("expected CPNID=test-cpn, got %s", e.CPNID)
