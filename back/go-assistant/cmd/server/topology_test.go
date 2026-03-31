@@ -170,14 +170,27 @@ func TestUnifiedTopology_PlanGuardMatchesTask(t *testing.T) {
 	}
 }
 
-func TestUnifiedTopology_PlanGuardDefaultsToTaskOnAmbiguity(t *testing.T) {
+func TestUnifiedTopology_GuardsDefaultToDirectOnAmbiguity(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
+	tDirect := c.Transitions["t-direct"]
 	tPlan := c.Transitions["t-plan"]
 
-	// Non-string payload — ambiguous
+	// Non-string payload — ambiguous: should default to direct (safe).
 	ambiguous := &cpn.Token{Payload: 42}
-	if !tPlan.Guard([]*cpn.Token{ambiguous}) {
-		t.Error("t-plan guard should default to true on ambiguous input")
+	if !tDirect.Guard([]*cpn.Token{ambiguous}) {
+		t.Error("t-direct guard should default to true on ambiguous input")
+	}
+	if tPlan.Guard([]*cpn.Token{ambiguous}) {
+		t.Error("t-plan guard should default to false on ambiguous input")
+	}
+
+	// Classifier returns a synonym like "greeting" — should route to direct.
+	greeting := &cpn.Token{Payload: `{"intent":"greeting"}`}
+	if !tDirect.Guard([]*cpn.Token{greeting}) {
+		t.Error("t-direct guard should match non-task intents like greeting")
+	}
+	if tPlan.Guard([]*cpn.Token{greeting}) {
+		t.Error("t-plan guard should NOT match non-task intents like greeting")
 	}
 }
 

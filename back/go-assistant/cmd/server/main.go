@@ -262,16 +262,19 @@ Respond ONLY with the JSON object.`
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
+	// Guard logic: default to direct response (safe). Only route to plan
+	// when the classifier explicitly says "task". This prevents synonyms
+	// like "greeting", "question", etc. from triggering the HITL flow.
 	tDirect.Guard = func(tokens []*cpn.Token) bool {
 		for _, tok := range tokens {
 			if s, ok := tok.Payload.(string); ok {
-				return strings.Contains(strings.ToLower(s), `"conversation"`)
+				return !strings.Contains(strings.ToLower(s), `"task"`)
 			}
 		}
-		return false
+		return true // ambiguous or non-string → default to direct (safer)
 	}
 
-	// t-plan: fires for task intent — presents a plan for review.
+	// t-plan: fires ONLY for explicit task intent — presents a plan for review.
 	tPlan := cpn.NewTransition("t-plan", cpn.NodeKindLLM,
 		[]string{"p-classified"}, []string{"p-plan"})
 	tPlan.SystemPrompt = "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. " +
@@ -284,10 +287,10 @@ Respond ONLY with the JSON object.`
 	tPlan.Guard = func(tokens []*cpn.Token) bool {
 		for _, tok := range tokens {
 			if s, ok := tok.Payload.(string); ok {
-				return !strings.Contains(strings.ToLower(s), `"conversation"`)
+				return strings.Contains(strings.ToLower(s), `"task"`)
 			}
 		}
-		return true // ambiguous → default to task (safer)
+		return false // ambiguous → default to direct, NOT task
 	}
 
 	// t-review: HITL gate — waits for user approval.
