@@ -146,6 +146,24 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 		content = resp.Content
 	}
 
+	// Detect token limit truncation and notify user via stream.
+	if (resp.StopReason == "length" || resp.StopReason == "max_tokens") && streamOutput {
+		const truncationNotice = "\n\n---\n*[Response truncated — token limit reached]*"
+		content += truncationNotice
+		c.emit(&Event{
+			Type:           EventStreamChunk,
+			TransitionID:   t.ID,
+			TransitionKind: NodeKindLLM,
+			Payload: StreamChunk{
+				SessionID: c.SessionID,
+				CPNID:     c.ID,
+				CPNRole:   c.Role,
+				Content:   truncationNotice,
+				Done:      false,
+			},
+		})
+	}
+
 	// Emit done sentinel if streaming was active.
 	if streamOutput {
 		c.emit(&Event{
@@ -163,24 +181,27 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	}
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
-	// Only append user-relevant tokens (skip routing metadata like classifier JSON).
-	c.mu.Lock()
-	if len(userTokens) > 0 {
+	// Skip when SkipHistory is true — classifier output is routing metadata,
+	// not conversational content that downstream transitions need in history.
+	if !t.LLMConfig.SkipHistory {
+		c.mu.Lock()
+		if len(userTokens) > 0 {
+			c.History = append(c.History, &Message{
+				Role:      RoleUser,
+				Content:   formatTokenPayload(userTokens),
+				Timestamp: time.Now(),
+			})
+		}
 		c.History = append(c.History, &Message{
-			Role:      RoleUser,
-			Content:   formatTokenPayload(userTokens),
+			Role:      RoleAssistant,
+			Content:   content,
+			CPNID:     c.ID,
+			CPNRole:   c.Role,
+			CPNDepth:  c.Depth,
 			Timestamp: time.Now(),
 		})
+		c.mu.Unlock()
 	}
-	c.History = append(c.History, &Message{
-		Role:      RoleAssistant,
-		Content:   content,
-		CPNID:     c.ID,
-		CPNRole:   c.Role,
-		CPNDepth:  c.Depth,
-		Timestamp: time.Now(),
-	})
-	c.mu.Unlock()
 
 	// Step 5: Deposit output token.
 	// Output color is determined by REQ-012. Output places MUST have

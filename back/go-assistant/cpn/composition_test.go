@@ -156,9 +156,9 @@ func TestComposition_ChildFailureDoesNotBlockSiblings(t *testing.T) {
 		},
 		"T:02_SPAWN_FAIL": {
 			ID: "T:02_SPAWN_FAIL", Kind: NodeKindSubNet,
-			InputPlaces:  []string{"P:Q_FAIL"},
-			OutputPlaces: []string{}, // No output place — errors routed via ErrorPlace.
-			ErrorPlace:   "P:ERRORS",
+			InputPlaces:   []string{"P:Q_FAIL"},
+			OutputPlaces:  []string{}, // No output place — errors routed via ErrorPlace.
+			ErrorPlace:    "P:ERRORS",
 			SubNetFactory: failingChildFactory(),
 		},
 	}

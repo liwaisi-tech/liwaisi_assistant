@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,23 +79,6 @@ func assertDeadlock(t *testing.T, err error) {
 	if !errors.Is(err, ErrDeadlock) {
 		t.Fatalf("expected ErrDeadlock, got %v", err)
 	}
-}
-
-// assertTokenInPlace checks that the place has at least one token whose
-// payload (as a string) contains substr.
-func assertTokenInPlace(t *testing.T, p *Place, substr string) {
-	t.Helper()
-	tokens, ok := p.Peek()
-	if !ok || len(tokens) == 0 {
-		t.Fatalf("place %s: expected token with payload containing %q, but place is empty", p.ID, substr)
-	}
-	for _, tok := range tokens {
-		s := fmt.Sprintf("%v", tok.Payload)
-		if strings.Contains(s, substr) {
-			return
-		}
-	}
-	t.Fatalf("place %s: no token payload contains %q", p.ID, substr)
 }
 
 // assertPlaceLen checks the number of tokens in a place.

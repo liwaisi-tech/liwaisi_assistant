@@ -18,7 +18,7 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 		[]string{"p-input"}, []string{"p-output"})
 	tLLM.SystemPrompt = envOr("PROMPT_DIRECT", "You are a helpful assistant. Be concise.")
 	tLLM.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    1024,
+		MaxTokens:    envInt("MAX_TOKENS_DIRECT", 4096),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
@@ -57,7 +57,7 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	tPlan.SystemPrompt = envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
 		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\"")
 	tPlan.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    1024,
+		MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
@@ -73,7 +73,7 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", "You are a helpful assistant. The user approved the following plan. "+
 		"Execute it thoroughly and provide the final result.")
 	tExecute.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    2048,
+		MaxTokens:    envInt("MAX_TOKENS_EXECUTE", 8192),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
@@ -147,7 +147,7 @@ Respond ONLY with the JSON object.`)
 		[]string{"p-classified"}, []string{"p-output"})
 	tDirect.SystemPrompt = envOr("PROMPT_DIRECT", "You are a helpful, friendly assistant. Respond naturally and concisely.")
 	tDirect.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    1024,
+		MaxTokens:    envInt("MAX_TOKENS_DIRECT", 4096),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
@@ -166,7 +166,7 @@ Respond ONLY with the JSON object.`)
 	tPlan.SystemPrompt = envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
 		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\"")
 	tPlan.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    1024,
+		MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
@@ -192,7 +192,7 @@ Respond ONLY with the JSON object.`)
 	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", "You are a helpful assistant. The user approved the following plan. "+
 		"Execute it thoroughly and provide the final result.")
 	tExecute.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    2048,
+		MaxTokens:    envInt("MAX_TOKENS_EXECUTE", 8192),
 		Temperature:  0.7,
 		StreamOutput: true,
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -117,13 +118,25 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 	return rec.TotalCostUSD
 }
 
-
 // envOr returns the environment variable value or the default.
 func envOr(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return defaultVal
+}
+
+// envInt parses an integer from an environment variable.
+func envInt(key string, defaultVal int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultVal
+	}
+	return n
 }
 
 // parseDuration parses a duration from an environment variable.
