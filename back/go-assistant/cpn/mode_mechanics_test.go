@@ -95,9 +95,9 @@ func TestModeMechanics_CentaurianGuardEdgeCases(t *testing.T) {
 			want: false, // Only AI, no human partner
 		},
 		{
-			name: "nil_token_in_slice",
+			name:   "nil_token_in_slice",
 			tokens: []*Token{nil, aiToken()},
-			want: false, // nil.IsHumanOrigin() = false, only AI
+			want:   false, // nil.IsHumanOrigin() = false, only AI
 		},
 	}
 	for _, tt := range tests {

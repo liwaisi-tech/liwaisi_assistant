@@ -118,7 +118,6 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 	return rec.TotalCostUSD
 }
 
-
 // envOr returns the environment variable value or the default.
 func envOr(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {

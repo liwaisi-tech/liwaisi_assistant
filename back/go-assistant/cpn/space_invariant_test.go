@@ -215,7 +215,7 @@ func TestSpaceInvariant_ValidateHITLRequiresConfig(t *testing.T) {
 			"T:HITL": {
 				ID: "T:HITL", Kind: NodeKindHITL,
 				InputPlaces: []string{"P:IN"}, OutputPlaces: []string{"P:OUT"},
-				HITLConfig:  &HITLConfig{Channel: nil, Prompt: "?"},
+				HITLConfig: &HITLConfig{Channel: nil, Prompt: "?"},
 			},
 		}
 		err := Validate(places, transitions)
