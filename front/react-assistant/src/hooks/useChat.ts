@@ -293,7 +293,6 @@ export function useChat(userId: string) {
 
     // Optimistic reset — UI clears immediately.
     dispatch({ type: 'CLEAR_CONVERSATION' });
-    initRef.current = false;
 
     // Fire-and-forget cleanup of old session.
     if (oldSessionId) {
@@ -305,7 +304,6 @@ export function useChat(userId: string) {
       const session = await createSession(userId, 'web');
       localStorage.setItem(storageKey, session.id);
       dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
-      initRef.current = true;
     } catch (err) {
       dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to create session' });
     }

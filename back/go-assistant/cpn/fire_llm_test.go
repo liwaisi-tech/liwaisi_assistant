@@ -964,3 +964,76 @@ func TestFireLLM_StreamOutput_False_NoChunks(t *testing.T) {
 		}
 	}
 }
+
+// TestFireLLM_HistoryAppendIsThreadSafe verifies that concurrent fireLLM calls
+// do not race on c.History. The -race flag will catch unsynchronized access.
+func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 10
+
+	mock := &mockLLMClient{
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			return LLMResponse{Content: "response"}, nil
+		},
+	}
+
+	// Build a CPN with enough input/output places for parallel fireLLM calls.
+	places := make(map[string]*Place)
+	transitions := make(map[string]*Transition)
+
+	for i := range goroutines {
+		inID := fmt.Sprintf("p-in-%d", i)
+		outID := fmt.Sprintf("p-out-%d", i)
+		tID := fmt.Sprintf("t-llm-%d", i)
+
+		places[inID] = NewPlace(inID, ColorString, SpaceSurface)
+		places[outID] = NewPlace(outID, ColorArtifact, SpaceSurface)
+
+		tr := NewTransition(tID, NodeKindLLM, []string{inID}, []string{outID})
+		tr.SystemPrompt = "test"
+		tr.LLMConfig = &LLMConfig{MaxTokens: 64}
+		transitions[tID] = tr
+	}
+
+	c := &CPN{
+		ID:                "race-test-cpn",
+		Role:              "worker",
+		SessionID:         "race-session",
+		LLMClient:         mock,
+		ContextWindowSize: 10,
+		Places:            places,
+		Transitions:       transitions,
+	}
+
+	// Fire all transitions concurrently — race detector will flag unsynchronized History access.
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines)
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			tID := fmt.Sprintf("t-llm-%d", idx)
+			consumed := []Token{{Color: ColorString, Payload: fmt.Sprintf("msg-%d", idx)}}
+			if err := fireLLM(context.Background(), transitions[tID], c, consumed); err != nil {
+				errs <- fmt.Errorf("fireLLM %d: %w", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+
+	// Each fireLLM appends 2 entries (user + assistant) = goroutines * 2.
+	c.mu.RLock()
+	histLen := len(c.History)
+	c.mu.RUnlock()
+
+	expected := goroutines * 2
+	if histLen != expected {
+		t.Errorf("expected %d history entries, got %d", expected, histLen)
+	}
+}

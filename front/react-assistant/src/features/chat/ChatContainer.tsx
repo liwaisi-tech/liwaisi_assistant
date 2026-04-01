@@ -44,7 +44,8 @@ export function ChatContainer({ userId }: ChatContainerProps) {
       />
       <MessageInput
         onSend={sendMessage}
-        disabled={sessionState === 'running'}
+        disabled={sessionState === 'running' || sessionState === 'waiting'}
+        sessionState={sessionState}
         error={error}
       />
       {showClearDialog && (

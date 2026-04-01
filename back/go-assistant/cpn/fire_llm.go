@@ -38,7 +38,12 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	if t.LLMConfig.SkipHistory {
 		ctxWindowSize = 0
 	}
-	cw := BuildContext(t.SystemPrompt, c.History, ctxWindowSize)
+	// Snapshot history under read lock to avoid racing with concurrent appends.
+	c.mu.RLock()
+	historySnapshot := make([]*Message, len(c.History))
+	copy(historySnapshot, c.History)
+	c.mu.RUnlock()
+	cw := BuildContext(t.SystemPrompt, historySnapshot, ctxWindowSize)
 
 	// Assemble messages: system prompt + context window messages + consumed tokens.
 	messages := make([]*LLMMessage, 0, 1+len(cw.Messages)+1)
@@ -108,6 +113,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	if streamOutput {
 		req.Stream = true
 		onChunk = func(chunk string) {
+			c.StreamedOutput = true
 			c.emit(&Event{
 				Type:           EventStreamChunk,
 				TransitionID:   t.ID,
@@ -158,6 +164,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
 	// Only append user-relevant tokens (skip routing metadata like classifier JSON).
+	c.mu.Lock()
 	if len(userTokens) > 0 {
 		c.History = append(c.History, &Message{
 			Role:      RoleUser,
@@ -173,6 +180,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 		CPNDepth:  c.Depth,
 		Timestamp: time.Now(),
 	})
+	c.mu.Unlock()
 
 	// Step 5: Deposit output token.
 	// Output color is determined by REQ-012. Output places MUST have

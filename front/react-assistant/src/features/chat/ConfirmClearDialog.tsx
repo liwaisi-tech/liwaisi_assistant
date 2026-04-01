@@ -8,6 +8,8 @@ interface ConfirmClearDialogProps {
 export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     cancelRef.current?.focus();
 
@@ -15,15 +17,30 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
       if (e.key === 'Escape') {
         e.preventDefault();
         onCancel();
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        onConfirm();
+      } else if (e.key === 'Tab') {
+        const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (!focusable || focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     }
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onConfirm, onCancel]);
+  }, [onCancel]);
 
   return (
     <div
@@ -34,6 +51,7 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
       aria-labelledby="clear-dialog-title"
     >
       <div
+        ref={dialogRef}
         className="w-full max-w-sm mx-4 rounded-xl border p-6"
         style={{
           backgroundColor: 'var(--bg-surface)',

@@ -229,6 +229,30 @@ func TestSendMessage_SessionBusy(t *testing.T) {
 	}
 }
 
+func TestSendMessage_SessionBusyWhenWaiting(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-wait", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Force state to Waiting to simulate HITL pause.
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	st.set(cpn.StateWaiting)
+
+	err = svc.SendMessage(context.Background(), info.ID, "second")
+	if err == nil {
+		t.Fatal("expected ErrSessionBusy when state is Waiting")
+	}
+	if !errors.Is(err, ErrSessionBusy) {
+		t.Errorf("expected ErrSessionBusy, got: %v", err)
+	}
+}
+
 func TestCancelSession(t *testing.T) {
 	t.Parallel()
 	svc := newTestService()

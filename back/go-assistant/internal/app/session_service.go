@@ -142,7 +142,8 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	if st.get() == cpn.StateRunning {
+	current := st.get()
+	if current == cpn.StateRunning || current == cpn.StateWaiting {
 		return fmt.Errorf("%w: %s", ErrSessionBusy, sessionID)
 	}
 
@@ -234,8 +235,8 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 			return
 		}
 
-		// Check if any LLM transition used streaming (content already delivered via EventSink).
-		streamingActive := hasStreamingTransition(session.Root)
+		// Check if streaming actually happened at runtime (content already delivered via EventSink).
+		streamingActive := session.Root.StreamedOutput
 
 		// Collect output from terminal places and append as assistant messages.
 		for _, p := range session.Root.TerminalPlaces() {
@@ -431,16 +432,6 @@ func generateSessionID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// hasStreamingTransition returns true if any LLM transition in the CPN has StreamOutput enabled.
-func hasStreamingTransition(c *cpn.CPN) bool {
-	for _, t := range c.Transitions {
-		if t.Kind == cpn.NodeKindLLM && t.LLMConfig != nil && t.LLMConfig.StreamOutput {
-			return true
-		}
-	}
-	return false
 }
 
 // findSourcePlace returns the first place with no incoming transitions (source).
