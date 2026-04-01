@@ -141,7 +141,7 @@ func TestMigration_005_ExecutionRecords(t *testing.T) {
 
 // --- Test Helpers ---
 
-func assertTableExists(t *testing.T, pool interface{ QueryRow(ctx context.Context, sql string, args ...any) interface{ Scan(dest ...any) error } }, table string) {
+func assertTableExists(t *testing.T, pool pgxPool, table string) {
 	t.Helper()
 	var exists bool
 	row := pool.QueryRow(context.Background(),
@@ -154,7 +154,7 @@ func assertTableExists(t *testing.T, pool interface{ QueryRow(ctx context.Contex
 	}
 }
 
-func assertColumnExists(t *testing.T, pool interface{ QueryRow(ctx context.Context, sql string, args ...any) interface{ Scan(dest ...any) error } }, table, column string) {
+func assertColumnExists(t *testing.T, pool pgxPool, table, column string) {
 	t.Helper()
 	var exists bool
 	row := pool.QueryRow(context.Background(),
