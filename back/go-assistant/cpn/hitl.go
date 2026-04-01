@@ -51,6 +51,9 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 	}
 
 	// REQ-002: Emit EventHITLRequested with the prompt before blocking.
+	// Note: consumed token content is NOT included in the payload because
+	// upstream LLM transitions with StreamOutput=true already stream
+	// their output to the frontend. Including it would cause duplication.
 	c.emit(&Event{
 		Type:           EventHITLRequested,
 		TransitionID:   t.ID,

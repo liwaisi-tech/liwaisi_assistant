@@ -542,6 +542,192 @@ data: {"type":"message_stop"}
 	}
 }
 
+// ── ParseChatSSEWithCallback Tests ─────────────────────────────────────────
+
+func TestParseChatSSEWithCallback_DeliversChunks(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+data: {"choices":[{"delta":{"content":" "}}]}
+
+data: {"choices":[{"delta":{"content":"world"}}]}
+
+data: [DONE]
+`
+	h := NewStreamHandler()
+	var deltas []string
+	resp, err := h.ParseChatSSEWithCallback(sseReader(sse), func(delta string) {
+		deltas = append(deltas, delta)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "Hello world" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello world")
+	}
+	wantDeltas := []string{"Hello", " ", "world"}
+	if len(deltas) != len(wantDeltas) {
+		t.Fatalf("deltas len = %d, want %d", len(deltas), len(wantDeltas))
+	}
+	for i, d := range deltas {
+		if d != wantDeltas[i] {
+			t.Errorf("deltas[%d] = %q, want %q", i, d, wantDeltas[i])
+		}
+	}
+}
+
+func TestParseChatSSEWithCallback_SkipsEmptyDeltas(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"ok"}}]}
+
+data: {"choices":[{"delta":{"content":""}}]}
+
+data: {"choices":[{"delta":{"content":" fine"}}]}
+
+data: [DONE]
+`
+	h := NewStreamHandler()
+	var deltas []string
+	resp, err := h.ParseChatSSEWithCallback(sseReader(sse), func(delta string) {
+		deltas = append(deltas, delta)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "ok fine" {
+		t.Errorf("Content = %q, want %q", resp.Content, "ok fine")
+	}
+	wantDeltas := []string{"ok", " fine"}
+	if len(deltas) != len(wantDeltas) {
+		t.Fatalf("deltas len = %d, want %d; got %v", len(deltas), len(wantDeltas), deltas)
+	}
+}
+
+func TestParseChatSSEWithCallback_NilCallback(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+data: [DONE]
+`
+	h := NewStreamHandler()
+	resp, err := h.ParseChatSSEWithCallback(sseReader(sse), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "Hello" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello")
+	}
+}
+
+// ── ParseAnthropicSSEWithCallback Tests ───────────────────────────────────
+
+func TestParseAnthropicSSEWithCallback_DeliversChunks(t *testing.T) {
+	sse := `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":25}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The answer "}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"is 42."}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	h := NewStreamHandler()
+	var deltas []string
+	resp, err := h.ParseAnthropicSSEWithCallback(sseReader(sse), func(delta string) {
+		deltas = append(deltas, delta)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "The answer is 42." {
+		t.Errorf("Content = %q, want %q", resp.Content, "The answer is 42.")
+	}
+	wantDeltas := []string{"The answer ", "is 42."}
+	if len(deltas) != len(wantDeltas) {
+		t.Fatalf("deltas len = %d, want %d", len(deltas), len(wantDeltas))
+	}
+	for i, d := range deltas {
+		if d != wantDeltas[i] {
+			t.Errorf("deltas[%d] = %q, want %q", i, d, wantDeltas[i])
+		}
+	}
+}
+
+func TestParseAnthropicSSEWithCallback_SkipsThinkingDeltas(t *testing.T) {
+	sse := `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Result."}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	h := NewStreamHandler()
+	var deltas []string
+	resp, err := h.ParseAnthropicSSEWithCallback(sseReader(sse), func(delta string) {
+		deltas = append(deltas, delta)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "Result." {
+		t.Errorf("Content = %q, want %q", resp.Content, "Result.")
+	}
+	// Only text deltas should be delivered, not thinking deltas.
+	wantDeltas := []string{"Result."}
+	if len(deltas) != len(wantDeltas) {
+		t.Fatalf("deltas len = %d, want %d; got %v", len(deltas), len(wantDeltas), deltas)
+	}
+}
+
+func TestParseAnthropicSSEWithCallback_NilCallback(t *testing.T) {
+	sse := `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	h := NewStreamHandler()
+	resp, err := h.ParseAnthropicSSEWithCallback(sseReader(sse), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "Hello" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello")
+	}
+}
+
 func TestParseAnthropicSSE_OutputTokens(t *testing.T) {
 	sse := `event: message_start
 data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10}}}

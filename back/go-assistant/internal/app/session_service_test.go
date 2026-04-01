@@ -23,6 +23,10 @@ func (m *mockLLMClient) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.
 	return cpn.LLMResponse{Content: "ok"}, nil
 }
 
+func (m *mockLLMClient) CompleteStream(ctx context.Context, req *cpn.LLMRequest, _ func(string)) (cpn.LLMResponse, error) {
+	return m.Complete(ctx, req)
+}
+
 func (m *mockLLMClient) EstimateCost(_ *cpn.LLMRequest) (float64, error) {
 	return 0.001, nil
 }
@@ -225,6 +229,30 @@ func TestSendMessage_SessionBusy(t *testing.T) {
 	}
 }
 
+func TestSendMessage_SessionBusyWhenWaiting(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-wait", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Force state to Waiting to simulate HITL pause.
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	st.set(cpn.StateWaiting)
+
+	err = svc.SendMessage(context.Background(), info.ID, "second")
+	if err == nil {
+		t.Fatal("expected ErrSessionBusy when state is Waiting")
+	}
+	if !errors.Is(err, ErrSessionBusy) {
+		t.Errorf("expected ErrSessionBusy, got: %v", err)
+	}
+}
+
 func TestCancelSession(t *testing.T) {
 	t.Parallel()
 	svc := newTestService()
@@ -258,6 +286,81 @@ func TestResolveHITL_SessionNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteSession(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-del", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = svc.DeleteSession(info.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Session must no longer be accessible.
+	_, err = svc.GetSession(info.ID)
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound after delete, got: %v", err)
+	}
+}
+
+func TestDeleteSession_NotFound(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	err := svc.DeleteSession("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteSession_CancelsRunning(t *testing.T) {
+	t.Parallel()
+	svc := newTestService()
+
+	info, err := svc.CreateSession(context.Background(), "user-del-run", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Force state to Running and set a cancel func to verify it gets called.
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+
+	canceled := make(chan struct{})
+	st.set(cpn.StateRunning)
+	st.mu.Lock()
+	st.cancel = func() { close(canceled) }
+	st.mu.Unlock()
+
+	// Delete while CPN is "running" — should cancel and not panic.
+	err = svc.DeleteSession(info.ID)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Verify cancel was called.
+	select {
+	case <-canceled:
+		// ok
+	default:
+		t.Error("expected cancel to be called on delete")
+	}
+
+	// Verify session is gone.
+	_, err = svc.GetSession(info.ID)
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound after delete, got: %v", err)
 	}
 }
 

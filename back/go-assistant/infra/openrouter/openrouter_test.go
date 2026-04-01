@@ -1881,6 +1881,228 @@ func TestBuildModelRegistry_EnvOverride(t *testing.T) {
 	}
 }
 
+// ── Stream Flag in Request Body ────────────────────────────────────────────
+
+func TestBuildCompletionsBody_StreamFlag(t *testing.T) {
+	body, err := buildCompletionsBody(&cpn.LLMRequest{
+		Model:     "test-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Stream:    true,
+	})
+	if err != nil {
+		t.Fatalf("buildCompletionsBody error: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	stream, ok := parsed["stream"]
+	if !ok {
+		t.Fatal("stream field missing from completions body")
+	}
+	if stream != true {
+		t.Errorf("stream = %v, want true", stream)
+	}
+}
+
+func TestBuildCompletionsBody_NoStreamFlagByDefault(t *testing.T) {
+	body, err := buildCompletionsBody(&cpn.LLMRequest{
+		Model:     "test-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+	})
+	if err != nil {
+		t.Fatalf("buildCompletionsBody error: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if _, ok := parsed["stream"]; ok {
+		t.Error("stream field should not be present when Stream is false")
+	}
+}
+
+func TestBuildMessagesBody_StreamFlag(t *testing.T) {
+	body, err := buildMessagesBody(&cpn.LLMRequest{
+		Model:     "test-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Stream:    true,
+	})
+	if err != nil {
+		t.Fatalf("buildMessagesBody error: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	stream, ok := parsed["stream"]
+	if !ok {
+		t.Fatal("stream field missing from messages body")
+	}
+	if stream != true {
+		t.Errorf("stream = %v, want true", stream)
+	}
+}
+
+// ── CompleteStream ─────────────────────────────────────────────────────────
+
+func TestCompleteStream_ChatEndpoint(t *testing.T) {
+	var gotStream bool
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if s, ok := reqBody["stream"]; ok && s == true {
+			gotStream = true
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"cost\":0.001}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	var chunks []string
+	resp, err := client.CompleteStream(context.Background(), &cpn.LLMRequest{
+		Model:     "test-default-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-stream",
+	}, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error = %v", err)
+	}
+	if !gotStream {
+		t.Error("request body did not contain stream: true")
+	}
+	if resp.Content != "Hello world" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello world")
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("chunks len = %d, want 2; got %v", len(chunks), chunks)
+	}
+	if chunks[0] != "Hello" || chunks[1] != " world" {
+		t.Errorf("chunks = %v, want [Hello, world]", chunks)
+	}
+	if resp.StopReason != "stop" {
+		t.Errorf("StopReason = %q, want %q", resp.StopReason, "stop")
+	}
+	if resp.InputTokens != 5 {
+		t.Errorf("InputTokens = %d, want 5", resp.InputTokens)
+	}
+}
+
+func TestCompleteStream_MessagesEndpoint(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":10}}}\n\n")
+		fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n")
+		fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Streamed!\"}}\n\n")
+		fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n")
+		fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	})
+
+	var chunks []string
+	resp, err := client.CompleteStream(context.Background(), &cpn.LLMRequest{
+		Model:     "claude-sonnet-4-6",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		Endpoint:  cpn.EndpointMessages,
+		SessionID: "sess-stream-anth",
+	}, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error = %v", err)
+	}
+	if resp.Content != "Streamed!" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Streamed!")
+	}
+	if len(chunks) != 1 || chunks[0] != "Streamed!" {
+		t.Errorf("chunks = %v, want [Streamed!]", chunks)
+	}
+	if resp.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want %q", resp.StopReason, "end_turn")
+	}
+}
+
+func TestCompleteStream_NilCallback(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	resp, err := client.CompleteStream(context.Background(), &cpn.LLMRequest{
+		Model:     "test-default-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+	}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream() error = %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("Content = %q, want %q", resp.Content, "ok")
+	}
+}
+
+func TestCompleteStream_ErrorStatus(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	_, err := client.CompleteStream(context.Background(), &cpn.LLMRequest{
+		Model:     "test-default-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "rate") {
+		// ErrRateLimited
+		if err.Error() == "" {
+			t.Error("expected rate limit error")
+		}
+	}
+}
+
+func TestCompleteStream_TokenLedgerRecorded(t *testing.T) {
+	_, client := mockOpenRouterServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"cost\":0.002}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	_, err := client.CompleteStream(context.Background(), &cpn.LLMRequest{
+		Model:     "test-default-model",
+		Messages:  []*cpn.LLMMessage{{Role: "user", Content: "Hi"}},
+		MaxTokens: 100,
+		SessionID: "sess-ledger",
+	}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream() error = %v", err)
+	}
+
+	rec := client.TokenLedger.Get("sess-ledger")
+	if rec == nil {
+		t.Fatal("TokenLedger record not found for sess-ledger")
+	}
+	if rec.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", rec.InputTokens)
+	}
+	if rec.OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", rec.OutputTokens)
+	}
+}
+
 func TestBuildModelRegistry_AllOverrides(t *testing.T) {
 	env := map[string]string{
 		"MODEL_CLASSIFIER":   "custom/classifier",

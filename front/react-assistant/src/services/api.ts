@@ -46,6 +46,12 @@ export async function resolveHITL(sessionId: string, transitionId: string, req: 
   });
 }
 
+export async function deleteSession(sessionId: string): Promise<StatusResponse> {
+  return request<StatusResponse>(`/sessions/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function healthCheck(): Promise<{ status: string }> {
   return request<{ status: string }>('/health');
 }

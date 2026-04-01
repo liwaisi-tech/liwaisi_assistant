@@ -16,6 +16,11 @@ type LLMClient interface {
 	// Complete sends a request to the LLM and returns the response.
 	Complete(ctx context.Context, req *LLMRequest) (LLMResponse, error)
 
+	// CompleteStream sends a streaming request to the LLM, invoking onChunk
+	// for each content delta as it arrives, and returns the complete response.
+	// When onChunk is nil, deltas are accumulated without callbacks.
+	CompleteStream(ctx context.Context, req *LLMRequest, onChunk func(chunk string)) (LLMResponse, error)
+
 	// EstimateCost returns a USD cost estimate for the request
 	// based on model pricing and estimated token counts.
 	EstimateCost(req *LLMRequest) (float64, error)
@@ -102,6 +107,9 @@ type LLMRequest struct {
 
 	// Cache configures prompt caching.
 	Cache *CacheControlConfig
+
+	// Stream enables SSE streaming for this request.
+	Stream bool
 }
 
 // LLMResponse is the output from LLMClient.Complete().
@@ -187,6 +195,12 @@ type LLMConfig struct {
 
 	// CacheControl configures Anthropic prompt caching.
 	CacheControl *CacheControlConfig
+
+	// SkipHistory, when true, prevents BuildContext from including
+	// conversation history. The LLM only sees its system prompt and the
+	// consumed tokens. Used by classifier transitions that must classify
+	// each message independently, without bias from prior conversation.
+	SkipHistory bool
 }
 
 // ── v1.2 Sub-Types ──────────────────────────────────────────────────────────

@@ -14,9 +14,10 @@ type CPN struct {
 	Role  string
 	Depth int
 
-	Mode  Mode
-	State State
-	Error error
+	Mode        Mode
+	initialMode Mode
+	State       State
+	Error       error
 
 	Places      map[string]*Place
 	Transitions map[string]*Transition
@@ -70,6 +71,11 @@ type CPN struct {
 	// Used by Run to avoid false deadlock when children are still producing tokens.
 	activeChildren atomic.Int32
 
+	// StreamedOutput is set to true when an EventStreamChunk is emitted
+	// during execution. Used by the caller to determine whether output
+	// was already delivered via streaming (avoiding duplicate delivery).
+	StreamedOutput bool
+
 	mu sync.RWMutex
 }
 
@@ -82,6 +88,7 @@ func NewCPN(id, role string, depth int, mode Mode, sessionID string,
 		Role:        role,
 		Depth:       depth,
 		Mode:        mode,
+		initialMode: mode,
 		State:       StateIdle,
 		Places:      places,
 		Transitions: transitions,
@@ -304,6 +311,24 @@ func (c *CPN) registerSubNetBus(childID string, bus <-chan Event) {
 		c.subNetBuses = make(map[string]<-chan Event)
 	}
 	c.subNetBuses[childID] = bus
+}
+
+// Reset clears all places' token buffers and resets state to StateIdle.
+// Called before re-running a CPN that previously failed (e.g., after HITL rejection)
+// to prevent stale tokens from interfering with the next execution.
+// Also clears History since the caller re-populates it from the session.
+func (c *CPN) Reset() {
+	c.mu.Lock()
+	c.State = StateIdle
+	c.Error = nil
+	c.Mode = c.initialMode
+	c.History = nil
+	c.StreamedOutput = false
+	c.mu.Unlock()
+
+	for _, p := range c.Places {
+		p.Clear()
+	}
 }
 
 // IsComplete returns true when ALL terminal places have at least one token.

@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -49,8 +48,19 @@ func main() {
 	llmClient := openrouter.NewClient(apiKey, defaultModel)
 	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
 
+	// ── Topology selection ──────────────────────────────────────────
+	var topologyFactory app.TopologyFactory
+	switch envOr("TOPOLOGY", "unified") {
+	case "simple":
+		topologyFactory = defaultTopologyFactory
+	case "hitl":
+		topologyFactory = hitlTopologyFactory
+	default:
+		topologyFactory = unifiedTopologyFactory
+	}
+
 	// ── Application layer ───────────────────────────────────────────
-	appService := app.NewSessionService(llmClient, costProvider, logger, defaultTopologyFactory)
+	appService := app.NewSessionService(llmClient, costProvider, logger, topologyFactory)
 
 	// ── Billing adapter ────────────────────────────────────────────
 	billingClient := billing.NewClient(apiKey, "https://openrouter.ai/api/v1")
@@ -60,6 +70,12 @@ func main() {
 
 	// Wire event callback: CPN events → SSE broker.
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {
+		if evt.Type == cpn.EventStreamChunk {
+			if chunk, ok := evt.Payload.(cpn.StreamChunk); ok {
+				srv.Broker().PublishStreamChunk(sessionID, chunk)
+				return
+			}
+		}
 		srv.Broker().PublishEvent(sessionID, &evt)
 	})
 
@@ -101,36 +117,6 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 	return rec.TotalCostUSD
 }
 
-// defaultTopologyFactory creates a minimal CPN topology for a session:
-// p-input → t-llm → p-output.
-func defaultTopologyFactory(sessionID string) *cpn.CPN {
-	places := map[string]*cpn.Place{
-		"p-input":  cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
-		"p-output": cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
-	}
-	tLLM := cpn.NewTransition("t-llm", cpn.NodeKindLLM,
-		[]string{"p-input"}, []string{"p-output"})
-	tLLM.SystemPrompt = "You are a helpful assistant. Be concise."
-	tLLM.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   1024,
-		Temperature: 0.7,
-	}
-
-	transitions := map[string]*cpn.Transition{
-		"t-llm": tLLM,
-	}
-	c := cpn.NewCPN(
-		fmt.Sprintf("cpn-%s", sessionID),
-		"assistant",
-		0,
-		cpn.ModeMAS,
-		sessionID,
-		places,
-		transitions,
-	)
-	c.ContextWindowSize = 10
-	return c
-}
 
 // envOr returns the environment variable value or the default.
 func envOr(key, defaultVal string) string {

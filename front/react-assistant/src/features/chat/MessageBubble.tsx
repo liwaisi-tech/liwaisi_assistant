@@ -1,4 +1,5 @@
 import { MarkdownContent } from './MarkdownContent.tsx';
+import type { HITLAction } from '../../types/chat';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
@@ -6,9 +7,16 @@ interface MessageBubbleProps {
   cpnRole?: string;
   timestamp: Date;
   isStreaming?: boolean;
+  hitlTransitionId?: string;
+  hitlActions?: HITLAction[];
+  hitlResolved?: HITLAction;
+  onHITLAction?: (transitionId: string, action: HITLAction) => void;
 }
 
-export function MessageBubble({ role, content, cpnRole, timestamp, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({
+  role, content, cpnRole, timestamp, isStreaming,
+  hitlTransitionId, hitlActions, hitlResolved, onHITLAction,
+}: MessageBubbleProps) {
   const isUser = role === 'user';
 
   return (
@@ -36,6 +44,43 @@ export function MessageBubble({ role, content, cpnRole, timestamp, isStreaming }
           </p>
         ) : (
           <MarkdownContent content={content} isStreaming={isStreaming ?? false} />
+        )}
+
+        {hitlTransitionId && hitlActions && !hitlResolved && (
+          <div className="flex gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
+            <button
+              onClick={() => onHITLAction?.(hitlTransitionId, 'approve')}
+              className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{
+                backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                color: '#34d399',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+              }}
+            >
+              Looks good
+            </button>
+            <button
+              onClick={() => onHITLAction?.(hitlTransitionId, 'reject')}
+              className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {hitlTransitionId && hitlResolved && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
+            <span className="text-[11px] font-medium" style={{
+              color: hitlResolved === 'approve' ? '#34d399' : '#f87171',
+            }}>
+              {hitlResolved === 'approve' ? 'You approved this' : 'You cancelled this'}
+            </span>
+          </div>
         )}
 
         <time className="block text-[10px] mt-2 tabular-nums"

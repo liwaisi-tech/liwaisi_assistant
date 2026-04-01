@@ -42,6 +42,18 @@ type blockAccumulator struct {
 // by index, and extracts usage from the final chunk.
 // Takes ownership of body (calls body.Close via defer).
 func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (cpn.LLMResponse, error) {
+	return h.parseChatSSEInternal(body, nil)
+}
+
+// ParseChatSSEWithCallback parses an OpenAI-compatible /chat/completions SSE stream,
+// invoking onDelta for each non-empty content delta as it arrives.
+// Takes ownership of body (calls body.Close via defer).
+func (h *StreamHandler) ParseChatSSEWithCallback(body io.ReadCloser, onDelta func(string)) (cpn.LLMResponse, error) {
+	return h.parseChatSSEInternal(body, onDelta)
+}
+
+// parseChatSSEInternal is the shared implementation for ParseChatSSE and ParseChatSSEWithCallback.
+func (h *StreamHandler) parseChatSSEInternal(body io.ReadCloser, onDelta func(string)) (cpn.LLMResponse, error) {
 	defer body.Close()
 
 	var resp cpn.LLMResponse
@@ -95,6 +107,9 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (cpn.LLMResponse, error
 		if len(chunk.Choices) > 0 {
 			choice := chunk.Choices[0]
 			content.WriteString(choice.Delta.Content)
+			if onDelta != nil && choice.Delta.Content != "" {
+				onDelta(choice.Delta.Content)
+			}
 
 			for _, tc := range choice.Delta.ToolCalls {
 				acc, ok := toolCalls[tc.Index]
@@ -165,6 +180,18 @@ func (h *StreamHandler) ParseChatSSE(body io.ReadCloser) (cpn.LLMResponse, error
 // signature_delta. The Signature field is preserved byte-for-byte.
 // Takes ownership of body (calls body.Close via defer).
 func (h *StreamHandler) ParseAnthropicSSE(body io.ReadCloser) (cpn.LLMResponse, error) {
+	return h.parseAnthropicSSEInternal(body, nil)
+}
+
+// ParseAnthropicSSEWithCallback parses an Anthropic /messages SSE stream,
+// invoking onDelta for each non-empty text delta as it arrives.
+// Takes ownership of body (calls body.Close via defer).
+func (h *StreamHandler) ParseAnthropicSSEWithCallback(body io.ReadCloser, onDelta func(string)) (cpn.LLMResponse, error) {
+	return h.parseAnthropicSSEInternal(body, onDelta)
+}
+
+// parseAnthropicSSEInternal is the shared implementation for ParseAnthropicSSE and ParseAnthropicSSEWithCallback.
+func (h *StreamHandler) parseAnthropicSSEInternal(body io.ReadCloser, onDelta func(string)) (cpn.LLMResponse, error) {
 	defer body.Close()
 
 	var resp cpn.LLMResponse
@@ -246,6 +273,9 @@ scanLoop:
 			switch cbd.Delta.Type {
 			case "text_delta":
 				content.WriteString(cbd.Delta.Text)
+				if onDelta != nil && cbd.Delta.Text != "" {
+					onDelta(cbd.Delta.Text)
+				}
 			case "thinking_delta":
 				acc.content.WriteString(cbd.Delta.Thinking)
 			case "signature_delta":

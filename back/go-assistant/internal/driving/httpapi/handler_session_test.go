@@ -27,6 +27,10 @@ func (m *mockLLMClient) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.
 	return cpn.LLMResponse{Content: "ok"}, nil
 }
 
+func (m *mockLLMClient) CompleteStream(ctx context.Context, req *cpn.LLMRequest, _ func(string)) (cpn.LLMResponse, error) {
+	return m.Complete(ctx, req)
+}
+
 func (m *mockLLMClient) EstimateCost(_ *cpn.LLMRequest) (float64, error) {
 	return 0.001, nil
 }
@@ -69,6 +73,7 @@ func testMux(h *Handlers) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/sessions", h.HandleCreateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}", h.HandleGetSession)
+	mux.HandleFunc("DELETE /api/v1/sessions/{id}", h.HandleDeleteSession)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/messages", h.HandleSendMessage)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/hitl/{transitionID}", h.HandleResolveHITL)
 	return mux
@@ -197,6 +202,64 @@ func TestHandleGetSession_NotFound(t *testing.T) {
 	mux := testMux(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/nonexistent", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDeleteSession(t *testing.T) {
+	t.Parallel()
+	h := testHandlers()
+	mux := testMux(h)
+
+	// Create a session first.
+	createBody := jsonBody(t, CreateSessionRequest{UserID: "user-del", Channel: "web"})
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", createBody)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	mux.ServeHTTP(createRec, createReq)
+
+	var created SessionResponse
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	// Delete the session.
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/"+created.ID, nil)
+	delRec := httptest.NewRecorder()
+	mux.ServeHTTP(delRec, delReq)
+
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", delRec.Code, delRec.Body.String())
+	}
+
+	var resp StatusResponse
+	if err := json.NewDecoder(delRec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "deleted" {
+		t.Errorf("expected status 'deleted', got %q", resp.Status)
+	}
+
+	// Verify session is gone.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+created.ID, nil)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", getRec.Code)
+	}
+}
+
+func TestHandleDeleteSession_NotFound(t *testing.T) {
+	t.Parallel()
+	h := testHandlers()
+	mux := testMux(h)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

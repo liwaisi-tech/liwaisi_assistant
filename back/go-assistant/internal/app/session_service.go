@@ -44,7 +44,7 @@ type sessionState struct {
 	mu           sync.RWMutex
 	state        cpn.State
 	cancel       context.CancelFunc
-	streamClosed sync.Once
+	streamClosed sync.Once // guards explicit session teardown in CloseStream
 }
 
 func (ss *sessionState) set(s cpn.State) {
@@ -95,6 +95,22 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	}
 
 	session := cpn.NewSession(id, userID, channel, root)
+
+	// Wire HITL channels: walk transitions, create channels, register with session.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterHITL(t.ID, ch); err != nil {
+			s.logger.Error("register HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
 	st := &sessionState{state: cpn.StateIdle}
 
 	s.mu.Lock()
@@ -126,7 +142,8 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	if st.get() == cpn.StateRunning {
+	current := st.get()
+	if current == cpn.StateRunning || current == cpn.StateWaiting {
 		return fmt.Errorf("%w: %s", ErrSessionBusy, sessionID)
 	}
 
@@ -137,6 +154,20 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		Timestamp: time.Now(),
 	}
 	session.AppendMessage(msg)
+
+	// Reset CPN before each run to clear stale tokens from previous
+	// failed runs (e.g., HITL rejection leaving tokens in p-classified/p-plan).
+	session.Root.Reset()
+
+	// Sync conversation history to CPN so LLM transitions have context.
+	// Must happen AFTER Reset (which clears History).
+	msgs := session.Messages()
+	history := make([]*cpn.Message, len(msgs))
+	for i := range msgs {
+		history[i] = &msgs[i]
+	}
+	session.Root.History = history
+	historyLen := len(session.Root.History)
 
 	tok := &cpn.Token{
 		Color:     cpn.ColorString,
@@ -162,12 +193,51 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 
 	go func() {
 		defer cancel()
-		if err := session.Root.Run(bgCtx); err != nil {
-			s.logger.Error("CPN run failed", "session_id", sessionID, "error", err)
-			st.set(cpn.StateFailed)
-			st.streamClosed.Do(func() { close(session.Stream) })
+
+		runErr := session.Root.Run(bgCtx)
+
+		// Sync new history entries from CPN back to session on ALL exit paths.
+		// fireLLM appends assistant responses to c.History during execution;
+		// without this sync, those responses are lost when the CPN fails.
+		if len(session.Root.History) > historyLen {
+			for _, m := range session.Root.History[historyLen:] {
+				if m.Role != cpn.RoleAssistant {
+					continue // user messages already in session history
+				}
+				session.AppendMessage(&cpn.Message{
+					ID:        sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					Role:      m.Role,
+					Content:   m.Content,
+					CPNID:     m.CPNID,
+					CPNRole:   m.CPNRole,
+					CPNDepth:  m.CPNDepth,
+					Timestamp: m.Timestamp,
+				})
+			}
+		}
+
+		if runErr != nil {
+			s.logger.Error("CPN run failed", "session_id", sessionID, "error", runErr)
+			// Send done sentinel so the frontend knows the response is complete.
+			select {
+			case session.Stream <- cpn.StreamChunk{
+				SessionID: sessionID,
+				CPNID:     session.Root.ID,
+				CPNRole:   session.Root.Role,
+				Content:   "",
+				Done:      true,
+			}:
+			default:
+			}
+			// Set idle — HITL rejection is a normal conversational event,
+			// not a terminal failure. The session remains usable.
+			st.set(cpn.StateIdle)
 			return
 		}
+
+		// Check if streaming actually happened at runtime (content already delivered via EventSink).
+		streamingActive := session.Root.StreamedOutput
+
 		// Collect output from terminal places and append as assistant messages.
 		for _, p := range session.Root.TerminalPlaces() {
 			for {
@@ -179,6 +249,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 				if !ok {
 					continue
 				}
+				// Always persist to session history.
 				session.AppendMessage(&cpn.Message{
 					ID:        sessionID + "-resp-" + fmt.Sprintf("%d", time.Now().UnixNano()),
 					Role:      cpn.RoleAssistant,
@@ -188,16 +259,19 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 					CPNDepth:  session.Root.Depth,
 					Timestamp: time.Now(),
 				})
-				select {
-				case session.Stream <- cpn.StreamChunk{
-					SessionID: sessionID,
-					CPNID:     session.Root.ID,
-					CPNRole:   session.Root.Role,
-					Content:   content,
-					Done:      false,
-				}:
-				default:
-					s.logger.Warn("stream buffer full, chunk dropped", "session_id", sessionID)
+				// Only send content via Stream if it was NOT already streamed via the broker.
+				if !streamingActive {
+					select {
+					case session.Stream <- cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     session.Root.ID,
+						CPNRole:   session.Root.Role,
+						Content:   content,
+						Done:      false,
+					}:
+					default:
+						s.logger.Warn("stream buffer full, chunk dropped", "session_id", sessionID)
+					}
 				}
 			}
 		}
@@ -217,6 +291,37 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		// Do NOT close the stream — SSE connection stays alive for next message.
 	}()
 
+	return nil
+}
+
+// DeleteSession removes a session and releases its resources.
+// If the CPN is running, it is canceled via its context. The session is
+// removed from the service maps so no new operations can target it.
+// The stream channel is NOT closed here — the background goroutine from
+// SendMessage owns the channel lifecycle and will exit on context cancellation.
+func (s *SessionService) DeleteSession(sessionID string) error {
+	s.mu.Lock()
+	_, ok := s.sessions[sessionID]
+	st := s.states[sessionID]
+	delete(s.sessions, sessionID)
+	delete(s.states, sessionID)
+	s.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+
+	// Cancel running CPN if active.
+	if st != nil {
+		st.mu.RLock()
+		cancel := st.cancel
+		st.mu.RUnlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+
+	s.logger.Info("session deleted", "session_id", sessionID)
 	return nil
 }
 

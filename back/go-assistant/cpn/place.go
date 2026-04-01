@@ -100,3 +100,11 @@ func (p *Place) Len() int {
 	defer p.mu.Unlock()
 	return len(p.Tokens)
 }
+
+// Clear removes all tokens from this place's buffer.
+// Thread-safe.
+func (p *Place) Clear() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Tokens = p.Tokens[:0]
+}

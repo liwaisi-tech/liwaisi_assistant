@@ -92,6 +92,28 @@ func (h *Handlers) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleDeleteSession deletes a session and releases its resources.
+// DELETE /api/v1/sessions/{id}
+func (h *Handlers) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "session ID is required")
+		return
+	}
+
+	err := h.App.DeleteSession(sessionID)
+	if err != nil {
+		if errors.Is(err, app.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, StatusResponse{Status: "deleted"})
+}
+
 // HandleSendMessage sends a user message to the session.
 // POST /api/v1/sessions/{id}/messages
 func (h *Handlers) HandleSendMessage(w http.ResponseWriter, r *http.Request) {

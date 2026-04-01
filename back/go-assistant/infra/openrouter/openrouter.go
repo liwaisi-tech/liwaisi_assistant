@@ -207,6 +207,90 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 	return llmResp, nil
 }
 
+// CompleteStream sends a streaming request to the LLM, invoking onChunk
+// for each content delta as it arrives, and returns the complete accumulated response.
+// Uses a 10-minute timeout for long-running streaming connections (CON-004).
+func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChunk func(chunk string)) (cpn.LLMResponse, error) {
+	resolvedModel := c.resolveModel(req.Model)
+
+	// Build a shallow copy with the resolved model and streaming enabled.
+	resolved := *req
+	resolved.Model = resolvedModel
+	resolved.Stream = true
+
+	var body []byte
+	var endpoint string
+	var buildErr error
+
+	switch resolved.Endpoint {
+	case cpn.EndpointMessages:
+		body, buildErr = buildMessagesBody(&resolved)
+		endpoint = c.BaseURL + "/messages"
+	default:
+		body, buildErr = buildCompletionsBody(&resolved)
+		endpoint = c.BaseURL + "/chat/completions"
+	}
+	if buildErr != nil {
+		return cpn.LLMResponse{}, fmt.Errorf("build request body: %w", buildErr)
+	}
+
+	// Use a longer timeout for streaming connections.
+	streamCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return cpn.LLMResponse{}, fmt.Errorf("create HTTP request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.AppURL != "" {
+		httpReq.Header.Set("HTTP-Referer", c.AppURL)
+	}
+	if c.AppTitle != "" {
+		httpReq.Header.Set("X-Title", c.AppTitle)
+	}
+	if req.SessionID != "" {
+		httpReq.Header.Set("X-Session-Id", req.SessionID)
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return cpn.LLMResponse{}, fmt.Errorf("HTTP request: %w", err)
+	}
+	// Body ownership transferred to the parser (it calls body.Close via defer).
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+	}
+
+	sh := NewStreamHandler()
+	var llmResp cpn.LLMResponse
+	switch resolved.Endpoint {
+	case cpn.EndpointMessages:
+		llmResp, err = sh.ParseAnthropicSSEWithCallback(resp.Body, onChunk)
+	default:
+		llmResp, err = sh.ParseChatSSEWithCallback(resp.Body, onChunk)
+	}
+	if err != nil {
+		return cpn.LLMResponse{}, err
+	}
+
+	if req.SessionID != "" {
+		if llmResp.CacheReadTokens > 0 || llmResp.CacheCreationTokens > 0 {
+			c.TokenLedger.RecordWithCache(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens,
+				llmResp.CacheReadTokens, llmResp.CacheCreationTokens, llmResp.CostUSD)
+		} else {
+			c.TokenLedger.Record(req.SessionID, llmResp.InputTokens, llmResp.OutputTokens, llmResp.CostUSD)
+		}
+	}
+
+	return llmResp, nil
+}
+
 // EstimateCost returns a USD cost estimate for the request
 // based on model pricing and estimated token counts.
 func (c *Client) EstimateCost(req *cpn.LLMRequest) (float64, error) {
@@ -452,6 +536,9 @@ func buildCompletionsBody(req *cpn.LLMRequest) ([]byte, error) {
 		"max_tokens": req.MaxTokens,
 	}
 
+	if req.Stream {
+		body["stream"] = true
+	}
 	if req.Temperature != 0 {
 		body["temperature"] = req.Temperature
 	}
@@ -575,6 +662,9 @@ func buildMessagesBody(req *cpn.LLMRequest) ([]byte, error) {
 
 	body["messages"] = formatAnthropicMessages(req.Messages, req.Cache)
 
+	if req.Stream {
+		body["stream"] = true
+	}
 	if req.Temperature != 0 {
 		body["temperature"] = req.Temperature
 	}
