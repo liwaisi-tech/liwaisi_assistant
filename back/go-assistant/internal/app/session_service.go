@@ -238,7 +238,9 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		// Check if streaming actually happened at runtime (content already delivered via EventSink).
 		streamingActive := session.Root.StreamedOutput
 
-		// Collect output from terminal places and append as assistant messages.
+		// Collect output from terminal places.
+		// When streaming was active, assistant messages were already synced from c.History above.
+		// We still consume tokens to clear the places, but skip message creation to avoid duplicates.
 		for _, p := range session.Root.TerminalPlaces() {
 			for {
 				tok, err := p.Consume()
@@ -249,18 +251,18 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 				if !ok {
 					continue
 				}
-				// Always persist to session history.
-				session.AppendMessage(&cpn.Message{
-					ID:        sessionID + "-resp-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					Role:      cpn.RoleAssistant,
-					Content:   content,
-					CPNID:     session.Root.ID,
-					CPNRole:   session.Root.Role,
-					CPNDepth:  session.Root.Depth,
-					Timestamp: time.Now(),
-				})
-				// Only send content via Stream if it was NOT already streamed via the broker.
+				// When streaming was active, history sync already captured this content.
+				// Skip AppendMessage to avoid duplicate messages in session history.
 				if !streamingActive {
+					session.AppendMessage(&cpn.Message{
+						ID:        sessionID + "-resp-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						Role:      cpn.RoleAssistant,
+						Content:   content,
+						CPNID:     session.Root.ID,
+						CPNRole:   session.Root.Role,
+						CPNDepth:  session.Root.Depth,
+						Timestamp: time.Now(),
+					})
 					select {
 					case session.Stream <- cpn.StreamChunk{
 						SessionID: sessionID,
@@ -275,16 +277,22 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 				}
 			}
 		}
-		// Send done sentinel so SSE handler knows this response is complete.
-		select {
-		case session.Stream <- cpn.StreamChunk{
-			SessionID: sessionID,
-			CPNID:     session.Root.ID,
-			CPNRole:   session.Root.Role,
-			Content:   "",
-			Done:      true,
-		}:
-		default:
+		// Send done sentinel ONLY when streaming was NOT active.
+		// When streaming was active, fireLLM already emitted Done via the broker;
+		// emitting a second Done here creates a race condition where this Done
+		// (on Session.Stream) can arrive at the SSE handler before the broker
+		// has finished delivering all content chunks from client.events.
+		if !streamingActive {
+			select {
+			case session.Stream <- cpn.StreamChunk{
+				SessionID: sessionID,
+				CPNID:     session.Root.ID,
+				CPNRole:   session.Root.Role,
+				Content:   "",
+				Done:      true,
+			}:
+			default:
+			}
 		}
 		// Set idle instead of completed — session can accept more messages.
 		st.set(cpn.StateIdle)
