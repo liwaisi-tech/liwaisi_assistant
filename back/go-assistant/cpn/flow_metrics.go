@@ -16,6 +16,7 @@ type ExecutionRecord struct {
 	SessionID        string
 	TransitionsFired int
 	LLMCallCount     int
+	ToolCallCount    int
 	TotalCostUSD     float64
 	TokensProduced   int
 	Duration         time.Duration
@@ -34,6 +35,7 @@ type executionTracker struct {
 	startedAt        time.Time
 	transitionsFired atomic.Int64
 	llmCallCount     atomic.Int64
+	toolCallCount    atomic.Int64
 	tokensProduced   atomic.Int64
 }
 
@@ -55,6 +57,9 @@ func (et *executionTracker) RecordTransitionFired(kind NodeKind) {
 	if kind == NodeKindLLM {
 		et.llmCallCount.Add(1)
 	}
+	if kind == NodeKindTool {
+		et.toolCallCount.Add(1)
+	}
 }
 
 // RecordTokensProduced increments the token count by n.
@@ -73,6 +78,7 @@ func (et *executionTracker) Finalize(success bool, costUSD float64) ExecutionRec
 		SessionID:        et.sessionID,
 		TransitionsFired: int(et.transitionsFired.Load()),
 		LLMCallCount:     int(et.llmCallCount.Load()),
+		ToolCallCount:    int(et.toolCallCount.Load()),
 		TotalCostUSD:     costUSD,
 		TokensProduced:   int(et.tokensProduced.Load()),
 		Duration:         now.Sub(et.startedAt),
