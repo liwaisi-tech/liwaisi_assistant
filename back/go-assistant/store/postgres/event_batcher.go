@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -18,6 +19,8 @@ type EventBatcher struct {
 	ch            chan *persist.EventRecord
 	done          chan struct{}
 	wg            sync.WaitGroup
+	lastErr       error // flush error from goroutine, read after wg.Wait()
+	logger        *slog.Logger
 }
 
 // NewEventBatcher creates a batcher with the given configuration.
@@ -36,6 +39,7 @@ func NewEventBatcher(repo *EventRepository, batchSize int, flushInterval time.Du
 		flushInterval: flushInterval,
 		ch:            make(chan *persist.EventRecord, batchSize*2),
 		done:          make(chan struct{}),
+		logger:        slog.Default(),
 	}
 
 	b.wg.Add(1)
@@ -56,23 +60,11 @@ func (b *EventBatcher) Submit(ctx context.Context, event *persist.EventRecord) e
 }
 
 // Close flushes remaining events and stops the batcher goroutine.
-func (b *EventBatcher) Close(ctx context.Context) error {
+// Returns the last flush error from the goroutine if any.
+func (b *EventBatcher) Close(_ context.Context) error {
 	close(b.done)
 	b.wg.Wait()
-
-	// Drain remaining events from channel
-	var remaining []*persist.EventRecord
-	for {
-		select {
-		case e := <-b.ch:
-			remaining = append(remaining, e)
-		default:
-			if len(remaining) > 0 {
-				return b.flush(ctx, remaining)
-			}
-			return nil
-		}
-	}
+	return b.lastErr
 }
 
 func (b *EventBatcher) run() {
@@ -87,23 +79,35 @@ func (b *EventBatcher) run() {
 		case e := <-b.ch:
 			buf = append(buf, e)
 			if len(buf) >= b.batchSize {
-				_ = b.flush(context.Background(), buf)
-				buf = buf[:0]
+				if err := b.flush(context.Background(), buf); err != nil {
+					b.logger.Error("event batcher flush on size", "error", err, "events", len(buf))
+					b.lastErr = err
+					// retain buffer for retry on next tick
+				} else {
+					buf = buf[:0]
+				}
 			}
 		case <-ticker.C:
 			if len(buf) > 0 {
-				_ = b.flush(context.Background(), buf)
-				buf = buf[:0]
+				if err := b.flush(context.Background(), buf); err != nil {
+					b.logger.Error("event batcher flush on interval", "error", err, "events", len(buf))
+					b.lastErr = err
+				} else {
+					buf = buf[:0]
+				}
 			}
 		case <-b.done:
-			// Drain channel before exiting
+			// Drain channel and flush once
 			for {
 				select {
 				case e := <-b.ch:
 					buf = append(buf, e)
 				default:
 					if len(buf) > 0 {
-						_ = b.flush(context.Background(), buf)
+						if err := b.flush(context.Background(), buf); err != nil {
+							b.logger.Error("event batcher final flush", "error", err, "events", len(buf))
+							b.lastErr = err
+						}
 					}
 					return
 				}

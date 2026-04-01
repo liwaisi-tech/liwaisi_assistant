@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,10 +120,6 @@ func (r *IntelligenceRepository) TopFlows(ctx context.Context, n int) ([]*persis
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Score > result[j].Score
-	})
 
 	return result, nil
 }

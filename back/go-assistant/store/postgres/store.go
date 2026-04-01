@@ -93,11 +93,14 @@ func (s *Store) Health(ctx context.Context) error {
 }
 
 // Close shuts down all backends in correct order:
-// 1. Flush EventBatcher, 2. Close Redis, 3. Close Postgres pool.
+// 1. Flush EventBatcher (with 10s timeout), 2. Close Redis, 3. Close Postgres pool.
 func (s *Store) Close() error {
 	var firstErr error
 
-	if err := s.batcher.Close(context.Background()); err != nil && firstErr == nil {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := s.batcher.Close(shutdownCtx); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("store: batcher close: %w", err)
 	}
 

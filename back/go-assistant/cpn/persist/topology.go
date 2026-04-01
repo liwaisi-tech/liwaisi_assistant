@@ -722,20 +722,24 @@ func TopologyHash(t *CPNTopology) string {
 		}
 
 		if tr.LLMConfig != nil {
-			b, _ := json.Marshal(tr.LLMConfig)
-			fmt.Fprintf(h, "LLC:%s;", b)
+			if b, err := json.Marshal(tr.LLMConfig); err == nil {
+				fmt.Fprintf(h, "LLC:%s;", b)
+			}
 		}
 		if tr.ValidateConfig != nil {
-			b, _ := json.Marshal(tr.ValidateConfig)
-			fmt.Fprintf(h, "VC:%s;", b)
+			if b, err := json.Marshal(tr.ValidateConfig); err == nil {
+				fmt.Fprintf(h, "VC:%s;", b)
+			}
 		}
 		if tr.HITLConfig != nil {
-			b, _ := json.Marshal(tr.HITLConfig)
-			fmt.Fprintf(h, "HC:%s;", b)
+			if b, err := json.Marshal(tr.HITLConfig); err == nil {
+				fmt.Fprintf(h, "HC:%s;", b)
+			}
 		}
 		if tr.Retry != nil {
-			b, _ := json.Marshal(tr.Retry)
-			fmt.Fprintf(h, "R:%s;", b)
+			if b, err := json.Marshal(tr.Retry); err == nil {
+				fmt.Fprintf(h, "R:%s;", b)
+			}
 		}
 		if tr.SubNetTopology != nil {
 			fmt.Fprintf(h, "SN:%s;", TopologyHash(tr.SubNetTopology))

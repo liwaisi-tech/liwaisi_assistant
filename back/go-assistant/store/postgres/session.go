@@ -110,22 +110,12 @@ func (r *SessionRepository) GetByUserID(ctx context.Context, userID string) ([]*
 }
 
 func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string, msg *persist.MessageRecord) error {
-	// Check session exists and is not closed
-	var state string
-	err := r.pool.QueryRow(ctx, "SELECT state FROM sessions WHERE id = $1", sessionID).Scan(&state)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return persist.ErrSessionNotFound
-		}
-		return fmt.Errorf("postgres session check state: %w", err)
-	}
-	if state == string(persist.SessionClosed) || state == string(persist.SessionExpired) {
-		return persist.ErrSessionClosed
-	}
-
-	_, err = r.pool.Exec(ctx,
+	// Atomic check-and-insert: verify session is active in the same statement
+	// to avoid TOCTOU race between separate SELECT and INSERT.
+	tag, err := r.pool.Exec(ctx,
 		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')`,
 		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp,
 	)
 	if err != nil {
@@ -134,6 +124,15 @@ func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string,
 			return persist.ErrSessionNotFound
 		}
 		return fmt.Errorf("postgres session append message: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish between not found and closed
+		var state string
+		checkErr := r.pool.QueryRow(ctx, "SELECT state FROM sessions WHERE id = $1", sessionID).Scan(&state)
+		if checkErr != nil {
+			return persist.ErrSessionNotFound
+		}
+		return persist.ErrSessionClosed
 	}
 	return nil
 }
