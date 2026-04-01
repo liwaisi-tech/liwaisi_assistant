@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
@@ -15,14 +14,14 @@ import (
 // EventRepository implements persist.EventRepository using pgxpool.
 // Append-only: no Update or Delete methods (Axiom A9).
 type EventRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // Compile-time interface assertion.
 var _ persist.EventRepository = (*EventRepository)(nil)
 
 // NewEventRepository creates a new Postgres-backed event repository.
-func NewEventRepository(pool *pgxpool.Pool) *EventRepository {
+func NewEventRepository(pool pgxPool) *EventRepository {
 	return &EventRepository{pool: pool}
 }
 

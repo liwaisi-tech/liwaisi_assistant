@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
@@ -17,14 +16,14 @@ import (
 // It receives pre-populated SessionRecord DTOs — the integration layer
 // is responsible for combining cpn.Session + sessionState into a SessionRecord.
 type SessionRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // Compile-time interface assertion.
 var _ persist.SessionRepository = (*SessionRepository)(nil)
 
 // NewSessionRepository creates a new Postgres-backed session repository.
-func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
+func NewSessionRepository(pool pgxPool) *SessionRepository {
 	return &SessionRepository{pool: pool}
 }
 

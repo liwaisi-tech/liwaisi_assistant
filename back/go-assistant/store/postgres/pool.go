@@ -92,7 +92,7 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
 }
 
 // Health checks database connectivity by executing SELECT 1.
-func Health(ctx context.Context, pool *pgxpool.Pool) error {
+func Health(ctx context.Context, pool pgxPool) error {
 	var n int
 	if err := pool.QueryRow(ctx, "SELECT 1").Scan(&n); err != nil {
 		return fmt.Errorf("postgres: health: %w", err)
@@ -101,6 +101,6 @@ func Health(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 // Close drains the connection pool gracefully.
-func Close(pool *pgxpool.Pool) {
+func Close(pool pgxPool) {
 	pool.Close()
 }

@@ -9,11 +9,16 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
+// eventAppender abstracts the append operation for testability.
+type eventAppender interface {
+	Append(ctx context.Context, events ...*persist.EventRecord) error
+}
+
 // EventBatcher buffers event records and flushes them in batches using CopyFrom.
 // Flushes on batchSize OR flushInterval, whichever comes first.
 // Submit blocks when the channel is full (backpressure).
 type EventBatcher struct {
-	repo          *EventRepository
+	repo          eventAppender
 	batchSize     int
 	flushInterval time.Duration
 	ch            chan *persist.EventRecord
@@ -25,7 +30,7 @@ type EventBatcher struct {
 
 // NewEventBatcher creates a batcher with the given configuration.
 // Defaults: batchSize=100, flushInterval=500ms, channel capacity=batchSize*2.
-func NewEventBatcher(repo *EventRepository, batchSize int, flushInterval time.Duration) *EventBatcher {
+func NewEventBatcher(repo eventAppender, batchSize int, flushInterval time.Duration) *EventBatcher {
 	if batchSize <= 0 {
 		batchSize = 100
 	}

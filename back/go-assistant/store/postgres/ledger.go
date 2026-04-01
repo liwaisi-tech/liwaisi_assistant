@@ -7,21 +7,20 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
 // LedgerRepository implements persist.LedgerRepository using PostgreSQL.
 type LedgerRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // Compile-time interface assertion.
 var _ persist.LedgerRepository = (*LedgerRepository)(nil)
 
 // NewLedgerRepository creates a new Postgres-backed ledger repository.
-func NewLedgerRepository(pool *pgxpool.Pool) *LedgerRepository {
+func NewLedgerRepository(pool pgxPool) *LedgerRepository {
 	return &LedgerRepository{pool: pool}
 }
 

@@ -8,21 +8,20 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
 // FlowRepository implements persist.FlowRepository using PostgreSQL.
 type FlowRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // Compile-time interface assertion.
 var _ persist.FlowRepository = (*FlowRepository)(nil)
 
 // NewFlowRepository creates a new Postgres-backed flow repository.
-func NewFlowRepository(pool *pgxpool.Pool) *FlowRepository {
+func NewFlowRepository(pool pgxPool) *FlowRepository {
 	return &FlowRepository{pool: pool}
 }
 

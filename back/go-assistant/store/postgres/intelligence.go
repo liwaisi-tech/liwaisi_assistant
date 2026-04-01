@@ -5,21 +5,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
 // IntelligenceRepository implements persist.IntelligenceRepository using PostgreSQL.
 type IntelligenceRepository struct {
-	pool *pgxpool.Pool
+	pool pgxPool
 }
 
 // Compile-time interface assertion.
 var _ persist.IntelligenceRepository = (*IntelligenceRepository)(nil)
 
 // NewIntelligenceRepository creates a new Postgres-backed intelligence repository.
-func NewIntelligenceRepository(pool *pgxpool.Pool) *IntelligenceRepository {
+func NewIntelligenceRepository(pool pgxPool) *IntelligenceRepository {
 	return &IntelligenceRepository{pool: pool}
 }
 
