@@ -6,27 +6,29 @@ import { MessageInput } from './MessageInput';
 import { ConfirmClearDialog } from './ConfirmClearDialog';
 
 interface ChatContainerProps {
-  userId: string;
+  sessionId: string | null;
+  onClearConversation?: () => void;
 }
 
-export function ChatContainer({ userId }: ChatContainerProps) {
-  const { messages, sessionState, isConnected, sendMessage, clearConversation, resolveHITL, error } = useChat(userId);
+export function ChatContainer({ sessionId, onClearConversation }: ChatContainerProps) {
+  const { messages, sessionState, isConnected, sendMessage, resolveHITL, error } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
   const canClear = sessionState !== 'running' && sessionState !== 'waiting';
 
   const handleClearRequest = useCallback(() => {
+    if (!onClearConversation) return;
     if (messages.length === 0) {
-      clearConversation();
+      onClearConversation();
       return;
     }
     setShowClearDialog(true);
-  }, [messages.length, clearConversation]);
+  }, [messages.length, onClearConversation]);
 
   const handleConfirmClear = useCallback(() => {
     setShowClearDialog(false);
-    clearConversation();
-  }, [clearConversation]);
+    onClearConversation?.();
+  }, [onClearConversation]);
 
   return (
     <div className="scan-lines flex flex-col h-dvh" style={{ backgroundColor: 'var(--bg-deep)' }}>

@@ -29,6 +29,7 @@ FROM alpine:3.21
 RUN addgroup -S app && adduser -S app -G app
 
 COPY --from=builder /liwaisi-server /usr/local/bin/liwaisi-server
+COPY --from=builder /build/store/postgres/migrations /app/migrations
 
 USER app
 

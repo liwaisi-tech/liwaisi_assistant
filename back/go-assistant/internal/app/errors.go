@@ -13,3 +13,6 @@ var ErrInvalidInput = errors.New("invalid input")
 
 // ErrSessionBusy is returned when a message is sent while the CPN is already running.
 var ErrSessionBusy = errors.New("session is busy")
+
+// ErrNoPersistence is returned when an operation requires persistence but none is configured.
+var ErrNoPersistence = errors.New("persistence not configured")

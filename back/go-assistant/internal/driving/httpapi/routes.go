@@ -13,10 +13,19 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("GET /api/v1/billing/balance", h.HandleGetBalance)
 
 	// Sessions
+	mux.HandleFunc("GET /api/v1/sessions", h.HandleListSessions)
 	mux.HandleFunc("POST /api/v1/sessions", h.HandleCreateSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}", h.HandleGetSession)
+	mux.HandleFunc("PATCH /api/v1/sessions/{id}", h.HandleUpdateSession)
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", h.HandleDeleteSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/events", h.HandleSSEStream)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/execution", h.HandleGetSessionExecution)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/fork", h.HandleForkSession)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/messages", h.HandleSendMessage)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/hitl/{transitionID}", h.HandleResolveHITL)
+
+	// Flows
+	mux.HandleFunc("GET /api/v1/flows", h.HandleListFlows)
+	mux.HandleFunc("GET /api/v1/flows/{hash}", h.HandleGetFlow)
+	mux.HandleFunc("GET /api/v1/flows/{hash}/executions", h.HandleGetFlowExecutions)
 }

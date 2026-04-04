@@ -2,19 +2,17 @@ import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
-import { createSession, getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, deleteSession as apiDeleteSession, ApiError } from '../services/api';
+import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE } from './useSSE';
 
 interface ChatState {
-  sessionId: string | null;
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
 }
 
 type ChatAction =
-  | { type: 'SESSION_CREATED'; sessionId: string }
-  | { type: 'SESSION_RESTORED'; sessionId: string; messages: ChatMessage[]; state: SessionState }
+  | { type: 'SESSION_LOADED'; messages: ChatMessage[]; state: SessionState }
   | { type: 'STREAM_CHUNK'; data: StreamChunkData }
   | { type: 'USER_MESSAGE'; content: string; id: string }
   | { type: 'SESSION_COMPLETED' }
@@ -24,19 +22,16 @@ type ChatAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string }
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
-  | { type: 'CLEAR_CONVERSATION' };
+  | { type: 'RESET' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
-    case 'SESSION_CREATED':
-      return { ...state, sessionId: action.sessionId, sessionState: 'idle' };
-
-    case 'SESSION_RESTORED':
+    case 'SESSION_LOADED':
       return {
         ...state,
-        sessionId: action.sessionId,
         messages: action.messages,
         sessionState: action.state,
+        error: null,
       };
 
     case 'USER_MESSAGE':
@@ -159,7 +154,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ),
       };
 
-    case 'CLEAR_CONVERSATION':
+    case 'RESET':
       return { ...initialState };
 
     default:
@@ -168,64 +163,75 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 }
 
 const initialState: ChatState = {
-  sessionId: null,
   messages: [],
   sessionState: 'idle',
   error: null,
 };
 
-interface UseChatOptions {
+export interface UseChatOptions {
   onTransitionStarted?: (data: CPNEventData) => void;
   onTransitionCompleted?: (data: CPNEventData) => void;
   onSubNetStarted?: (data: CPNEventData) => void;
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
+  onSessionCompleted?: () => void;
 }
 
-export function useChat(userId: string, options?: UseChatOptions) {
+export interface UseChatReturn {
+  messages: ChatMessage[];
+  sessionState: SessionState;
+  sessionId: string | null;
+  isConnected: boolean;
+  sendMessage: (content: string) => Promise<void>;
+  resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
+  error: string | null;
+}
+
+export function useChat(sessionId: string | null, options?: UseChatOptions): UseChatReturn {
   const [state, dispatch] = useReducer(chatReducer, initialState);
-  const initRef = useRef(false);
+  const prevSessionIdRef = useRef<string | null>(null);
 
-  const storageKey = `liwaisi_session_${userId}`;
-
+  // Load session messages when sessionId changes
   useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
+    if (sessionId === prevSessionIdRef.current) return;
+    prevSessionIdRef.current = sessionId;
 
-    async function initSession() {
-      const savedSessionId = localStorage.getItem(storageKey);
+    if (!sessionId) {
+      dispatch({ type: 'RESET' });
+      return;
+    }
 
-      if (savedSessionId) {
-        try {
-          const session = await getSession(savedSessionId);
-          if (session.state !== 'failed') {
-            const messages: ChatMessage[] = session.messages.map((m) => ({
-              id: m.id,
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-              isStreaming: false,
-              cpnId: m.cpn_id,
-              timestamp: new Date(m.timestamp),
-            }));
-            dispatch({ type: 'SESSION_RESTORED', sessionId: session.id, messages, state: session.state });
-            return;
-          }
-        } catch {
-          // Session not found or invalid, create new one
-        }
-      }
+    let cancelled = false;
 
+    async function loadSession() {
       try {
-        const session = await createSession(userId, 'web');
-        localStorage.setItem(storageKey, session.id);
-        dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
+        const session = await getSession(sessionId!);
+        if (cancelled) return;
+        const messages: ChatMessage[] = session.messages.map((m) => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          isStreaming: false,
+          cpnId: m.cpn_id,
+          timestamp: new Date(m.timestamp),
+        }));
+        dispatch({ type: 'SESSION_LOADED', messages, state: session.state });
       } catch (err) {
-        dispatch({ type: 'SET_ERROR', error: (err as Error).message });
+        if (cancelled) return;
+        // New session with no messages yet is fine
+        if (err instanceof ApiError && err.status === 404) {
+          dispatch({ type: 'SESSION_LOADED', messages: [], state: 'idle' });
+        } else {
+          dispatch({ type: 'SET_ERROR', error: (err as Error).message });
+        }
       }
     }
 
-    initSession();
-  }, [userId, storageKey]);
+    dispatch({ type: 'RESET' });
+    loadSession();
+
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   const onStreamChunk = useCallback((data: StreamChunkData) => {
     dispatch({ type: 'STREAM_CHUNK', data });
@@ -233,14 +239,14 @@ export function useChat(userId: string, options?: UseChatOptions) {
 
   const onSessionCompleted = useCallback(() => {
     dispatch({ type: 'SESSION_COMPLETED' });
-  }, []);
+    options?.onSessionCompleted?.();
+  }, [options?.onSessionCompleted]);
 
   const onSessionFailed = useCallback(() => {
     dispatch({ type: 'SESSION_FAILED' });
   }, []);
 
   const onHITLRequested = useCallback((data: CPNEventData) => {
-    // Payload can be a string (legacy) or {prompt, content} (with intermediate output).
     let planContent = '';
     let prompt = 'Please review and confirm.';
 
@@ -252,7 +258,6 @@ export function useChat(userId: string, options?: UseChatOptions) {
       if (typeof p.content === 'string') planContent = p.content;
     }
 
-    // If there's intermediate content (e.g. a plan), show it as a regular message first.
     if (planContent) {
       dispatch({
         type: 'STREAM_CHUNK',
@@ -276,7 +281,7 @@ export function useChat(userId: string, options?: UseChatOptions) {
   }, []);
 
   const { isConnected } = useSSE({
-    sessionId: state.sessionId,
+    sessionId,
     onStreamChunk,
     onSessionCompleted,
     onSessionFailed,
@@ -290,58 +295,23 @@ export function useChat(userId: string, options?: UseChatOptions) {
 
   const handleResolveHITL = useCallback(
     async (transitionId: string, action: HITLAction) => {
-      if (!state.sessionId) return;
+      if (!sessionId) return;
       dispatch({ type: 'HITL_RESOLVED', transitionId, action });
       try {
-        await apiResolveHITL(state.sessionId, transitionId, { action });
+        await apiResolveHITL(sessionId, transitionId, { action });
       } catch (err) {
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
       }
     },
-    [state.sessionId]
+    [sessionId]
   );
-
-  const clearConversation = useCallback(async () => {
-    const oldSessionId = state.sessionId;
-
-    // Optimistic reset — UI clears immediately.
-    dispatch({ type: 'CLEAR_CONVERSATION' });
-
-    // Fire-and-forget cleanup of old session.
-    if (oldSessionId) {
-      apiDeleteSession(oldSessionId).catch(() => {});
-    }
-
-    // Create new session.
-    try {
-      const session = await createSession(userId, 'web');
-      localStorage.setItem(storageKey, session.id);
-      dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
-    } catch (err) {
-      dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to create session' });
-    }
-  }, [state.sessionId, userId, storageKey]);
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!content.trim()) return;
+      if (!content.trim() || !sessionId) return;
 
       const trimmed = content.trim();
       const id = `user-${Date.now()}`;
-
-      // If session is terminal (completed/failed), create a new session first
-      let sessionId = state.sessionId;
-      if (!sessionId || state.sessionState === 'completed') {
-        try {
-          const session = await createSession(userId, 'web');
-          sessionId = session.id;
-          localStorage.setItem(storageKey, session.id);
-          dispatch({ type: 'SESSION_CREATED', sessionId: session.id });
-        } catch (err) {
-          dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to create session' });
-          return;
-        }
-      }
 
       dispatch({ type: 'USER_MESSAGE', content: trimmed, id });
       dispatch({ type: 'SET_SENDING' });
@@ -356,16 +326,15 @@ export function useChat(userId: string, options?: UseChatOptions) {
         }
       }
     },
-    [state.sessionId, state.sessionState, userId, storageKey]
+    [sessionId]
   );
 
   return {
     messages: state.messages,
     sessionState: state.sessionState,
-    sessionId: state.sessionId,
+    sessionId,
     isConnected,
     sendMessage,
-    clearConversation,
     resolveHITL: handleResolveHITL,
     error: state.error,
   };

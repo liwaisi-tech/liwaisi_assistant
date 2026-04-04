@@ -25,6 +25,18 @@ type SessionRepository interface {
 	ListExpired(ctx context.Context, before time.Time) ([]string, error)
 	// Delete permanently removes a session.
 	Delete(ctx context.Context, sessionID string) error
+
+	// ListByUserID returns paginated session list items for a user,
+	// excluding soft-deleted and expired sessions, ordered by last_activity_at DESC.
+	// Enriched with message count and cost from JOINs.
+	ListByUserID(ctx context.Context, userID string, opts *SessionListOpts) (*Page[*SessionListItem], error)
+	// UpdateTitle sets the session title. Returns ErrSessionNotFound if absent.
+	UpdateTitle(ctx context.Context, sessionID string, title string) error
+	// SoftDelete sets deleted_at on a session. Returns ErrSessionNotFound if absent.
+	SoftDelete(ctx context.Context, sessionID string) error
+	// ForkSession atomically creates a new session copying messages from the source.
+	// Returns the new session record. The caller is responsible for in-memory session creation.
+	ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*SessionRecord, error)
 }
 
 // EventRepository manages append-only CPN event persistence (Axiom A9).
@@ -80,6 +92,16 @@ type IntelligenceRepository interface {
 	Aggregate(ctx context.Context, role string, from, to time.Time) (*RankingMetrics, error)
 	// TopFlows returns the top n flows by ranking score.
 	TopFlows(ctx context.Context, n int) ([]*RankedFlow, error)
+}
+
+// UserRepository manages authenticated user persistence.
+type UserRepository interface {
+	// Upsert creates a new user or updates an existing one by ID (Google sub).
+	Upsert(ctx context.Context, user *UserRecord) error
+	// GetByID retrieves a user by ID (Google sub). Returns ErrUserNotFound if absent.
+	GetByID(ctx context.Context, id string) (*UserRecord, error)
+	// GetByEmail retrieves a user by email. Returns ErrUserNotFound if absent.
+	GetByEmail(ctx context.Context, email string) (*UserRecord, error)
 }
 
 // HITLRepository manages human-in-the-loop pending request persistence.

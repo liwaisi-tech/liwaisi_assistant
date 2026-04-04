@@ -5,7 +5,38 @@ import (
 	"strings"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
+
+// ── Named guard functions (registered in FuncRegistry for topology serialization) ──
+
+// guardDirectConversation fires t-direct when the classifier output does NOT contain "task".
+func guardDirectConversation(tokens []*cpn.Token) bool {
+	for _, tok := range tokens {
+		if s, ok := tok.Payload.(string); ok {
+			return !strings.Contains(strings.ToLower(s), `"task"`)
+		}
+	}
+	return true
+}
+
+// guardPlanTask fires t-plan when the classifier output contains "task".
+func guardPlanTask(tokens []*cpn.Token) bool {
+	for _, tok := range tokens {
+		if s, ok := tok.Payload.(string); ok {
+			return strings.Contains(strings.ToLower(s), `"task"`)
+		}
+	}
+	return false
+}
+
+// newServerFuncRegistry creates a FuncRegistry with all topology functions registered.
+func newServerFuncRegistry() *persist.FuncRegistry {
+	r := persist.NewFuncRegistry()
+	r.RegisterGuard("guard-direct-conversation", guardDirectConversation)
+	r.RegisterGuard("guard-plan-task", guardPlanTask)
+	return r
+}
 
 // defaultTopologyFactory creates a minimal CPN topology for a session:
 // p-input → t-llm → p-output.
@@ -122,15 +153,26 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 Respond with JSON only, no explanation.
 
 Categories:
-- "conversation": greetings, casual chat, simple factual questions, clarifications, thank you messages
-- "task": requests requiring planning, multi-step work, code generation, document creation, analysis, implementation
+- "conversation": greetings, casual chat, simple one-sentence factual answers, clarifications, thank you messages
+- "task": requests that need a plan, multi-step work, guided learning, tutorials, code generation, document creation, analysis, implementation, design, architecture, or any request where the user asks you to BUILD, CREATE, DESIGN, PLAN, IMPLEMENT, HELP WITH A PROJECT, or TEACH step-by-step
+
+Rules:
+- If the user asks for a structured learning plan, guided tutorial, or step-by-step help → "task"
+- If the user asks you to create, build, design, or implement something → "task"
+- If the user just wants a quick answer or is chatting → "conversation"
+- When in doubt, classify as "task"
 
 Examples:
 User: "Hola, ¿cómo estás?" → {"intent":"conversation"}
 User: "What is a Petri net?" → {"intent":"conversation"}
+User: "Thanks!" → {"intent":"conversation"}
 User: "Create a plan to implement a CNN in R" → {"intent":"task"}
 User: "Refactor the authentication module" → {"intent":"task"}
-User: "Thanks!" → {"intent":"conversation"}
+User: "Help me learn about Coloured Petri Nets" → {"intent":"task"}
+User: "Quiero aprendizaje guiado sobre redes neuronales" → {"intent":"task"}
+User: "Design a microservices architecture" → {"intent":"task"}
+User: "Build a REST API with authentication" → {"intent":"task"}
+User: "Teach me Go concurrency step by step" → {"intent":"task"}
 
 Respond ONLY with the JSON object.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
@@ -151,14 +193,7 @@ Respond ONLY with the JSON object.`)
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
-	tDirect.Guard = func(tokens []*cpn.Token) bool {
-		for _, tok := range tokens {
-			if s, ok := tok.Payload.(string); ok {
-				return !strings.Contains(strings.ToLower(s), `"task"`)
-			}
-		}
-		return true
-	}
+	tDirect.Guard = guardDirectConversation
 
 	// t-plan: fires ONLY for explicit task intent — presents a plan for review.
 	tPlan := cpn.NewTransition("t-plan", cpn.NodeKindLLM,
@@ -170,14 +205,7 @@ Respond ONLY with the JSON object.`)
 		Temperature:  0.7,
 		StreamOutput: true,
 	}
-	tPlan.Guard = func(tokens []*cpn.Token) bool {
-		for _, tok := range tokens {
-			if s, ok := tok.Payload.(string); ok {
-				return strings.Contains(strings.ToLower(s), `"task"`)
-			}
-		}
-		return false
-	}
+	tPlan.Guard = guardPlanTask
 
 	// t-review: HITL gate — waits for user approval.
 	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,

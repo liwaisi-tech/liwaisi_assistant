@@ -31,6 +31,7 @@ type Store struct {
 	flows        persist.FlowRepository
 	intelligence persist.IntelligenceRepository
 	hitl         persist.HITLRepository
+	users        persist.UserRepository
 }
 
 // NewStore creates all persistence backends, runs migrations, and returns the facade.
@@ -72,6 +73,7 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 		flows:        NewFlowRepository(pool),
 		intelligence: NewIntelligenceRepository(pool),
 		hitl:         storeredis.NewHITLRepository(rdb),
+		users:        NewUserRepository(pool),
 	}
 
 	return s, nil
@@ -132,3 +134,6 @@ func (s *Store) Intelligence() persist.IntelligenceRepository { return s.intelli
 
 // HITL returns the HITL repository (Redis).
 func (s *Store) HITL() persist.HITLRepository { return s.hitl }
+
+// Users returns the user repository (Postgres).
+func (s *Store) Users() persist.UserRepository { return s.users }

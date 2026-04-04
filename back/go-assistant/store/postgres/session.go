@@ -219,3 +219,176 @@ func (r *SessionRepository) Delete(ctx context.Context, sessionID string) error 
 	}
 	return nil
 }
+
+func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opts *persist.SessionListOpts) (*persist.Page[*persist.SessionListItem], error) {
+	limit := 50
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := `
+		SELECT s.id, COALESCE(s.title, ''), s.state, s.last_activity_at, s.created_at,
+		       COALESCE(s.forked_from_session_id, ''),
+		       COALESCE(tl.total_cost_usd, 0),
+		       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
+		       COALESCE((SELECT content FROM messages m2 WHERE m2.session_id = s.id ORDER BY m2.timestamp DESC LIMIT 1), '')
+		FROM sessions s
+		LEFT JOIN token_ledger tl ON tl.session_id = s.id
+		WHERE s.user_id = $1 AND s.deleted_at IS NULL AND s.state != 'expired'
+		ORDER BY s.last_activity_at DESC
+		LIMIT $2`
+
+	rows, err := r.pool.Query(ctx, query, userID, limit+1)
+	if err != nil {
+		return nil, fmt.Errorf("postgres session listByUserID: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*persist.SessionListItem
+	for rows.Next() {
+		item := &persist.SessionListItem{}
+		var state string
+		if err := rows.Scan(
+			&item.ID, &item.Title, &state, &item.LastActivityAt, &item.CreatedAt,
+			&item.ForkedFromSessionID, &item.TotalCostUSD,
+			&item.MessageCount, &item.LastMessagePreview,
+		); err != nil {
+			return nil, fmt.Errorf("postgres session scan list item: %w", err)
+		}
+		item.State = persist.SessionState(state)
+		if len(item.LastMessagePreview) > 120 {
+			item.LastMessagePreview = item.LastMessagePreview[:120]
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres session listByUserID rows: %w", err)
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	page := &persist.Page[*persist.SessionListItem]{
+		Items:   items,
+		HasMore: hasMore,
+	}
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		page.NextCursor = fmt.Sprintf("%d|%s", last.LastActivityAt.UnixNano(), last.ID)
+	}
+	return page, nil
+}
+
+func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+	tag, err := r.pool.Exec(ctx, "UPDATE sessions SET title = $2 WHERE id = $1", sessionID, title)
+	if err != nil {
+		return fmt.Errorf("postgres session updateTitle: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return persist.ErrSessionNotFound
+	}
+	return nil
+}
+
+func (r *SessionRepository) SoftDelete(ctx context.Context, sessionID string) error {
+	tag, err := r.pool.Exec(ctx,
+		"UPDATE sessions SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+		sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres session softDelete: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return persist.ErrSessionNotFound
+	}
+	return nil
+}
+
+func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*persist.SessionRecord, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres session fork begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Get source session
+	var srcTitle string
+	var srcFlowHash *string
+	err = tx.QueryRow(ctx,
+		"SELECT COALESCE(title, ''), flow_hash FROM sessions WHERE id = $1",
+		sourceSessionID,
+	).Scan(&srcTitle, &srcFlowHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, persist.ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("postgres session fork get source: %w", err)
+	}
+
+	// Count source messages for validation
+	var msgCount int
+	err = tx.QueryRow(ctx,
+		"SELECT COUNT(*) FROM messages WHERE session_id = $1",
+		sourceSessionID,
+	).Scan(&msgCount)
+	if err != nil {
+		return nil, fmt.Errorf("postgres session fork count messages: %w", err)
+	}
+	if messageIndex < 0 || messageIndex >= msgCount {
+		return nil, persist.ErrInvalidInput
+	}
+
+	// Create new session
+	now := time.Now()
+	forkTitle := "Fork of: " + srcTitle
+	if srcTitle == "" {
+		forkTitle = "Forked conversation"
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO sessions (id, user_id, channel, state, created_at, last_activity_at, title, forked_from_session_id, fork_message_count, flow_hash)
+		 VALUES ($1, $2, $3, 'active', $4, $4, $5, $6, $7, $8)`,
+		newSessionID, userID, channel, now, forkTitle, sourceSessionID, messageIndex+1, srcFlowHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres session fork create: %w", err)
+	}
+
+	// Copy messages from source up to messageIndex (inclusive), ordered by timestamp
+	_, err = tx.Exec(ctx,
+		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp)
+		 SELECT
+		   $2 || '-' || row_number() OVER (ORDER BY timestamp),
+		   $2, role, content, cpn_id, cpn_role, cpn_depth, timestamp
+		 FROM (
+		   SELECT *, row_number() OVER (ORDER BY timestamp) - 1 AS rn
+		   FROM messages WHERE session_id = $1
+		 ) sub
+		 WHERE sub.rn <= $3
+		 ORDER BY sub.timestamp`,
+		sourceSessionID, newSessionID, messageIndex,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres session fork copy messages: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("postgres session fork commit: %w", err)
+	}
+
+	return &persist.SessionRecord{
+		ID:                  newSessionID,
+		UserID:              userID,
+		Channel:             channel,
+		State:               persist.SessionActive,
+		CreatedAt:           now,
+		LastActivityAt:      now,
+		Title:               forkTitle,
+		ForkedFromSessionID: sourceSessionID,
+		ForkMessageCount:    messageIndex + 1,
+	}, nil
+}

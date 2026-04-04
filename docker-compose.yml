@@ -60,6 +60,8 @@ services:
     build:
       context: front/react-assistant
       network: host
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
     container_name: liwaisi-frontend
     network_mode: host
     depends_on:

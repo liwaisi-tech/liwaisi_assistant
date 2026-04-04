@@ -38,6 +38,33 @@ type SessionRecord struct {
 	ClosedAt       *time.Time
 	Metadata       json.RawMessage
 	Messages       []*MessageRecord
+
+	// Chat management fields (migration 008).
+	Title               string     // Auto-generated or user-set chat title.
+	DeletedAt           *time.Time // Soft-delete timestamp; nil = active.
+	ForkedFromSessionID string     // Source session ID if forked; empty = original.
+	ForkMessageCount    int        // Number of messages copied at fork time.
+}
+
+// SessionListItem is a lightweight DTO for session listing.
+// Avoids loading full message history; enriched via JOINs with
+// token_ledger and messages tables.
+type SessionListItem struct {
+	ID                  string
+	Title               string
+	State               SessionState
+	LastMessagePreview  string  // First 120 chars of last message content.
+	LastActivityAt      time.Time
+	CreatedAt           time.Time
+	TotalCostUSD        float64 // From token_ledger LEFT JOIN.
+	MessageCount        int     // COUNT(messages) for this session.
+	ForkedFromSessionID string  // Empty if original.
+}
+
+// SessionListOpts provides filtering and pagination for session listing.
+type SessionListOpts struct {
+	Limit  int    // Default: 50, max: 100.
+	Cursor string // Keyset cursor: "last_activity_at_unix|session_id".
 }
 
 // MessageRecord is the persistence DTO for a conversation message.
@@ -167,6 +194,17 @@ type RankedFlow struct {
 	Role  string
 	Score float64
 	Stats FlowStats
+}
+
+// UserRecord is the persistence DTO for an authenticated user.
+// ID is Google's 'sub' claim (immutable, unique per account).
+type UserRecord struct {
+	ID        string
+	Email     string
+	Name      string
+	Picture   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // HITLPendingRequest is the persistence DTO for a pending human-in-the-loop request.

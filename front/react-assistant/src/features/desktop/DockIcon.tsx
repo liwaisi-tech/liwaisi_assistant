@@ -18,10 +18,11 @@ export function DockIcon({ label, icon, isActive = false, onClick }: DockIconPro
   }, []);
 
   const handleClick = () => {
-    if (isActive) {
-      onClick?.();
+    if (onClick) {
+      onClick();
       return;
     }
+    // No onClick handler — show "Coming Soon" tooltip.
     setShowTooltip(true);
     if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
     tooltipTimer.current = setTimeout(() => setShowTooltip(false), 2000);
@@ -50,14 +51,14 @@ export function DockIcon({ label, icon, isActive = false, onClick }: DockIconPro
 
       <button
         onClick={handleClick}
-        className="dock-icon group flex flex-col items-center gap-1 px-2.5 py-1.5 rounded-xl transition-all duration-200 ease-out"
+        className="dock-icon group flex flex-col items-center gap-0.5 px-1.5 py-1 rounded-lg transition-all duration-200 ease-out"
         style={{
           color: isActive ? 'var(--accent)' : 'var(--text-muted)',
         }}
         aria-label={label}
       >
         <div
-          className="w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-200"
+          className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-200"
           style={{
             backgroundColor: isActive ? 'rgba(14, 165, 233, 0.12)' : 'rgba(255,255,255,0.03)',
             border: isActive ? '1px solid rgba(14, 165, 233, 0.3)' : '1px solid transparent',
@@ -66,7 +67,7 @@ export function DockIcon({ label, icon, isActive = false, onClick }: DockIconPro
           {icon}
         </div>
         <span
-          className="text-[9px] font-medium tracking-wide transition-colors duration-200"
+          className="text-[8px] font-medium tracking-wide transition-colors duration-200"
           style={{
             fontFamily: "'JetBrains Mono', monospace",
             color: isActive ? 'var(--accent)' : 'var(--text-muted)',
