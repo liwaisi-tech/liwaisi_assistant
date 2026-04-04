@@ -19,13 +19,13 @@ const MaxToolCallIterations = 10
 //  4. LLM call — Complete() via c.LLMClient
 //  5. Tool-call loop — if LLM requests tools, execute and re-call
 //  6. Deposit output — stamp metadata, deposit to OutputPlaces
-func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
 	if t.LLMConfig == nil {
-		return fmt.Errorf("transition %s: nil LLMConfig", t.ID)
+		return 0, fmt.Errorf("transition %s: nil LLMConfig", t.ID)
 	}
 
 	if c.LLMClient == nil {
-		return fmt.Errorf("transition %s: nil LLMClient on CPN", t.ID)
+		return 0, fmt.Errorf("transition %s: nil LLMClient on CPN", t.ID)
 	}
 
 	// Step 1: Context assembly (Axiom A12).
@@ -98,7 +98,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	if t.LLMConfig.Budget > 0 {
 		estimatedCost, err := c.LLMClient.EstimateCost(req)
 		if err == nil && estimatedCost > t.LLMConfig.Budget {
-			return fmt.Errorf("transition %s: estimated cost $%.4f exceeds budget $%.4f: %w",
+			return 0, fmt.Errorf("transition %s: estimated cost $%.4f exceeds budget $%.4f: %w",
 				t.ID, estimatedCost, t.LLMConfig.Budget, ErrBudgetExceeded)
 		}
 		// If EstimateCost errors, graceful degradation — proceed with the call.
@@ -107,6 +107,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	// Step 3: LLM call.
 	var resp LLMResponse
 	var err error
+	var totalCostUSD float64
 
 	streamOutput := t.LLMConfig.StreamOutput
 	var onChunk func(string)
@@ -132,16 +133,19 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 		resp, err = c.LLMClient.Complete(ctx, req)
 	}
 	if err != nil {
-		return fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
+		return 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
+	totalCostUSD += resp.CostUSD
 
 	// Step 4: Tool-call loop.
 	var content string
 	if len(resp.ToolCalls) > 0 {
-		content, err = handleToolCalls(ctx, &resp, t, c, messages, streamOutput, onChunk)
+		var loopCost float64
+		content, loopCost, err = handleToolCalls(ctx, &resp, t, c, messages, streamOutput, onChunk)
 		if err != nil {
-			return err
+			return totalCostUSD, err
 		}
+		totalCostUSD += loopCost
 	} else {
 		content = resp.Content
 	}
@@ -220,21 +224,21 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) error
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return totalCostUSD, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 		tok := result // copy per output place
 		tok.Space = p.Space
 		if err := p.Deposit(&tok); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return totalCostUSD, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 	}
 
-	return nil
+	return totalCostUSD, nil
 }
 
 // handleToolCalls executes the agentic tool-call loop.
 // Returns the final content string when the LLM stops requesting tools.
-func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage, streamOutput bool, onChunk func(string)) (string, error) {
+func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage, streamOutput bool, onChunk func(string)) (content string, costUSD float64, err error) {
 	// Build allowlist for O(1) lookup (PAT-003).
 	allowed := make(map[string]bool, len(t.LLMTools))
 	for _, id := range t.LLMTools {
@@ -252,11 +256,13 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 		loopTools = append(loopTools, &schema)
 	}
 
+	var loopCost float64
+
 	for i := range MaxToolCallIterations {
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", loopCost, ctx.Err()
 		default:
 		}
 
@@ -271,7 +277,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 		for _, tc := range resp.ToolCalls {
 			// SEC-002: Enforce tool allowlist.
 			if !allowed[tc.ToolName] {
-				return "", fmt.Errorf("transition %s: tool %q not in allowlist: %w",
+				return "", loopCost, fmt.Errorf("transition %s: tool %q not in allowlist: %w",
 					t.ID, tc.ToolName, ErrDisallowedTool)
 			}
 
@@ -335,17 +341,18 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			newResp, err = c.LLMClient.Complete(ctx, req)
 		}
 		if err != nil {
-			return "", fmt.Errorf("transition %s: LLM re-call (iteration %d): %w", t.ID, i+1, err)
+			return "", loopCost, fmt.Errorf("transition %s: LLM re-call (iteration %d): %w", t.ID, i+1, err)
 		}
+		loopCost += newResp.CostUSD
 		resp = &newResp
 
 		// If no more tool calls, return the content.
 		if len(resp.ToolCalls) == 0 {
-			return resp.Content, nil
+			return resp.Content, loopCost, nil
 		}
 	}
 
-	return "", fmt.Errorf("transition %s: %w", t.ID, ErrToolCallLoopExceeded)
+	return "", loopCost, fmt.Errorf("transition %s: %w", t.ID, ErrToolCallLoopExceeded)
 }
 
 // formatTokenPayload converts consumed tokens into a user message string.

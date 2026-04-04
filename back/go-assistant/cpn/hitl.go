@@ -44,10 +44,10 @@ type HITLConfig struct {
 //  6. Set StateRunning, notify group, emit EventHITLResolved
 //  7. Deposit token into OutputPlaces (space bridging)
 //  8. Check Centaurian mode switch
-func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
+func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) (float64, error) {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
-		return fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
+		return 0, fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
 	}
 
 	// REQ-002: Emit EventHITLRequested with the prompt before blocking.
@@ -76,17 +76,17 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 	case <-ctx.Done():
 		// REQ-011: Context cancellation → StateFailed, ErrTimeout.
 		c.setFailed(ErrTimeout)
-		return ErrTimeout
+		return 0, ErrTimeout
 	}
 
 	// REQ-006: Received token MUST have Color == ColorHuman.
 	if tok.Color != ColorHuman {
-		return fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
+		return 0, fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
 	}
 
 	// REQ-007: If token payload is HITLResponse{Action: HITLReject}, return ErrHITLRejected.
 	if resp, ok := tok.Payload.(HITLResponse); ok && resp.Action == HITLReject {
-		return ErrHITLRejected
+		return 0, ErrHITLRejected
 	}
 
 	// REQ-008: Set StateRunning, emit EventHITLResolved.
@@ -109,7 +109,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 
 		// GUD-001: Space bridging — HITL is the sanctioned boundary crossing
@@ -125,7 +125,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 		out.Timestamp = time.Now()
 
 		if err := p.Deposit(&out); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 
 		// REQ-010: Track if any output place is SpaceComputation.
@@ -139,7 +139,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 		c.switchModeToCentaurian()
 	}
 
-	return nil
+	return 0, nil
 }
 
 // fireHITLWithRevision executes a multi-round HITL revision loop.
@@ -152,10 +152,10 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 //  5. Approve -> deposit + exit | Reject -> error | Revise -> LLM correction -> loop
 //
 // Bounded by MaxRevisions. Context cancellation unblocks at every round.
-func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
+func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token) (float64, error) {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
-		return fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
+		return 0, fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
 	}
 
 	prompt := cfg.Prompt
@@ -187,12 +187,12 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 		case tok = <-cfg.Channel:
 		case <-ctx.Done():
 			c.setFailed(ErrTimeout)
-			return ErrTimeout
+			return 0, ErrTimeout
 		}
 
 		// Validate color.
 		if tok.Color != ColorHuman {
-			return fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
+			return 0, fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
 		}
 
 		// REQ-014: Set StateRunning after receiving.
@@ -212,7 +212,7 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 			// GUD-004: Bare string treated as approve for backward compat.
 			resp = HITLResponse{Action: HITLApprove, Content: v}
 		default:
-			return fmt.Errorf("transition %s: unsupported HITL payload type %T", t.ID, tok.Payload)
+			return 0, fmt.Errorf("transition %s: unsupported HITL payload type %T", t.ID, tok.Payload)
 		}
 
 		// PAT-002: Action dispatch.
@@ -225,22 +225,22 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 				TransitionKind: NodeKindHITL,
 				Token:          &tok,
 			})
-			return depositHITLRevision(t, c, &tok)
+			return 0, depositHITLRevision(t, c, &tok)
 
 		case HITLReject:
 			// REQ-003: Reject returns error.
-			return ErrHITLRejected
+			return 0, ErrHITLRejected
 
 		case HITLRevise:
 			// REQ-005: Check MaxRevisions cap.
 			if rounds >= cfg.MaxRevisions {
-				return ErrHITLMaxRevisions
+				return 0, ErrHITLMaxRevisions
 			}
 
 			// REQ-011: Validate correction transition exists.
 			corrTransition, ok := c.Transitions[cfg.CorrectionLLMID]
 			if !ok {
-				return fmt.Errorf("transition %s: correction LLM transition %s not found", t.ID, cfg.CorrectionLLMID)
+				return 0, fmt.Errorf("transition %s: correction LLM transition %s not found", t.ID, cfg.CorrectionLLMID)
 			}
 
 			// REQ-007: Call correction LLM via fireLLMDirect.
@@ -250,7 +250,7 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 			}
 			revised, err := fireLLMDirect(ctx, corrTransition, c, &feedbackToken)
 			if err != nil {
-				return fmt.Errorf("transition %s: revision LLM (round %d): %w", t.ID, rounds, err)
+				return 0, fmt.Errorf("transition %s: revision LLM (round %d): %w", t.ID, rounds, err)
 			}
 
 			// Update prompt with revised text.
@@ -259,7 +259,7 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 			continue
 
 		default:
-			return fmt.Errorf("transition %s: unknown HITL action %q", t.ID, resp.Action)
+			return 0, fmt.Errorf("transition %s: unknown HITL action %q", t.ID, resp.Action)
 		}
 	}
 }

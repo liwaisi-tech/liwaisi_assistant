@@ -676,7 +676,7 @@ func TestDispatch_NodeKindTool(t *testing.T) {
 	c := NewCPN("test", "w", 0, ModeMAS, "s", places, nil)
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "x"}}
 
-	err := dispatch(context.Background(), tr, c, consumed)
+	_, err := dispatch(context.Background(), tr, c, consumed)
 	if err != nil {
 		t.Fatalf("dispatch() error = %v", err)
 	}
@@ -694,7 +694,7 @@ func TestDispatch_UnsupportedKinds(t *testing.T) {
 	for _, kind := range kinds {
 		t.Run(string(kind), func(t *testing.T) {
 			tr := NewTransition("T:X", kind, []string{"P:IN"}, []string{"P:OUT"})
-			err := dispatch(context.Background(), tr, c, consumed)
+			_, err := dispatch(context.Background(), tr, c, consumed)
 			if !errors.Is(err, ErrInvalidNodeKind) {
 				t.Fatalf("dispatch(%s) error = %v, want ErrInvalidNodeKind", kind, err)
 			}
@@ -707,7 +707,7 @@ func TestDispatch_UnknownKind(t *testing.T) {
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "x"}}
 
 	tr := NewTransition("T:X", NodeKind("unknown"), []string{"P:IN"}, []string{"P:OUT"})
-	err := dispatch(context.Background(), tr, c, consumed)
+	_, err := dispatch(context.Background(), tr, c, consumed)
 	if !errors.Is(err, ErrInvalidNodeKind) {
 		t.Fatalf("dispatch(unknown) error = %v, want ErrInvalidNodeKind", err)
 	}
@@ -725,7 +725,7 @@ func TestFireTool_Success(t *testing.T) {
 	c := NewCPN("cpn-1", "w", 1, ModeMAS, "sess-1", places, nil)
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "hi"}}
 
-	err := fireTool(context.Background(), tr, c, consumed)
+	_, err := fireTool(context.Background(), tr, c, consumed)
 	if err != nil {
 		t.Fatalf("fireTool() error = %v", err)
 	}
@@ -746,7 +746,7 @@ func TestFireTool_NilExecutor(t *testing.T) {
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "x"}}
 
-	err := fireTool(context.Background(), tr, c, consumed)
+	_, err := fireTool(context.Background(), tr, c, consumed)
 	if err == nil {
 		t.Fatal("fireTool() error = nil, want error for nil Executor")
 	}
@@ -759,7 +759,7 @@ func TestFireTool_ExecutorError(t *testing.T) {
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 	consumed := []Token{{Color: ColorString, Space: SpaceSurface, Payload: "x"}}
 
-	err := fireTool(context.Background(), tr, c, consumed)
+	_, err := fireTool(context.Background(), tr, c, consumed)
 	if err == nil {
 		t.Fatal("fireTool() error = nil, want error")
 	}
@@ -771,7 +771,7 @@ func TestFireTool_NoConsumedTokens(t *testing.T) {
 
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 
-	err := fireTool(context.Background(), tr, c, []Token{})
+	_, err := fireTool(context.Background(), tr, c, []Token{})
 	if err == nil {
 		t.Fatal("fireTool() error = nil, want error for empty consumed")
 	}

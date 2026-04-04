@@ -476,3 +476,79 @@ body {
 .suggestion-chip:active {
   transform: translateY(0);
 }
+
+/* ============================================
+   Execution Monitor — mission control overlay
+   ============================================ */
+
+/* -- Firing pulse (GPU composited) -- */
+@keyframes firing-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--firing-color, #0ea5e9); }
+  50% { box-shadow: 0 0 20px var(--firing-color, #0ea5e9), 0 0 40px color-mix(in srgb, var(--firing-color, #0ea5e9) 30%, transparent); }
+}
+
+.transition-firing {
+  animation: firing-pulse 0.8s ease-in-out infinite;
+}
+
+/* -- Completed flash -- */
+@keyframes completed-flash {
+  0% { box-shadow: 0 0 24px #10b981, 0 0 48px #10b98160; }
+  100% { box-shadow: none; }
+}
+
+.transition-completed-flash {
+  animation: completed-flash 0.5s ease-out forwards;
+}
+
+/* -- Failed glow -- */
+.transition-failed {
+  box-shadow: 0 0 12px #ef444480, 0 0 24px #ef444430 !important;
+}
+
+/* -- Token badge pulse -- */
+@keyframes token-badge-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+.token-badge-pulse {
+  animation: token-badge-pulse 0.3s ease-out;
+}
+
+/* -- Cost counter increment -- */
+@keyframes cost-tick {
+  from { color: #10b981; }
+  to { color: var(--accent); }
+}
+
+.cost-tick {
+  animation: cost-tick 0.4s ease-out;
+}
+
+/* -- Timeline dot hover -- */
+.timeline-dot {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.timeline-dot:hover {
+  transform: scale(2);
+  z-index: 10;
+}
+
+/* -- Monitor scrollbar -- */
+.monitor-scroll::-webkit-scrollbar { width: 4px; }
+.monitor-scroll::-webkit-scrollbar-track { background: transparent; }
+.monitor-scroll::-webkit-scrollbar-thumb { background: var(--border-dim); border-radius: 2px; }
+.monitor-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* -- Inspector slide-in -- */
+@keyframes inspector-slide {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.inspector-enter {
+  animation: inspector-slide 0.2s ease-out forwards;
+}

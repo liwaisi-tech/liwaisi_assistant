@@ -32,7 +32,41 @@ const (
 
 	// EventStreamChunk is emitted for each chunk of an LLM streaming response.
 	EventStreamChunk EventType = "stream_chunk"
+
+	// EventTransitionStarted is emitted after tokens are consumed from input
+	// places and before the transition dispatch goroutine begins execution.
+	// Carries a TransitionStartedPayload with input token snapshots.
+	EventTransitionStarted EventType = "transition_started"
+
+	// EventTransitionCompleted is emitted after the transition dispatch
+	// returns (success or failure). Carries a TransitionCompletedPayload
+	// with output token snapshots, cost, duration, and optional error.
+	EventTransitionCompleted EventType = "transition_completed"
 )
+
+// TransitionStartedPayload captures input tokens consumed before firing.
+type TransitionStartedPayload struct {
+	InputTokens []TokenSnapshot `json:"input_tokens"`
+}
+
+// TransitionCompletedPayload captures results after a transition fires.
+type TransitionCompletedPayload struct {
+	OutputTokens []TokenSnapshot `json:"output_tokens"`
+	CostUSD      float64         `json:"cost_usd"`
+	DurationMs   int64           `json:"duration_ms"`
+	Error        string          `json:"error,omitempty"`
+}
+
+// TokenSnapshot is a serializable, truncated representation of a Token.
+// Used in event payloads to provide observability without transmitting
+// full (potentially large) payloads.
+type TokenSnapshot struct {
+	Color          string `json:"color"`
+	PayloadPreview string `json:"payload_preview"`
+	Space          string `json:"space"`
+	OriginID       string `json:"origin_id"`
+	OriginKind     string `json:"origin_kind"`
+}
 
 // Event is an append-only record emitted by transitions and sub-CPNs,
 // consumed by observer transitions in the observation space.

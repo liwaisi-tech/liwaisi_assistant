@@ -174,7 +174,15 @@ const initialState: ChatState = {
   error: null,
 };
 
-export function useChat(userId: string) {
+interface UseChatOptions {
+  onTransitionStarted?: (data: CPNEventData) => void;
+  onTransitionCompleted?: (data: CPNEventData) => void;
+  onSubNetStarted?: (data: CPNEventData) => void;
+  onSubNetCompleted?: (data: CPNEventData) => void;
+  onSubNetFailed?: (data: CPNEventData) => void;
+}
+
+export function useChat(userId: string, options?: UseChatOptions) {
   const [state, dispatch] = useReducer(chatReducer, initialState);
   const initRef = useRef(false);
 
@@ -273,6 +281,11 @@ export function useChat(userId: string) {
     onSessionCompleted,
     onSessionFailed,
     onHITLRequested,
+    onTransitionStarted: options?.onTransitionStarted,
+    onTransitionCompleted: options?.onTransitionCompleted,
+    onSubNetStarted: options?.onSubNetStarted,
+    onSubNetCompleted: options?.onSubNetCompleted,
+    onSubNetFailed: options?.onSubNetFailed,
   });
 
   const handleResolveHITL = useCallback(

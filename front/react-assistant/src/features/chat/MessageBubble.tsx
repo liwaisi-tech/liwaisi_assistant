@@ -4,6 +4,7 @@ import type { HITLAction } from '../../types/chat';
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
   content: string;
+  cpnId?: string;
   cpnRole?: string;
   timestamp: Date;
   isStreaming?: boolean;
@@ -11,11 +12,12 @@ interface MessageBubbleProps {
   hitlActions?: HITLAction[];
   hitlResolved?: HITLAction;
   onHITLAction?: (transitionId: string, action: HITLAction) => void;
+  onOpenMonitor?: () => void;
 }
 
 export function MessageBubble({
-  role, content, cpnRole, timestamp, isStreaming,
-  hitlTransitionId, hitlActions, hitlResolved, onHITLAction,
+  role, content, cpnId, cpnRole, timestamp, isStreaming,
+  hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const isUser = role === 'user';
 
@@ -31,10 +33,29 @@ export function MessageBubble({
         }}
       >
         {!isUser && cpnRole && (
-          <span className="block text-[10px] font-medium uppercase tracking-widest mb-1.5"
-                style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
-            {cpnRole}
-          </span>
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-widest"
+                  style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
+              {cpnRole}
+            </span>
+            {cpnId && !isStreaming && onOpenMonitor && (
+              <button
+                onClick={onOpenMonitor}
+                className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full transition-all"
+                style={{
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent)',
+                  background: 'rgba(14, 165, 233, 0.08)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  cursor: 'pointer',
+                  letterSpacing: '0.03em',
+                }}
+                title="Open CPN execution monitor"
+              >
+                CPN
+              </button>
+            )}
+          </div>
         )}
 
         {isUser ? (

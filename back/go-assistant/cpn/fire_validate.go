@@ -50,13 +50,13 @@ const correctionSystemPrompt = "You are a JSON correction assistant. Fix the JSO
 //  2. On success: apply OnSuccess transform, deposit to OutputPlaces
 //  3. On failure + corrections available: call correction LLM, re-validate
 //  4. On failure + corrections exhausted: ErrorPlace routing or ErrValidationFailed
-func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
 	if t.ValidateConfig == nil {
-		return fmt.Errorf("transition %s: nil ValidateConfig", t.ID)
+		return 0, fmt.Errorf("transition %s: nil ValidateConfig", t.ID)
 	}
 
 	if len(consumed) == 0 {
-		return fmt.Errorf("transition %s: no consumed tokens", t.ID)
+		return 0, fmt.Errorf("transition %s: no consumed tokens", t.ID)
 	}
 
 	cfg := t.ValidateConfig
@@ -67,7 +67,7 @@ func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) 
 	err := validatePayload(payload, cfg)
 	if err == nil {
 		// Valid on first try — deposit.
-		return depositValidated(t, c, payload, originalColor, cfg)
+		return 0, depositValidated(t, c, payload, originalColor, cfg)
 	}
 
 	// Step 2: Correction loop.
@@ -75,37 +75,40 @@ func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) 
 
 	if maxCorr <= 0 || cfg.CorrectionLLMID == "" {
 		// No corrections available — route error.
-		return routeValidationError(t, c, err, payload)
+		return 0, routeValidationError(t, c, err, payload)
 	}
 
 	currentPayload := payload
 	lastErr := err
+	var totalCorrectionCost float64
 
 	for i := range maxCorr {
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return totalCorrectionCost, ctx.Err()
 		default:
 		}
 
 		// Call correction LLM.
 		corrected, corrErr := callCorrectionLLM(ctx, c, cfg.CorrectionLLMID, currentPayload, lastErr.Error())
 		if corrErr != nil {
-			return fmt.Errorf("transition %s: correction LLM (iteration %d): %w", t.ID, i+1, corrErr)
+			return totalCorrectionCost, fmt.Errorf("transition %s: correction LLM (iteration %d): %w", t.ID, i+1, corrErr)
 		}
+		// Note: callCorrectionLLM uses c.LLMClient.Complete directly;
+		// cost is tracked at session level via CostProvider, not per-call here.
 
 		// Re-validate corrected output.
 		currentPayload = corrected
 		lastErr = validatePayload(currentPayload, cfg)
 		if lastErr == nil {
 			// Correction succeeded — deposit.
-			return depositValidated(t, c, currentPayload, originalColor, cfg)
+			return totalCorrectionCost, depositValidated(t, c, currentPayload, originalColor, cfg)
 		}
 	}
 
 	// All corrections exhausted.
-	return routeValidationError(t, c, lastErr, payload)
+	return totalCorrectionCost, routeValidationError(t, c, lastErr, payload)
 }
 
 // depositValidated applies OnSuccess and deposits to all OutputPlaces.

@@ -120,6 +120,20 @@ func (c *CPN) Run(ctx context.Context) error {
 			}
 		}
 
+		// Emit transition_started events on the main goroutine (CON-001).
+		for _, f := range firings {
+			snapshots := make([]TokenSnapshot, len(f.consumed))
+			for i := range f.consumed {
+				snapshots[i] = f.consumed[i].Snapshot()
+			}
+			c.emit(&Event{
+				Type:           EventTransitionStarted,
+				TransitionID:   f.transition.ID,
+				TransitionKind: f.transition.Kind,
+				Payload:        TransitionStartedPayload{InputTokens: snapshots},
+			})
+		}
+
 		// PAT-003: WaitGroup + error channel.
 		var wg sync.WaitGroup
 		errCh := make(chan fireResult, len(firings))
@@ -128,10 +142,40 @@ func (c *CPN) Run(ctx context.Context) error {
 			wg.Add(1)
 			go func(t *Transition, consumed []Token) {
 				defer wg.Done()
+				start := time.Now()
 				// REQ-008: fireWithRetry integrates Block 4 retry.
-				err := fireWithRetry(ctx, t.Retry, t.CircuitBreaker(), func() error {
+				costUSD, err := fireWithRetry(ctx, t.Retry, t.CircuitBreaker(), func() (float64, error) {
 					return dispatch(ctx, t, c, consumed)
 				})
+				elapsed := time.Since(start)
+
+				// Snapshot output places to capture produced tokens.
+				var outputSnaps []TokenSnapshot
+				for _, pid := range t.OutputPlaces {
+					if p, ok := c.Places[pid]; ok {
+						toks, _ := p.Peek()
+						for _, tok := range toks {
+							outputSnaps = append(outputSnaps, tok.Snapshot())
+						}
+					}
+				}
+
+				// Emit transition_completed (CON-002: inside fire goroutine).
+				payload := TransitionCompletedPayload{
+					OutputTokens: outputSnaps,
+					CostUSD:      costUSD,
+					DurationMs:   elapsed.Milliseconds(),
+				}
+				if err != nil {
+					payload.Error = err.Error()
+				}
+				c.emit(&Event{
+					Type:           EventTransitionCompleted,
+					TransitionID:   t.ID,
+					TransitionKind: t.Kind,
+					Payload:        payload,
+				})
+
 				if err != nil {
 					errCh <- fireResult{transitionID: t.ID, err: err}
 				}
@@ -263,7 +307,7 @@ func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 // NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10),
 // NodeKindSubNet (Block 12), NodeKindHITL (Block 14), and NodeKindHITL
 // with RevisionLoop (Block 15) are implemented.
-func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
 	switch t.Kind {
 	case NodeKindTool:
 		return fireTool(ctx, t, c, consumed)
@@ -279,27 +323,28 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) erro
 		}
 		return fireHITL(ctx, t, c, consumed)
 	case NodeKindObserver:
-		return fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
+		return 0, fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
 	default:
-		return fmt.Errorf("%w: unknown kind %q", ErrInvalidNodeKind, t.Kind)
+		return 0, fmt.Errorf("%w: unknown kind %q", ErrInvalidNodeKind, t.Kind)
 	}
 }
 
 // fireTool executes a NodeKindTool transition.
 // REQ-016: Calls t.Executor, stamps origin metadata, deposits result in OutputPlaces.
-func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+// Returns (0, error) — tool transitions have no LLM cost.
+func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
 	if t.Executor == nil {
-		return fmt.Errorf("transition %s: nil Executor", t.ID)
+		return 0, fmt.Errorf("transition %s: nil Executor", t.ID)
 	}
 
 	if len(consumed) == 0 {
-		return fmt.Errorf("transition %s: no consumed tokens", t.ID)
+		return 0, fmt.Errorf("transition %s: no consumed tokens", t.ID)
 	}
 
 	// Call the tool executor with the first consumed token.
 	result, err := t.Executor(ctx, consumed[0])
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// REQ-019: Stamp origin metadata.
@@ -313,13 +358,13 @@ func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) erro
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 		tok := result // copy per output place
 		if err := p.Deposit(&tok); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 	}
 
-	return nil
+	return 0, nil
 }

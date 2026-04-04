@@ -63,6 +63,86 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// ── Flow & Execution Responses ─────────────────────────────────────────────
+
+// FlowSummaryResponse is a flow in a list view.
+type FlowSummaryResponse struct {
+	Hash           string  `json:"hash"`
+	Role           string  `json:"role"`
+	ExecutionCount int64   `json:"execution_count"`
+	SuccessRate    float64 `json:"success_rate"`
+	AvgCostUSD     float64 `json:"avg_cost_usd"`
+	AvgDurationMs  int64   `json:"avg_duration_ms"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
+// FlowListResponse is the paginated list of flows.
+type FlowListResponse struct {
+	Items      []FlowSummaryResponse `json:"items"`
+	HasMore    bool                  `json:"has_more"`
+	NextCursor string                `json:"next_cursor"`
+}
+
+// FlowStatsResponse holds execution statistics.
+type FlowStatsResponse struct {
+	ExecutionCount int64   `json:"execution_count"`
+	SuccessRate    float64 `json:"success_rate"`
+	AvgCostUSD     float64 `json:"avg_cost_usd"`
+	AvgDurationMs  int64   `json:"avg_duration_ms"`
+}
+
+// FlowDetailResponse is the full flow with topology.
+type FlowDetailResponse struct {
+	Hash      string            `json:"hash"`
+	Role      string            `json:"role"`
+	Topology  json.RawMessage   `json:"topology"`
+	Stats     FlowStatsResponse `json:"stats"`
+	CreatedAt string            `json:"created_at"`
+	UpdatedAt string            `json:"updated_at"`
+}
+
+// ExecutionRecordResponse is a single execution record.
+type ExecutionRecordResponse struct {
+	ID               string  `json:"id"`
+	CPNID            string  `json:"cpn_id"`
+	SessionID        string  `json:"session_id"`
+	TransitionsFired int     `json:"transitions_fired"`
+	LLMCalls         int     `json:"llm_calls"`
+	ToolCalls        int     `json:"tool_calls"`
+	TokensProduced   int     `json:"tokens_produced"`
+	TotalCostUSD     float64 `json:"total_cost_usd"`
+	DurationMs       int64   `json:"duration_ms"`
+	Success          bool    `json:"success"`
+	StartedAt        string  `json:"started_at"`
+	CompletedAt      string  `json:"completed_at"`
+}
+
+// ExecutionListResponse is a list of execution records.
+type ExecutionListResponse struct {
+	Items []ExecutionRecordResponse `json:"items"`
+}
+
+// EventResponse is a single event in an execution trace.
+type EventResponse struct {
+	ID             string          `json:"id"`
+	Type           string          `json:"type"`
+	TransitionID   string          `json:"transition_id"`
+	TransitionKind string          `json:"transition_kind"`
+	CPNID          string          `json:"cpn_id"`
+	CPNDepth       int             `json:"cpn_depth"`
+	CPNRole        string          `json:"cpn_role"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	TokenSnapshot  json.RawMessage `json:"token_snapshot,omitempty"`
+	Timestamp      string          `json:"timestamp"`
+}
+
+// SessionExecutionResponse is the execution trace for a session.
+type SessionExecutionResponse struct {
+	SessionID string          `json:"session_id"`
+	Events    []EventResponse `json:"events"`
+}
+
 // BalanceResponse is the billing balance response.
 type BalanceResponse struct {
 	LimitRemaining *float64 `json:"limit_remaining"`

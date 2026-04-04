@@ -20,7 +20,7 @@ const SubNetEventBusCapacity = 64
 // compressed summary is added to the parent's history.
 //
 // The parent does NOT block — it continues its executor loop while the child runs.
-func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Token) error {
+func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Token) (float64, error) {
 	// REQ-001/CON-003: SubNetFactory takes precedence over SubNet.
 	var child *CPN
 	var err error
@@ -28,21 +28,21 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 	case t.SubNetFactory != nil:
 		child = t.SubNetFactory()
 		if child == nil {
-			return fmt.Errorf("transition %s: SubNetFactory returned nil", t.ID)
+			return 0, fmt.Errorf("transition %s: SubNetFactory returned nil", t.ID)
 		}
 	case t.SubNet != nil:
 		child, err = cloneCPN(t.SubNet)
 		if err != nil {
-			return fmt.Errorf("transition %s: cloneCPN: %w", t.ID, err)
+			return 0, fmt.Errorf("transition %s: cloneCPN: %w", t.ID, err)
 		}
 	default:
-		return fmt.Errorf("transition %s: neither SubNet nor SubNetFactory configured", t.ID)
+		return 0, fmt.Errorf("transition %s: neither SubNet nor SubNetFactory configured", t.ID)
 	}
 
 	// REQ-002: Set child metadata.
 	childID, err := newUUID()
 	if err != nil {
-		return fmt.Errorf("transition %s: %w", t.ID, err)
+		return 0, fmt.Errorf("transition %s: %w", t.ID, err)
 	}
 	child.ID = childID
 	child.Depth = parent.Depth + 1
@@ -173,7 +173,7 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 		})
 	})
 
-	return nil
+	return 0, nil
 }
 
 // cloneCPN creates a new CPN from a prototype.
