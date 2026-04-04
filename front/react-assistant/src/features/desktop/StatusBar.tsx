@@ -5,6 +5,7 @@ import { BalanceWidget } from '../billing/BalanceWidget';
 interface StatusBarProps {
   sessionState: SessionState;
   isConnected: boolean;
+  activeApp?: 'chat' | 'flows' | 'monitor';
 }
 
 const stateConfig: Record<SessionState, { label: string; className: string }> = {
@@ -15,7 +16,13 @@ const stateConfig: Record<SessionState, { label: string; className: string }> = 
   failed:    { label: 'Failed',    className: 'bg-red-500/20 text-red-400' },
 };
 
-export function StatusBar({ sessionState, isConnected }: StatusBarProps) {
+const appLabels: Record<string, string> = {
+  chat: 'Chat',
+  flows: 'Flows',
+  monitor: 'Monitor',
+};
+
+export function StatusBar({ sessionState, isConnected, activeApp = 'chat' }: StatusBarProps) {
   const state = stateConfig[sessionState];
   const { user, logout } = useAuth();
 
@@ -53,8 +60,20 @@ export function StatusBar({ sessionState, isConnected }: StatusBarProps) {
         </div>
       </div>
 
-      {/* Center: Status indicators */}
+      {/* Center: Mode breadcrumb + Status indicators */}
       <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3">
+        {/* Mode breadcrumb */}
+        <span
+          className="text-[10px] font-medium tracking-wider uppercase px-2 py-0.5 rounded"
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            color: 'var(--text-muted)',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+          }}
+        >
+          {appLabels[activeApp]}
+        </span>
+
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium ${state.className}`}>
           {sessionState === 'running' && (
             <span className="w-1.5 h-1.5 rounded-full bg-sky-400 status-pulse" />
@@ -68,6 +87,19 @@ export function StatusBar({ sessionState, isConnected }: StatusBarProps) {
             {isConnected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
+
+        {/* Cmd+K hint */}
+        <span
+          className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px]"
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            color: 'var(--text-muted)',
+            backgroundColor: 'var(--bg-input)',
+            border: '1px solid var(--border-dim)',
+          }}
+        >
+          ⌘K
+        </span>
       </div>
 
       {/* Right: User + Balance */}

@@ -247,9 +247,12 @@ interface ChatSidebarProps {
   onDelete: (id: string) => void;
   onFork: (id: string) => void;
   onLoadMore: () => void;
+  /** When true, renders only the header + list without the outer shell (for embedding in NavigationRail) */
+  embedded?: boolean;
 }
 
-export function ChatSidebar({
+/** Inner content: header + scrollable chat list. Used standalone or embedded. */
+function ChatSidebarContent({
   chats,
   activeSessionId,
   isLoading,
@@ -260,11 +263,9 @@ export function ChatSidebar({
   onDelete,
   onFork,
   onLoadMore,
-}: ChatSidebarProps) {
-  const [isOpen, setIsOpen] = useState(true);
+}: Omit<ChatSidebarProps, 'embedded'>) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Infinite scroll
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el || !hasMore || isLoading) return;
@@ -272,6 +273,83 @@ export function ChatSidebar({
       onLoadMore();
     }
   }, [hasMore, isLoading, onLoadMore]);
+
+  return (
+    <>
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b flex-none"
+        style={{ borderColor: 'var(--border-dim)' }}
+      >
+        <h2
+          className="text-sm font-semibold tracking-wide"
+          style={{
+            color: 'var(--text-primary)',
+            fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+          }}
+        >
+          Chats
+        </h2>
+        <button
+          onClick={onCreate}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors hover:bg-white/5"
+          style={{ color: 'var(--accent)' }}
+          aria-label="New chat"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          New
+        </button>
+      </div>
+
+      {/* Chat list */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto chat-scroll py-1.5"
+        onScroll={handleScroll}
+      >
+        {chats.length === 0 && !isLoading && (
+          <div className="px-4 py-8 text-center">
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              No conversations yet
+            </p>
+          </div>
+        )}
+
+        {chats.map((chat) => (
+          <ChatListItem
+            key={chat.id}
+            chat={chat}
+            isActive={chat.id === activeSessionId}
+            onSelect={onSelect}
+            onRename={onRename}
+            onDelete={onDelete}
+            onFork={onFork}
+          />
+        ))}
+
+        {isLoading && (
+          <div className="px-4 py-3 text-center">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Loading...
+            </span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+export function ChatSidebar(props: ChatSidebarProps) {
+  const { embedded = false, ...contentProps } = props;
+  const [isOpen, setIsOpen] = useState(true);
+
+  // Embedded mode: just render content, no outer shell
+  if (embedded) {
+    return <ChatSidebarContent {...contentProps} />;
+  }
 
   return (
     <>
@@ -312,68 +390,7 @@ export function ChatSidebar({
           borderColor: 'var(--border-dim)',
         }}
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-4 py-3 border-b flex-none"
-          style={{ borderColor: 'var(--border-dim)' }}
-        >
-          <h2
-            className="text-sm font-semibold tracking-wide"
-            style={{
-              color: 'var(--text-primary)',
-              fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-            }}
-          >
-            Chats
-          </h2>
-          <button
-            onClick={onCreate}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors hover:bg-white/5"
-            style={{ color: 'var(--accent)' }}
-            aria-label="New chat"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            New
-          </button>
-        </div>
-
-        {/* Chat list */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto chat-scroll py-1.5"
-          onScroll={handleScroll}
-        >
-          {chats.length === 0 && !isLoading && (
-            <div className="px-4 py-8 text-center">
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                No conversations yet
-              </p>
-            </div>
-          )}
-
-          {chats.map((chat) => (
-            <ChatListItem
-              key={chat.id}
-              chat={chat}
-              isActive={chat.id === activeSessionId}
-              onSelect={onSelect}
-              onRename={onRename}
-              onDelete={onDelete}
-              onFork={onFork}
-            />
-          ))}
-
-          {isLoading && (
-            <div className="px-4 py-3 text-center">
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Loading...
-              </span>
-            </div>
-          )}
-        </div>
+        <ChatSidebarContent {...contentProps} />
       </div>
     </>
   );
