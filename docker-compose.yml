@@ -1,4 +1,37 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: liwaisi-postgres
+    environment:
+      POSTGRES_DB: liwaisi
+      POSTGRES_USER: liwaisi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-liwaisi_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liwaisi -d liwaisi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: liwaisi-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/var/lib/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build:
       context: back/go-assistant
@@ -10,6 +43,11 @@ services:
     env_file: .env
     environment:
       - LISTEN_ADDR=:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
       interval: 10s
@@ -28,3 +66,7 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
