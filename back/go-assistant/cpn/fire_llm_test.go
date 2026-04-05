@@ -1040,6 +1040,63 @@ func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
 
 // ── buildToolSchema tests ───────────────────────────────────────────────────
 
+func TestHandleToolCalls_HITLChannelClosed(t *testing.T) {
+	var callCount atomic.Int32
+	mock := &mockLLMClient{
+		completeFunc: func(ctx context.Context, req *LLMRequest) (LLMResponse, error) {
+			count := callCount.Add(1)
+			if count == 1 {
+				// First call: request a tool that requires HITL.
+				return LLMResponse{
+					ToolCalls: []*LLMToolCall{
+						{ID: "tc-hitl", ToolName: "dangerous_tool", Arguments: json.RawMessage(`{"action":"delete"}`)},
+					},
+				}, nil
+			}
+			return LLMResponse{Content: "should not reach here"}, nil
+		},
+	}
+
+	hitlChan := make(chan Token)
+	close(hitlChan) // Immediately closed — simulates dropped connection.
+
+	dangerousTool := &Transition{
+		ID:       "dangerous_tool",
+		Kind:     NodeKindTool,
+		ToolName: "dangerous_tool",
+		ToolMeta: &ToolMeta{
+			Description:  "A dangerous tool",
+			RequiresHITL: true,
+		},
+		Executor: func(ctx context.Context, in Token) (Token, error) {
+			t.Error("executor should NOT be called when HITL channel is closed")
+			return Token{Payload: "nope"}, nil
+		},
+	}
+
+	trans := newBasicLLMTransition()
+	trans.LLMTools = []string{"dangerous_tool"}
+	trans.HITLConfig = &HITLConfig{
+		Channel: hitlChan,
+	}
+
+	transitions := map[string]*Transition{
+		trans.ID:          trans,
+		dangerousTool.ID:  dangerousTool,
+	}
+	c := newTestCPNForLLM(mock, transitions)
+
+	consumed := []Token{{Color: ColorString, Payload: "do something dangerous"}}
+
+	_, _, err := fireLLM(context.Background(), trans, c, consumed)
+	if err == nil {
+		t.Fatal("expected error when HITL channel is closed")
+	}
+	if !strings.Contains(err.Error(), "HITL channel closed") {
+		t.Errorf("error = %q, want to contain 'HITL channel closed'", err)
+	}
+}
+
 func TestBuildToolSchema_WithToolMeta(t *testing.T) {
 	params := json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	tr := &Transition{
