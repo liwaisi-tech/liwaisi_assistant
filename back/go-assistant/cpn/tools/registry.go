@@ -139,7 +139,7 @@ func (r *Registry) AsLLMTools(namespaces ...string) []*cpn.LLMTool {
 		filter[ns] = struct{}{}
 	}
 
-	var out []*cpn.LLMTool
+	out := make([]*cpn.LLMTool, 0, len(r.entries))
 	for _, e := range r.entries {
 		if len(filter) > 0 {
 			if _, ok := filter[e.Schema.Namespace]; !ok {

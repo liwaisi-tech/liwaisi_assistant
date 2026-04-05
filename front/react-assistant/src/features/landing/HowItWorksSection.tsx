@@ -1,70 +1,68 @@
+import { useTranslation } from 'react-i18next';
 import { useInView } from './useInView';
 
-const STEPS = [
+const STEP_DEFS = [
   {
     number: '01',
+    key: 'step01' as const,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="9" stroke="#10b981" strokeWidth="1.5" />
         <circle cx="12" cy="12" r="3" fill="#10b981" />
       </svg>
     ),
-    title: 'You make a request',
-    subtitle: 'Place: Surface Space',
-    description:
-      'Your input enters the system as a colored token in the Surface space — the human-facing boundary where you maintain full control.',
     color: '#10b981',
-    cpnLabel: 'Token deposited in Input Place',
   },
   {
     number: '02',
+    key: 'step02' as const,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <rect x="3" y="6" width="18" height="12" rx="2" stroke="#0ea5e9" strokeWidth="1.5" />
         <path d="M8 12h8M12 9l3 3-3 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
-    title: 'AI agents analyze and draft',
-    subtitle: 'Transition: Computation Space',
-    description:
-      'LLM transitions fire in the Computation space — consuming your input token, calling AI models, executing tools, and producing a structured draft.',
     color: '#0ea5e9',
-    cpnLabel: 'Transition fires, LLM produces output tokens',
   },
   {
     number: '03',
+    key: 'step03' as const,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="9" stroke="#a78bfa" strokeWidth="1.5" />
         <path d="M9 9v6M15 9v6" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" />
       </svg>
     ),
-    title: 'You review and decide',
-    subtitle: 'HITL Transition: Space Bridge',
-    description:
-      'The Human-in-the-Loop transition pauses the net and presents the draft. You approve, reject, or request revisions — your voice crosses from Surface to Computation.',
     color: '#a78bfa',
-    cpnLabel: 'HITL bridges Surface ↔ Computation spaces',
   },
   {
     number: '04',
+    key: 'step04' as const,
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="9" stroke="#10b981" strokeWidth="1.5" />
         <path d="M8 12l3 3 5-5" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
-    title: 'Result delivered',
-    subtitle: 'Place: Output',
-    description:
-      'The approved result lands in the Output place — auditable, cost-tracked, and ready. Every step recorded for future optimization.',
     color: '#10b981',
-    cpnLabel: 'Token deposited in Output Place, execution logged',
   },
 ];
 
+function renderAccentText(raw: string) {
+  const match = raw.match(/^(.*)<accent>(.*)<\/accent>(.*)$/);
+  if (!match) return <>{raw}</>;
+  return (
+    <>
+      {match[1]}
+      <span className="gradient-text">{match[2]}</span>
+      {match[3]}
+    </>
+  );
+}
+
 export function HowItWorksSection() {
   const { ref, inView } = useInView();
+  const { t } = useTranslation('landing');
 
   return (
     <section
@@ -79,7 +77,7 @@ export function HowItWorksSection() {
             className="text-xs uppercase tracking-[0.2em] mb-4"
             style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
           >
-            How it works
+            {t('howItWorks.eyebrow')}
           </p>
           <h2
             className="text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight"
@@ -88,8 +86,7 @@ export function HowItWorksSection() {
               color: 'var(--text-primary)',
             }}
           >
-            From request to result,{' '}
-            <span className="gradient-text">every step visible</span>
+            {renderAccentText(t('howItWorks.title'))}
           </h2>
         </div>
 
@@ -101,7 +98,7 @@ export function HowItWorksSection() {
             style={{ background: 'linear-gradient(to bottom, var(--accent), #a78bfa, #10b981)' }}
           />
 
-          {STEPS.map((step) => (
+          {STEP_DEFS.map((step) => (
             <div key={step.number} className="relative flex gap-4 sm:gap-8 mb-12 last:mb-0">
               {/* Step number circle */}
               <div
@@ -130,7 +127,7 @@ export function HowItWorksSection() {
                       color: 'var(--text-primary)',
                     }}
                   >
-                    {step.title}
+                    {t(`howItWorks.steps.${step.key}.title` as const)}
                   </h3>
                 </div>
                 <p
@@ -141,10 +138,10 @@ export function HowItWorksSection() {
                     opacity: 0.7,
                   }}
                 >
-                  {step.subtitle}
+                  {t(`howItWorks.steps.${step.key}.subtitle` as const)}
                 </p>
                 <p className="text-sm leading-relaxed mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  {step.description}
+                  {t(`howItWorks.steps.${step.key}.description` as const)}
                 </p>
                 <p
                   className="text-[10px] px-2 py-1 rounded inline-block"
@@ -155,7 +152,7 @@ export function HowItWorksSection() {
                     border: `1px solid ${step.color}30`,
                   }}
                 >
-                  {step.cpnLabel}
+                  {t(`howItWorks.steps.${step.key}.cpnLabel` as const)}
                 </p>
               </div>
             </div>

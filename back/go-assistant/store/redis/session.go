@@ -135,7 +135,7 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 	return r.fallback.ListByUserID(ctx, userID, opts)
 }
 
-func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID, title string) error {
 	if err := r.fallback.UpdateTitle(ctx, sessionID, title); err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func (r *SessionRepository) SoftDelete(ctx context.Context, sessionID string) er
 	return nil
 }
 
-func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*persist.SessionRecord, error) {
+func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID, sourceSessionID string, messageIndex int, userID, channel string) (*persist.SessionRecord, error) {
 	rec, err := r.fallback.ForkSession(ctx, newSessionID, sourceSessionID, messageIndex, userID, channel)
 	if err != nil {
 		return nil, err

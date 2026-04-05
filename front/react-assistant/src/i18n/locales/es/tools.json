@@ -1,0 +1,14 @@
+{
+  "browser": {
+    "title": "Explorador de herramientas",
+    "loading": "Cargando herramientas...",
+    "searchPlaceholder": "Buscar herramientas...",
+    "toolsFound_one": "{{count}} herramienta encontrada",
+    "toolsFound_other": "{{count}} herramientas encontradas",
+    "noToolsFound": "No se encontraron herramientas",
+    "failedToLoad": "No se pudieron cargar las herramientas",
+    "inputColorTitle": "Entrada: {{color}}",
+    "outputColorTitle": "Salida: {{color}}",
+    "hitlBadge": "HITL"
+  }
+}

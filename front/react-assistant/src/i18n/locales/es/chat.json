@@ -1,0 +1,67 @@
+{
+  "header": {
+    "title": "Liwaisi Assistant",
+    "newConversation": "Nueva conversacion",
+    "signOut": "Cerrar sesion"
+  },
+  "sidebar": {
+    "title": "Chats",
+    "newChat": "Nuevo chat",
+    "newButton": "Nuevo",
+    "noConversations": "Aun no hay conversaciones",
+    "noMessagesYet": "Sin mensajes aun",
+    "defaultTitle": "Nuevo Chat",
+    "chatActions": "Acciones del chat",
+    "rename": "Renombrar",
+    "fork": "Bifurcar",
+    "delete": "Eliminar",
+    "confirmDelete": "Confirmar eliminacion",
+    "collapseSidebar": "Contraer barra lateral",
+    "expandSidebar": "Expandir barra lateral"
+  },
+  "messageBubble": {
+    "openCpnMonitor": "Abrir monitor de ejecucion CPN",
+    "cpnButton": "CPN",
+    "looksGood": "Se ve bien",
+    "cancel": "Cancelar",
+    "youApproved": "Aprobaste esto",
+    "youCancelled": "Cancelaste esto"
+  },
+  "messageInput": {
+    "placeholder": "Escribe un mensaje...",
+    "placeholderWaiting": "Revisa el plan de arriba...",
+    "placeholderDisabled": "Esperando respuesta...",
+    "sendAriaLabel": "Enviar mensaje",
+    "inputAriaLabel": "Entrada de mensaje",
+    "hint": "Presiona Enter para enviar, Shift+Enter para nueva linea"
+  },
+  "messageList": {
+    "welcomeTitle": "Liwaisi",
+    "welcomeSubtitle": "Tu espacio de trabajo impulsado por IA",
+    "suggestions": {
+      "explainCpn": "Explicar la arquitectura CPN",
+      "helpGoCode": "Ayudame a escribir codigo Go",
+      "analyzeData": "Analizar mis datos",
+      "summarizeDoc": "Resumir un documento"
+    },
+    "suggestionAriaLabel": "Enviar: {{suggestion}}"
+  },
+  "confirmClear": {
+    "title": "Iniciar nueva conversacion?",
+    "description": "Esto limpiara la conversacion actual. Esta accion no se puede deshacer."
+  },
+  "forkDialog": {
+    "title": "Bifurcar conversacion",
+    "description": "Selecciona el punto de bifurcacion. Los mensajes hasta este punto seran copiados.",
+    "roleYou": "Tu",
+    "roleAi": "IA",
+    "forkPointAriaLabel": "Selector de punto de bifurcacion",
+    "messagesCopied_one": "{{count}} mensaje sera copiado.",
+    "messagesCopied_other": "{{count}} mensajes seran copiados.",
+    "costResets": "El costo se reinicia a",
+    "costZero": "$0.00"
+  },
+  "streaming": {
+    "thinking": "El asistente esta pensando"
+  }
+}

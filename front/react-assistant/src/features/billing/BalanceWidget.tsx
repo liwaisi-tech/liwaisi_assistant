@@ -1,6 +1,8 @@
 import { useBalance } from '../../hooks/useBalance';
+import { useTranslation } from 'react-i18next';
 
 export function BalanceWidget() {
+  const { t } = useTranslation('common');
   const { balance, isLoading, error } = useBalance();
 
   if (isLoading) {
@@ -17,7 +19,7 @@ export function BalanceWidget() {
       <div
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px]"
         style={{ backgroundColor: 'var(--bg-input)', color: 'var(--text-muted)' }}
-        title={error ?? 'Balance unavailable'}
+        title={error ?? t('errors.balanceUnavailable')}
       >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <circle cx="8" cy="8" r="7" />
@@ -38,7 +40,7 @@ export function BalanceWidget() {
     <div
       className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg"
       style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-dim)' }}
-      title={`Total usage: $${balance.usage.toFixed(2)} | Daily: $${balance.usage_daily.toFixed(2)} | Weekly: $${balance.usage_weekly.toFixed(2)}`}
+      title={t('balance.usageTooltip', { total: balance.usage.toFixed(2), daily: balance.usage_daily.toFixed(2), weekly: balance.usage_weekly.toFixed(2) })}
     >
       {balance.is_free_tier && (
         <span
@@ -49,7 +51,7 @@ export function BalanceWidget() {
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
-          Free
+          {t('balance.free')}
         </span>
       )}
 
@@ -62,7 +64,7 @@ export function BalanceWidget() {
             {hasLimit ? `$${remaining.toFixed(2)}` : `$${balance.usage.toFixed(2)}`}
           </span>
           <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-            {hasLimit ? 'left' : 'used'}
+            {hasLimit ? t('balance.left') : t('balance.used')}
           </span>
         </div>
 

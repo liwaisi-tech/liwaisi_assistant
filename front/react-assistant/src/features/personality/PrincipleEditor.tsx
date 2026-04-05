@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { PrincipleResponse, UpdatePrincipleRequest } from '../../types/personality';
 
 interface PrincipleEditorProps {
@@ -29,6 +30,7 @@ const editIcon = (
 );
 
 export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleEditorProps) {
+  const { t } = useTranslation('personality');
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(principle.title);
   const [description, setDescription] = useState(principle.description);
@@ -113,7 +115,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
           onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isEditing ? 'rgba(255,255,255,0.05)' : 'transparent'; }}
         >
           {editIcon}
-          {isEditing ? 'Cancel' : 'Edit'}
+          {isEditing ? t('principleEditor.cancel') : t('principleEditor.edit')}
         </button>
       </div>
 
@@ -169,7 +171,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
           className="text-[10px] font-semibold uppercase tracking-wider"
           style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
         >
-          Rules
+          {t('principleEditor.rules')}
         </span>
         {isEditing ? (
           <div className="space-y-1.5">
@@ -195,7 +197,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
                     style={{ color: 'var(--text-muted)' }}
                     onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-                    aria-label="Remove rule"
+                    aria-label={t('principleEditor.removeRuleAriaLabel')}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -211,7 +213,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
-              + Add rule
+              {t('principleEditor.addRule')}
             </button>
           </div>
         ) : (
@@ -243,11 +245,11 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
               onMouseEnter={(e) => { if (!saving) e.currentTarget.style.boxShadow = `0 0 12px -2px ${colors.border}`; }}
               onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? t('principleEditor.saving') : t('principleEditor.saveChanges')}
             </button>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Confirm save?</span>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t('principleEditor.confirmSave')}</span>
               <button
                 onClick={handleSave}
                 disabled={saving}
@@ -258,7 +260,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
                   color: '#34d399',
                 }}
               >
-                {saving ? 'Saving...' : 'Yes, save'}
+                {saving ? t('principleEditor.saving') : t('principleEditor.yesSave')}
               </button>
               <button
                 onClick={() => setConfirmOpen(false)}
@@ -268,7 +270,7 @@ export function PrincipleEditor({ principle, color, onSave, saving }: PrincipleE
                   color: 'var(--text-muted)',
                 }}
               >
-                Cancel
+                {t('principleEditor.cancel')}
               </button>
             </div>
           )}

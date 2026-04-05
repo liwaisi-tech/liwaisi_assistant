@@ -1,0 +1,191 @@
+{
+  "nav": {
+    "about": "Acerca de",
+    "howItWorks": "Cómo funciona",
+    "features": "Funcionalidades",
+    "ourMission": "Nuestra misión",
+    "getAccess": "Obtener acceso",
+    "signIn": "Iniciar sesión"
+  },
+  "hero": {
+    "logoAlt": "Liwaisi",
+    "title": "IA que trabaja como <accent>tu mejor equipo</accent>",
+    "subtitle": "Transparente, auditable y siempre bajo tu control. Impulsada por Coloured Petri Nets. Construida para la innovación rural.",
+    "earlyAccessNote": "Únete a nuestro programa de acceso anticipado. Solo B2B; te contactaremos personalmente."
+  },
+  "whatIs": {
+    "eyebrow": "¿Qué es Liwaisi Assistant?",
+    "title": "Un sistema operativo de IA donde <accent>cada decisión es visible</accent>",
+    "description": "A diferencia de la IA de caja negra, Liwaisi Assistant usa un motor de Coloured Petri Net para orquestar flujos de trabajo de IA con precisión matemática. Cada token de datos, cada transición, cada decisión: visible y auditable en tiempo real. Tu equipo mantiene el control en cada paso.",
+    "pillars": {
+      "transparent": {
+        "title": "Transparente",
+        "description": "Mira cada paso de cada flujo de trabajo. Sin prompts ocultos, sin razonamiento misterioso."
+      },
+      "auditable": {
+        "title": "Auditable",
+        "description": "Cada ejecución queda registrada. Seguimiento completo de costos, uso de tokens e historial de decisiones."
+      },
+      "humanFirst": {
+        "title": "Humano primero",
+        "description": "La IA propone, tú decides. Aprueba, rechaza o revisa en cualquier punto crítico."
+      }
+    }
+  },
+  "howItWorks": {
+    "eyebrow": "Cómo funciona",
+    "title": "Desde la solicitud hasta el resultado, <accent>cada paso visible</accent>",
+    "steps": {
+      "step01": {
+        "title": "Haces una solicitud",
+        "subtitle": "Lugar: Espacio de Superficie",
+        "description": "Tu entrada ingresa al sistema como un token coloreado en el espacio de Superficie, la frontera orientada al humano donde mantienes control total.",
+        "cpnLabel": "Token depositado en el Lugar de Entrada"
+      },
+      "step02": {
+        "title": "Los agentes de IA analizan y redactan",
+        "subtitle": "Transición: Espacio de Computación",
+        "description": "Las transiciones LLM se disparan en el espacio de Computación, consumiendo tu token de entrada, llamando modelos de IA, ejecutando herramientas y produciendo un borrador estructurado.",
+        "cpnLabel": "La transición se dispara, el LLM produce tokens de salida"
+      },
+      "step03": {
+        "title": "Tú revisas y decides",
+        "subtitle": "Transición HITL: Puente entre Espacios",
+        "description": "La transición Human-in-the-Loop pausa la red y presenta el borrador. Apruebas, rechazas o solicitas revisiones: tu voz cruza de Superficie a Computación.",
+        "cpnLabel": "HITL conecta los espacios Superficie y Computación"
+      },
+      "step04": {
+        "title": "Resultado entregado",
+        "subtitle": "Lugar: Salida",
+        "description": "El resultado aprobado llega al Lugar de Salida: auditable, con seguimiento de costos y listo. Cada paso queda registrado para optimización futura.",
+        "cpnLabel": "Token depositado en el Lugar de Salida, ejecución registrada"
+      }
+    }
+  },
+  "features": {
+    "eyebrow": "Capacidades",
+    "title": "Construido para <accent>flujos de trabajo serios de IA</accent>",
+    "cpnEngine": {
+      "title": "Motor Agéntico CPN",
+      "description": "La orquestación con Coloured Petri Net proporciona flujos de trabajo de IA determinísticos y concurrentes. Cada ejecución sigue una topología matemáticamente verificada."
+    },
+    "hitl": {
+      "title": "Human in the Loop",
+      "description": "Ciclos de aprobación y revisión en puntos críticos de decisión. La IA propone, los humanos deciden, con revisión en múltiples rondas cuando sea necesario."
+    },
+    "personality": {
+      "title": "Personalidad del Agente",
+      "description": "Configura los principios de tu IA: núcleo, conducta, ética. Define reglas de tensión y jerarquías que moldean cada respuesta."
+    },
+    "monitoring": {
+      "title": "Monitoreo en Vivo",
+      "description": "Visualización de ejecución en tiempo real con SSE. Observa cómo fluyen los tokens, se disparan las transiciones y se acumulan los costos, todo en vivo."
+    },
+    "tools": {
+      "title": "Ecosistema de Herramientas",
+      "description": "Integración de herramientas con estándar MCP. Conecta bases de datos, APIs, sistemas de archivos y herramientas personalizadas a tus flujos de trabajo de IA."
+    },
+    "flowIntelligence": {
+      "title": "Inteligencia de Flujos",
+      "description": "Las topologías se cristalizan, clasifican y optimizan con el tiempo. Cuanto más usas un flujo de trabajo, mejor se vuelve, medido con datos reales de ejecución."
+    }
+  },
+  "mission": {
+    "eyebrow": "Nuestra misión",
+    "title": "La tecnología como <accent>semilla de justicia</accent>",
+    "description": "Llevamos la tecnología al campo como herramienta para sembrar oportunidades, fortalecer el conocimiento comunitario y cuidar la tierra mientras crecemos juntos. Creamos y enseñamos tecnología hecha con las comunidades, para que las personas rurales puedan vivir bien, perseguir sus ideas y defender su derecho a permanecer en su tierra con orgullo, dignidad y progreso.",
+    "quote": "\"Imaginamos un territorio donde aprender tecnología sea tan común como cultivar, y donde nuestras comunidades sean líderes de una nueva ruralidad: próspera, creativa y justa.\"",
+    "quoteAttribution": "Visión a 10 años de Liwaisi",
+    "principles": {
+      "humanFirst": {
+        "title": "Humano primero",
+        "description": "La tecnología al servicio de las personas, no al revés."
+      },
+      "territorialKnowledge": {
+        "title": "Conocimiento territorial",
+        "description": "Valoramos la sabiduría tradicional y construimos desde ella, no sobre ella."
+      },
+      "positiveImpact": {
+        "title": "Impacto positivo",
+        "description": "Soluciones tecnológicas que mejoran vidas, cuidan el planeta y generan ingresos."
+      },
+      "coCreation": {
+        "title": "Co-creación",
+        "description": "Todo construido en diálogo con las personas y las comunidades."
+      },
+      "techSovereignty": {
+        "title": "Soberanía tecnológica",
+        "description": "Apoyamos la autonomía para cultivar y crear tu propia tecnología."
+      },
+      "socialJustice": {
+        "title": "Justicia social",
+        "description": "Negocios que reducen las desigualdades, no que las profundizan."
+      }
+    }
+  },
+  "footerCta": {
+    "eyebrow": "Acceso anticipado",
+    "title": "¿Listo para ver IA <accent>en la que puedes confiar</accent>?",
+    "description": "Trabajamos directamente con cada socio para construir flujos de trabajo de IA adaptados a tus necesidades. Sin cajas negras. Sin sorpresas.",
+    "alreadyHaveAccess": "¿Ya tienes acceso?",
+    "signIn": "Iniciar sesión",
+    "stats": {
+      "cpn": { "value": "CPN", "label": "Motor Petri Net" },
+      "blocks": { "value": "6+", "label": "Bloques de construcción" },
+      "hitl": { "value": "HITL", "label": "Human-in-the-Loop" },
+      "b2b": { "value": "B2B", "label": "Alianza directa" }
+    }
+  },
+  "footer": {
+    "brandDescription": "La tecnología como semilla de justicia, empoderamiento y abundancia para las comunidades rurales. Construida con comunidades, para comunidades.",
+    "columns": {
+      "product": {
+        "title": "Producto",
+        "about": "Acerca de",
+        "howItWorks": "Cómo funciona",
+        "features": "Funcionalidades",
+        "ourMission": "Nuestra misión"
+      },
+      "community": {
+        "title": "Comunidad",
+        "liwaisiTech": "Liwaisi Tech",
+        "youtubeChannel": "Canal de YouTube"
+      },
+      "resources": {
+        "title": "Recursos",
+        "edtechWorkshops": "Talleres EdTech",
+        "videoTutorials": "Videotutoriales",
+        "softwareDevelopment": "Desarrollo de software"
+      }
+    },
+    "copyright": "Liwaisi Tech. Tecnología para la justicia rural.",
+    "builtWith": "Construido con Coloured Petri Nets",
+    "websiteAriaLabel": "Visitar el sitio web de Liwaisi Tech",
+    "youtubeAriaLabel": "Visitar el canal de YouTube de Liwaisi Tech"
+  },
+  "signInModal": {
+    "ariaLabel": "Iniciar sesión en Liwaisi Assistant",
+    "closeAriaLabel": "Cerrar diálogo de inicio de sesión",
+    "title": "Bienvenido a Liwaisi",
+    "subtitle": "Inicia sesión para acceder a tu centro de comando de IA",
+    "dataPrivacy": "Solo solicitamos información básica del perfil. Tus datos son tuyos.",
+    "divider": "o únete a la lista de espera",
+    "noAccountNeeded": "No necesitas cuenta. Te contactaremos para acceso B2B."
+  },
+  "signInDropdown": {
+    "welcomeBack": "Bienvenido de nuevo",
+    "subtitle": "Inicia sesión en tu centro de comando",
+    "divider": "o",
+    "joinWaitlist": "Unirse a la lista de espera"
+  },
+  "waitlist": {
+    "emailLabel": "Dirección de correo electrónico",
+    "emailPlaceholder": "tu@correo.com",
+    "submit": "Solicitar acceso anticipado",
+    "submitting": "Uniéndose...",
+    "success": "¡Estás en la lista! Te contactaremos pronto.",
+    "errorInvalidEmail": "Por favor, ingresa una dirección de correo válida",
+    "errorTooManyRequests": "Demasiadas solicitudes. Por favor, intenta de nuevo en un momento.",
+    "errorGeneric": "Algo salió mal. Por favor, intenta de nuevo."
+  }
+}

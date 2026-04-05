@@ -39,7 +39,7 @@ func TestAsSystemPrompt(t *testing.T) {
 
 	// Principles should be rendered in hierarchy order (etica first).
 	eticaIdx := strings.Index(got, "Privacidad radical")
-	nucleoIdx := strings.Index(got, "Comprension")
+	nucleoIdx := strings.Index(got, "Comprension") //nolint:misspell // Spanish word
 	if eticaIdx < 0 || nucleoIdx < 0 {
 		t.Fatalf("principle titles not found in prompt")
 	}

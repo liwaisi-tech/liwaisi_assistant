@@ -1,0 +1,38 @@
+{
+  "panel": {
+    "title": "Agent Identity",
+    "loading": "Loading agent identity...",
+    "reset": "Reset",
+    "resetConfirm": "Reset to defaults?",
+    "resetting": "Resetting...",
+    "confirm": "Confirm"
+  },
+  "principleEditor": {
+    "edit": "Edit",
+    "cancel": "Cancel",
+    "rules": "Rules",
+    "addRule": "+ Add rule",
+    "removeRuleAriaLabel": "Remove rule",
+    "saveChanges": "Save Changes",
+    "saving": "Saving...",
+    "confirmSave": "Confirm save?",
+    "yesSave": "Yes, save"
+  },
+  "tensionVisualizer": {
+    "title": "Tension Map"
+  },
+  "hierarchyControl": {
+    "title": "Priority Hierarchy",
+    "positionLabels": {
+      "highest": "Highest priority",
+      "secondary": "Secondary",
+      "foundation": "Foundation"
+    },
+    "moveUpAriaLabel": "Move {{item}} up",
+    "moveDownAriaLabel": "Move {{item}} down",
+    "eticaWarning": "Etica as Foundation means ethical rules have lowest override priority. Consider carefully.",
+    "saveOrder": "Save Order",
+    "saving": "Saving...",
+    "reset": "Reset"
+  }
+}

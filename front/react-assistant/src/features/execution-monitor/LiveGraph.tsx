@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { TopologyGraph } from '../cpn-visualizer/TopologyGraph';
 import type { CPNTopology } from '../../types/flow';
 import type { TransitionStartedPayload, TransitionCompletedPayload } from '../../types/sse';
@@ -16,6 +17,8 @@ export function LiveGraph({
   completedTransitions,
   onSelectTransition,
 }: LiveGraphProps) {
+  const { t } = useTranslation('monitor');
+
   // Build the set of fired transitions for TopologyGraph
   const firedTransitions = useMemo(() => {
     const fired = new Set<string>();
@@ -70,7 +73,7 @@ export function LiveGraph({
         >
           <div className="w-2 h-2 rounded-full status-pulse" style={{ backgroundColor: 'var(--accent)' }} />
           <span className="text-[9px]" style={{ color: 'var(--accent)' }}>
-            {activeTransitions.size} firing
+            {t('liveGraph.firingCount', { count: activeTransitions.size })}
           </span>
         </div>
       )}

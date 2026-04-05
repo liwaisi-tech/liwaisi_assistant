@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
 
 interface MessageInputProps {
@@ -9,6 +10,7 @@ interface MessageInputProps {
 }
 
 export function MessageInput({ onSend, disabled, sessionState, error }: MessageInputProps) {
+  const { t } = useTranslation('chat');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = useCallback(() => {
@@ -45,12 +47,12 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
             className="message-textarea flex-1 bg-transparent text-sm leading-relaxed placeholder:text-slate-500 focus:outline-none"
             style={{ color: 'var(--text-primary)', fontFamily: "'DM Sans', system-ui, sans-serif" }}
             placeholder={disabled
-              ? (sessionState === 'waiting' ? 'Review the plan above...' : 'Waiting for response...')
-              : 'Type a message...'}
+              ? (sessionState === 'waiting' ? t('messageInput.placeholderWaiting') : t('messageInput.placeholderDisabled'))
+              : t('messageInput.placeholder')}
             disabled={disabled}
             onKeyDown={handleKeyDown}
             rows={1}
-            aria-label="Message input"
+            aria-label={t('messageInput.inputAriaLabel')}
           />
           <button
             type="button"
@@ -61,7 +63,7 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
               backgroundColor: disabled ? 'transparent' : 'var(--accent)',
               color: disabled ? 'var(--text-muted)' : '#fff',
             }}
-            aria-label="Send message"
+            aria-label={t('messageInput.sendAriaLabel')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 12V4M8 4L4 8M8 4L12 8" />
@@ -70,7 +72,7 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
         </div>
 
         <p className="text-[10px] mt-1.5 text-center" style={{ color: 'var(--text-muted)' }}>
-          Press Enter to send, Shift+Enter for newline
+          {t('messageInput.hint')}
         </p>
       </div>
     </div>

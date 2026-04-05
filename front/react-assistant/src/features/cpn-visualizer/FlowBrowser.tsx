@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 import { getFlows } from '../../services/api';
 import type { FlowSummary } from '../../types/flow';
 
@@ -7,9 +9,12 @@ interface FlowBrowserProps {
 }
 
 export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
+  const { t } = useTranslation('flows');
   const [flows, setFlows] = useState<FlowSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { loadNamespace('flows'); }, []);
 
   useEffect(() => {
     getFlows()
@@ -23,7 +28,7 @@ export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
       <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
         <div className="text-center">
           <div className="thinking-dots mb-4"><span /><span /><span /></div>
-          <p className="text-sm" style={{ fontFamily: "'JetBrains Mono', monospace" }}>Loading flows...</p>
+          <p className="text-sm" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{t('flowBrowser.loading')}</p>
         </div>
       </div>
     );
@@ -32,7 +37,7 @@ export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
   if (error) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
-        <p className="text-sm">Failed to load flows: {error}</p>
+        <p className="text-sm">{t('flowBrowser.errorPrefix', { error })}</p>
       </div>
     );
   }
@@ -45,8 +50,8 @@ export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
             <circle cx="12" cy="12" r="10" />
             <path d="M8 12h8M12 8v8" />
           </svg>
-          <p className="text-sm" style={{ fontFamily: "'JetBrains Mono', monospace" }}>No flows recorded yet</p>
-          <p className="text-xs mt-2 opacity-60">Send a message to create your first CPN execution</p>
+          <p className="text-sm" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{t('flowBrowser.emptyTitle')}</p>
+          <p className="text-xs mt-2 opacity-60">{t('flowBrowser.emptyDescription')}</p>
         </div>
       </div>
     );
@@ -58,7 +63,7 @@ export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
         className="text-lg font-semibold mb-4"
         style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}
       >
-        CPN Flow Library
+        {t('flowBrowser.title')}
       </h2>
 
       <div className="space-y-2">
@@ -93,10 +98,10 @@ export function FlowBrowser({ onSelectFlow }: FlowBrowserProps) {
             </div>
 
             <div className="flex gap-4 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span>Executions: {flow.execution_count}</span>
-              <span>Success: {(flow.success_rate * 100).toFixed(0)}%</span>
-              <span>Avg Cost: ${flow.avg_cost_usd.toFixed(4)}</span>
-              <span>Avg Time: {flow.avg_duration_ms}ms</span>
+              <span>{t('flowBrowser.executions', { count: flow.execution_count })}</span>
+              <span>{t('flowBrowser.success', { rate: (flow.success_rate * 100).toFixed(0) })}</span>
+              <span>{t('flowBrowser.avgCost', { cost: flow.avg_cost_usd.toFixed(4) })}</span>
+              <span>{t('flowBrowser.avgTime', { time: flow.avg_duration_ms })}</span>
             </div>
           </button>
         ))}

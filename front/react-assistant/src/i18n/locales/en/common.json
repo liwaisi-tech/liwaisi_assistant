@@ -1,0 +1,69 @@
+{
+  "buttons": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "retry": "Retry",
+    "close": "Close",
+    "send": "Send",
+    "reset": "Reset",
+    "clear": "Clear",
+    "fork": "Fork",
+    "rename": "Rename",
+    "signOut": "Sign out",
+    "confirm": "Confirm",
+    "back": "Back",
+    "load": "Load",
+    "new": "New",
+    "edit": "Edit",
+    "saveChanges": "Save Changes",
+    "saveOrder": "Save Order"
+  },
+  "status": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "loading": "Loading...",
+    "idle": "Idle",
+    "running": "Running",
+    "waiting": "Waiting",
+    "completed": "Completed",
+    "failed": "Failed"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "tooManyRequests": "Too many requests. Please try again in a moment.",
+    "failedToLoad": "Failed to load {{resource}}: {{error}}",
+    "balanceUnavailable": "Balance unavailable"
+  },
+  "timeAgo": {
+    "justNow": "just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "yesterday": "Yesterday",
+    "daysAgo": "{{count}}d ago",
+    "weeksAgo": "{{count}}w ago",
+    "monthsAgo": "{{count}}mo ago",
+    "yearsAgo": "{{count}}y ago"
+  },
+  "a11y": {
+    "mainNavigation": "Main navigation",
+    "landingNavigation": "Landing page navigation",
+    "mobileNavigation": "Mobile navigation",
+    "applicationDock": "Application dock",
+    "assistantThinking": "Assistant is thinking",
+    "messageInput": "Message input",
+    "sendMessage": "Send message",
+    "searchCommands": "Search commands",
+    "commandResults": "Command results"
+  },
+  "balance": {
+    "free": "Free",
+    "left": "left",
+    "used": "used",
+    "usageTooltip": "Total usage: ${{total}} | Daily: ${{daily}} | Weekly: ${{weekly}}"
+  },
+  "costFormat": {
+    "zero": "$0.00",
+    "lessThanCent": "<$0.01"
+  }
+}

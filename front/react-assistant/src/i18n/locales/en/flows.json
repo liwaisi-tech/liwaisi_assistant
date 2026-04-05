@@ -1,0 +1,80 @@
+{
+  "flowBrowser": {
+    "title": "CPN Flow Library",
+    "loading": "Loading flows...",
+    "errorPrefix": "Failed to load flows: {{error}}",
+    "emptyTitle": "No flows recorded yet",
+    "emptyDescription": "Send a message to create your first CPN execution",
+    "executions": "Executions: {{count}}",
+    "success": "Success: {{rate}}%",
+    "avgCost": "Avg Cost: ${{cost}}",
+    "avgTime": "Avg Time: {{time}}ms"
+  },
+  "flowDetail": {
+    "back": "Back",
+    "placesAndTransitions": "{{places}} places · {{transitions}} transitions",
+    "runs": "runs",
+    "successRate": "success",
+    "avgCost": "avg",
+    "avgTime": "avg",
+    "replay": "REPLAY",
+    "sessionIdPlaceholder": "session ID...",
+    "load": "Load",
+    "firedAndEvents": "{{fired}} fired · {{events}} events",
+    "flowNotFound": "Flow not found: {{error}}"
+  },
+  "topologyGraph": {
+    "horizontal": "Horizontal",
+    "vertical": "Vertical",
+    "switchToVertical": "Switch to vertical layout",
+    "switchToHorizontal": "Switch to horizontal layout",
+    "fitToView": "Fit to view"
+  },
+  "transitionPanel": {
+    "transition": "TRANSITION",
+    "connections": "Connections",
+    "inputs": "Inputs",
+    "outputs": "Outputs",
+    "error": "Error",
+    "guardFunction": "Guard Function",
+    "llmConfiguration": "LLM Configuration",
+    "model": "Model",
+    "maxTokens": "Max Tokens",
+    "temperature": "Temperature",
+    "stream": "Stream",
+    "jsonMode": "JSON Mode",
+    "history": "History",
+    "yes": "Yes",
+    "no": "No",
+    "required": "Required",
+    "skipped": "Skipped",
+    "hitlConfiguration": "HITL Configuration",
+    "prompt": "Prompt",
+    "none": "None",
+    "revision": "Revision",
+    "enabled": "Enabled",
+    "systemPrompt": "System Prompt"
+  },
+  "placeNode": {
+    "spaceLabels": {
+      "surface": "SRF",
+      "computation": "CMP",
+      "observation": "OBS"
+    }
+  },
+  "transitionNode": {
+    "kindLabels": {
+      "llm": "LLM",
+      "tool": "TOOL",
+      "validate": "VALIDATE",
+      "subnet": "SUBNET",
+      "observer": "OBSERVER",
+      "hitl": "HITL"
+    },
+    "humanGate": "Human Gate",
+    "clickForDetails": "click for details",
+    "model": "model",
+    "tokens": "tokens",
+    "guard": "guard"
+  }
+}

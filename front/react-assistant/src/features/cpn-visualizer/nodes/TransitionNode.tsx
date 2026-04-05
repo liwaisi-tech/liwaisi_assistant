@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Handle, Position } from '@xyflow/react';
 import type { TransitionTopology } from '../../../types/flow';
 
@@ -9,15 +10,6 @@ const KIND_ICONS: Record<string, string> = {
   subnet: '\u25A3',  // box
   observer: '\u25C9', // circle
   hitl: '\u270B',    // hand
-};
-
-const KIND_LABELS: Record<string, string> = {
-  llm: 'LLM',
-  tool: 'TOOL',
-  validate: 'VALIDATE',
-  subnet: 'SUBNET',
-  observer: 'OBSERVER',
-  hitl: 'HITL',
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -38,10 +30,11 @@ interface TransitionNodeData {
 }
 
 export const TransitionNode = memo(function TransitionNode({ data }: { data: TransitionNodeData }) {
+  const { t } = useTranslation('flows');
   const { transition, fired, executionOrder, direction = 'LR', onSelect } = data;
   const color = KIND_COLORS[transition.kind] || '#64748b';
   const icon = KIND_ICONS[transition.kind] || '?';
-  const kindLabel = KIND_LABELS[transition.kind] || transition.kind;
+  const kindLabel = t(`transitionNode.kindLabels.${transition.kind}`, { defaultValue: transition.kind });
   const model = transition.llmConfig?.model;
   const guard = transition.guardFunc;
   const prompt = transition.systemPrompt;
@@ -111,13 +104,13 @@ export const TransitionNode = memo(function TransitionNode({ data }: { data: Tra
         <div className="space-y-0.5">
           {model && (
             <div className="text-[9px] flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
-              <span style={{ color: `${color}90` }}>model</span>
+              <span style={{ color: `${color}90` }}>{t('transitionNode.model')}</span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{model}</span>
             </div>
           )}
           {transition.llmConfig && !model && (
             <div className="text-[9px] flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
-              <span style={{ color: `${color}90` }}>tokens</span>
+              <span style={{ color: `${color}90` }}>{t('transitionNode.tokens')}</span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 {transition.llmConfig.maxTokens}
                 {transition.llmConfig.streamOutput && ' \u25B6'}
@@ -126,7 +119,7 @@ export const TransitionNode = memo(function TransitionNode({ data }: { data: Tra
           )}
           {guard && (
             <div className="text-[9px] flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
-              <span style={{ color: `${color}90` }}>guard</span>
+              <span style={{ color: `${color}90` }}>{t('transitionNode.guard')}</span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{guard.replace('guard-', '')}</span>
             </div>
           )}
@@ -140,7 +133,7 @@ export const TransitionNode = memo(function TransitionNode({ data }: { data: Tra
           )}
           {transition.kind === 'hitl' && (
             <div className="text-[9px] mt-1 font-semibold" style={{ color: '#f59e0b' }}>
-              \u270B Human Gate
+              {'\u270B'} {t('transitionNode.humanGate')}
             </div>
           )}
         </div>
@@ -150,7 +143,7 @@ export const TransitionNode = memo(function TransitionNode({ data }: { data: Tra
           className="text-[7px] mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
           style={{ color: 'var(--text-muted)' }}
         >
-          click for details
+          {t('transitionNode.clickForDetails')}
         </div>
       </div>
       <Handle

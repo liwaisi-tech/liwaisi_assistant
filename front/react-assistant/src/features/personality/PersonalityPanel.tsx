@@ -3,7 +3,9 @@ import { PrincipleEditor } from './PrincipleEditor';
 import { TensionVisualizer } from './TensionVisualizer';
 import { HierarchyControl } from './HierarchyControl';
 import type { UpdatePrincipleRequest } from '../../types/personality';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 
 const kindColorMap: Record<string, string> = {
   nucleo: 'sky-500',
@@ -12,8 +14,11 @@ const kindColorMap: Record<string, string> = {
 };
 
 export function PersonalityPanel() {
+  const { t } = useTranslation('personality');
   const { personality, loading, error, saving, updatePrinciple, setHierarchy, reset, reload } = usePersonality();
   const [resetConfirm, setResetConfirm] = useState(false);
+
+  useEffect(() => { loadNamespace('personality'); }, []);
 
   const handleReset = useCallback(async () => {
     try {
@@ -43,7 +48,7 @@ export function PersonalityPanel() {
             className="text-xs"
             style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
           >
-            Loading agent identity...
+            {t('panel.loading')}
           </span>
         </div>
       </div>
@@ -88,7 +93,7 @@ export function PersonalityPanel() {
               className="text-base font-semibold"
               style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
             >
-              Agent Identity
+              {t('panel.title')}
             </h2>
             <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
               v{personality.version} &middot; {new Date(personality.updated_at).toLocaleDateString()}
@@ -111,11 +116,11 @@ export function PersonalityPanel() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
                 </svg>
-                Reset
+                {t('panel.reset')}
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Reset to defaults?</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t('panel.resetConfirm')}</span>
                 <button
                   onClick={handleReset}
                   disabled={saving}
@@ -126,7 +131,7 @@ export function PersonalityPanel() {
                     color: '#ef4444',
                   }}
                 >
-                  {saving ? 'Resetting...' : 'Confirm'}
+                  {saving ? t('panel.resetting') : t('panel.confirm')}
                 </button>
                 <button
                   onClick={() => setResetConfirm(false)}
@@ -136,7 +141,7 @@ export function PersonalityPanel() {
                     color: 'var(--text-muted)',
                   }}
                 >
-                  Cancel
+                  {t('principleEditor.cancel')}
                 </button>
               </div>
             )}

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface AdaptivePanelProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ const DEFAULT_WIDTH_PERCENT = 0.5;
 const COLLAPSE_THRESHOLD = MIN_WIDTH;
 
 export function AdaptivePanel({ isOpen, title, onClose, onPopOut, children }: AdaptivePanelProps) {
+  const { t } = useTranslation('desktop');
   const panelRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number | null>(null);
   const isDragging = useRef(false);
@@ -86,7 +88,7 @@ export function AdaptivePanel({ isOpen, title, onClose, onPopOut, children }: Ad
     <div
       ref={panelRef}
       role="complementary"
-      aria-label={`${title} panel`}
+      aria-label={t('adaptivePanel.panelAriaLabel', { title })}
       className="absolute top-0 right-0 h-full flex flex-col"
       style={{
         width: effectiveWidth,
@@ -145,7 +147,7 @@ export function AdaptivePanel({ isOpen, title, onClose, onPopOut, children }: Ad
           <button
             onClick={onPopOut}
             className="p-1.5 rounded transition-colors duration-150"
-            aria-label={`Pop out ${title}`}
+            aria-label={t('adaptivePanel.popOutAriaLabel', { title })}
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}
@@ -162,7 +164,7 @@ export function AdaptivePanel({ isOpen, title, onClose, onPopOut, children }: Ad
           <button
             onClick={onClose}
             className="p-1.5 rounded transition-colors duration-150"
-            aria-label={`Close ${title}`}
+            aria-label={t('adaptivePanel.closeAriaLabel', { title })}
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}

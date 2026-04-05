@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from './MarkdownContent.tsx';
 import type { HITLAction } from '../../types/chat';
 
@@ -20,6 +21,7 @@ export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
+  const { t } = useTranslation('chat');
   const isUser = role === 'user';
 
   return (
@@ -51,9 +53,9 @@ export const MessageBubble = memo(function MessageBubble({
                   cursor: 'pointer',
                   letterSpacing: '0.03em',
                 }}
-                title="Open CPN execution monitor"
+                title={t('messageBubble.openCpnMonitor')}
               >
-                CPN
+                {t('messageBubble.cpnButton')}
               </button>
             )}
           </div>
@@ -79,7 +81,7 @@ export const MessageBubble = memo(function MessageBubble({
                 border: '1px solid rgba(16, 185, 129, 0.3)',
               }}
             >
-              Looks good
+              {t('messageBubble.looksGood')}
             </button>
             <button
               onClick={() => onHITLAction?.(hitlTransitionId, 'reject')}
@@ -90,7 +92,7 @@ export const MessageBubble = memo(function MessageBubble({
                 border: '1px solid rgba(239, 68, 68, 0.2)',
               }}
             >
-              Cancel
+              {t('messageBubble.cancel')}
             </button>
           </div>
         )}
@@ -100,7 +102,7 @@ export const MessageBubble = memo(function MessageBubble({
             <span className="text-[11px] font-medium" style={{
               color: hitlResolved === 'approve' ? '#34d399' : '#f87171',
             }}>
-              {hitlResolved === 'approve' ? 'You approved this' : 'You cancelled this'}
+              {hitlResolved === 'approve' ? t('messageBubble.youApproved') : t('messageBubble.youCancelled')}
             </span>
           </div>
         )}

@@ -1081,8 +1081,8 @@ func TestHandleToolCalls_HITLChannelClosed(t *testing.T) {
 	}
 
 	transitions := map[string]*Transition{
-		trans.ID:          trans,
-		dangerousTool.ID:  dangerousTool,
+		trans.ID:         trans,
+		dangerousTool.ID: dangerousTool,
 	}
 	c := newTestCPNForLLM(mock, transitions)
 

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
 
 interface MobileTabBarProps {
@@ -7,14 +9,14 @@ interface MobileTabBarProps {
 
 interface TabConfig {
   id: ActiveApp;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
 }
 
 const tabs: TabConfig[] = [
   {
     id: 'chat',
-    label: 'Chat',
+    labelKey: 'mobileTabBar.chat',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
@@ -23,7 +25,7 @@ const tabs: TabConfig[] = [
   },
   {
     id: 'flows',
-    label: 'Flows',
+    labelKey: 'mobileTabBar.flows',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="5" r="2" />
@@ -35,7 +37,7 @@ const tabs: TabConfig[] = [
   },
   {
     id: 'monitor',
-    label: 'Monitor',
+    labelKey: 'mobileTabBar.monitor',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
@@ -45,6 +47,8 @@ const tabs: TabConfig[] = [
 ];
 
 export function MobileTabBar({ activeApp, onNavigate }: MobileTabBarProps) {
+  const { t } = useTranslation('desktop');
+
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 glass-surface flex items-center justify-around z-10"
@@ -62,7 +66,7 @@ export function MobileTabBar({ activeApp, onNavigate }: MobileTabBarProps) {
             key={tab.id}
             role="tab"
             aria-selected={isActive}
-            aria-label={tab.label}
+            aria-label={t(tab.labelKey)}
             onClick={() => onNavigate(tab.id)}
             className="flex flex-col items-center justify-center flex-1 h-full relative"
             style={{
@@ -80,7 +84,7 @@ export function MobileTabBar({ activeApp, onNavigate }: MobileTabBarProps) {
                 marginTop: 2,
               }}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </span>
             {isActive && (
               <span

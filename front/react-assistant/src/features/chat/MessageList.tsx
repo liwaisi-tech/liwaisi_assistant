@@ -1,15 +1,17 @@
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 import { MessageBubble } from './MessageBubble';
 import { StreamingIndicator } from './StreamingIndicator';
 import type { SessionState } from '../../types/api';
 import type { ChatMessage, HITLAction } from '../../types/chat';
 
-const SUGGESTIONS = [
-  'Explain CPN architecture',
-  'Help me write Go code',
-  'Analyze my data',
-  'Summarize a document',
-];
+const SUGGESTION_KEYS = [
+  'messageList.suggestions.explainCpn',
+  'messageList.suggestions.helpGoCode',
+  'messageList.suggestions.analyzeData',
+  'messageList.suggestions.summarizeDoc',
+] as const;
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -20,7 +22,10 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, sessionState, onSuggestionClick, onHITLAction, onOpenMonitor }: MessageListProps) {
+  const { t } = useTranslation('chat');
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { loadNamespace('chat'); }, []);
 
   const lastMessage = messages.at(-1);
   const hasStreamingMessage = lastMessage?.isStreaming === true;
@@ -65,32 +70,35 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
                   textShadow: '0 0 24px var(--accent-glow)',
                 }}
               >
-                Liwaisi
+                {t('messageList.welcomeTitle')}
               </h2>
               <p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>
-                Your AI-powered workspace
+                {t('messageList.welcomeSubtitle')}
               </p>
             </div>
 
             {/* Suggestion chips */}
             {onSuggestionClick && (
               <div className="flex flex-wrap justify-center gap-2 max-w-md">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    onClick={() => onSuggestionClick(suggestion)}
-                    className="suggestion-chip px-4 py-2 rounded-xl text-xs font-medium transition-all duration-200"
-                    style={{
-                      backgroundColor: 'var(--bg-surface)',
-                      border: '1px solid var(--border-dim)',
-                      color: 'var(--text-secondary)',
-                      fontFamily: "'DM Sans', system-ui, sans-serif",
-                    }}
-                    aria-label={`Send: ${suggestion}`}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
+                {SUGGESTION_KEYS.map((key) => {
+                  const suggestion = t(key);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => onSuggestionClick(suggestion)}
+                      className="suggestion-chip px-4 py-2 rounded-xl text-xs font-medium transition-all duration-200"
+                      style={{
+                        backgroundColor: 'var(--bg-surface)',
+                        border: '1px solid var(--border-dim)',
+                        color: 'var(--text-secondary)',
+                        fontFamily: "'DM Sans', system-ui, sans-serif",
+                      }}
+                      aria-label={t('messageList.suggestionAriaLabel', { suggestion })}
+                    >
+                      {suggestion}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

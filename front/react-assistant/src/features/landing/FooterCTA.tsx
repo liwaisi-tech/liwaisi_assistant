@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { WaitlistForm } from './WaitlistForm';
 import { useInView } from './useInView';
 
@@ -7,43 +8,56 @@ interface FooterCTAProps {
 
 /* ── Trust stats (social proof) ─────────────────────────────────── */
 
-const STATS = [
-  { value: 'CPN', label: 'Petri Net Engine', accent: 'var(--accent)' },
-  { value: '6+', label: 'Building Blocks', accent: '#a78bfa' },
-  { value: 'HITL', label: 'Human-in-the-Loop', accent: '#10b981' },
-  { value: 'B2B', label: 'Direct Partnership', accent: '#f59e0b' },
+const STAT_KEYS = [
+  { key: 'cpn' as const, accent: 'var(--accent)' },
+  { key: 'blocks' as const, accent: '#a78bfa' },
+  { key: 'hitl' as const, accent: '#10b981' },
+  { key: 'b2b' as const, accent: '#f59e0b' },
 ];
 
 /* ── Footer link columns ────────────────────────────────────────── */
 
-const FOOTER_COLS = [
+const FOOTER_COL_DEFS = [
   {
-    title: 'Product',
+    titleKey: 'footer.columns.product.title' as const,
     links: [
-      { label: 'About', href: '#what-is' },
-      { label: 'How It Works', href: '#how-it-works' },
-      { label: 'Features', href: '#features' },
-      { label: 'Our Mission', href: '#mission' },
+      { labelKey: 'footer.columns.product.about' as const, href: '#what-is' },
+      { labelKey: 'footer.columns.product.howItWorks' as const, href: '#how-it-works' },
+      { labelKey: 'footer.columns.product.features' as const, href: '#features' },
+      { labelKey: 'footer.columns.product.ourMission' as const, href: '#mission' },
     ],
   },
   {
-    title: 'Community',
+    titleKey: 'footer.columns.community.title' as const,
     links: [
-      { label: 'Liwaisi Tech', href: 'https://liwaisi.tech', external: true },
-      { label: 'YouTube Channel', href: 'https://www.youtube.com/@LiwaisiTech', external: true },
+      { labelKey: 'footer.columns.community.liwaisiTech' as const, href: 'https://liwaisi.tech', external: true },
+      { labelKey: 'footer.columns.community.youtubeChannel' as const, href: 'https://www.youtube.com/@LiwaisiTech', external: true },
     ],
   },
   {
-    title: 'Resources',
+    titleKey: 'footer.columns.resources.title' as const,
     links: [
-      { label: 'EdTech Workshops', href: 'https://liwaisi.tech', external: true },
-      { label: 'Video Tutorials', href: 'https://www.youtube.com/@LiwaisiTech', external: true },
-      { label: 'Software Development', href: 'https://www.youtube.com/@LiwaisiTech', external: true },
+      { labelKey: 'footer.columns.resources.edtechWorkshops' as const, href: 'https://liwaisi.tech', external: true },
+      { labelKey: 'footer.columns.resources.videoTutorials' as const, href: 'https://www.youtube.com/@LiwaisiTech', external: true },
+      { labelKey: 'footer.columns.resources.softwareDevelopment' as const, href: 'https://www.youtube.com/@LiwaisiTech', external: true },
     ],
   },
 ];
 
+function renderAccentText(raw: string) {
+  const match = raw.match(/^(.*)<accent>(.*)<\/accent>(.*)$/);
+  if (!match) return <>{raw}</>;
+  return (
+    <>
+      {match[1]}
+      <span className="gradient-text">{match[2]}</span>
+      {match[3]}
+    </>
+  );
+}
+
 export function FooterCTA({ onSignIn }: FooterCTAProps) {
+  const { t } = useTranslation('landing');
   const { ref: ctaRef, inView: ctaInView } = useInView();
   const { ref: footerRef, inView: footerInView } = useInView(0.1);
 
@@ -72,7 +86,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
               className="text-xs uppercase tracking-[0.2em] mb-4"
               style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
             >
-              Early Access
+              {t('footerCta.eyebrow')}
             </p>
             <h2
               className="text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight mb-4"
@@ -81,15 +95,13 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                 color: 'var(--text-primary)',
               }}
             >
-              Ready to see AI{' '}
-              <span className="gradient-text">you can trust</span>?
+              {renderAccentText(t('footerCta.title'))}
             </h2>
             <p
               className="text-base sm:text-lg leading-relaxed max-w-2xl mx-auto"
               style={{ color: 'var(--text-secondary)' }}
             >
-              We work directly with each partner to build AI workflows
-              tailored to your needs. No black boxes. No surprises.
+              {t('footerCta.description')}
             </p>
           </div>
 
@@ -99,13 +111,13 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
           </div>
 
           <p className="text-center text-xs mb-16" style={{ color: 'var(--text-muted)' }}>
-            Already have access?{' '}
+            {t('footerCta.alreadyHaveAccess')}{' '}
             <button
               onClick={onSignIn}
               className="cursor-pointer underline underline-offset-2 transition-colors"
               style={{ color: 'var(--accent)', background: 'none', border: 'none', font: 'inherit' }}
             >
-              Sign in
+              {t('footerCta.signIn')}
             </button>
           </p>
 
@@ -118,8 +130,8 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
             }}
           >
             <div className={`grid grid-cols-2 sm:grid-cols-4 gap-6 sm:gap-8 ${ctaInView ? '' : ''}`}>
-              {STATS.map((stat) => (
-                <div key={stat.label} className="stat-item text-center">
+              {STAT_KEYS.map((stat) => (
+                <div key={stat.key} className="stat-item text-center">
                   <p
                     className="text-2xl sm:text-3xl font-bold tracking-tight mb-1"
                     style={{
@@ -127,7 +139,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                       color: stat.accent,
                     }}
                   >
-                    {stat.value}
+                    {t(`footerCta.stats.${stat.key}.value`)}
                   </p>
                   <p
                     className="text-[10px] sm:text-xs uppercase tracking-wider"
@@ -136,7 +148,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                       color: 'var(--text-muted)',
                     }}
                   >
-                    {stat.label}
+                    {t(`footerCta.stats.${stat.key}.label`)}
                   </p>
                 </div>
               ))}
@@ -179,8 +191,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                 className="text-sm leading-relaxed mb-6 max-w-xs"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                Technology as a seed of justice, empowerment, and abundance
-                for rural communities. Built with communities, for communities.
+                {t('footer.brandDescription')}
               </p>
 
               {/* Social links */}
@@ -204,7 +215,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                     e.currentTarget.style.color = 'var(--text-muted)';
                     e.currentTarget.style.boxShadow = 'none';
                   }}
-                  aria-label="Visit Liwaisi Tech website"
+                  aria-label={t('footer.websiteAriaLabel')}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
@@ -230,7 +241,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                     e.currentTarget.style.color = 'var(--text-muted)';
                     e.currentTarget.style.boxShadow = 'none';
                   }}
-                  aria-label="Visit Liwaisi Tech YouTube channel"
+                  aria-label={t('footer.youtubeAriaLabel')}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                     <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" strokeWidth="1.5" />
@@ -241,8 +252,8 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
             </div>
 
             {/* Link columns */}
-            {FOOTER_COLS.map((col) => (
-              <div key={col.title}>
+            {FOOTER_COL_DEFS.map((col) => (
+              <div key={col.titleKey}>
                 <h3
                   className="text-[10px] uppercase tracking-[0.15em] mb-4"
                   style={{
@@ -250,11 +261,11 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                     color: 'var(--text-muted)',
                   }}
                 >
-                  {col.title}
+                  {t(col.titleKey)}
                 </h3>
                 <ul className="flex flex-col gap-2.5">
                   {col.links.map((link) => (
-                    <li key={link.label}>
+                    <li key={link.labelKey}>
                       <a
                         href={link.href}
                         {...('external' in link && link.external
@@ -265,7 +276,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                         onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--accent)')}
                         onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
                       >
-                        {link.label}
+                        {t(link.labelKey)}
                         {'external' in link && link.external && (
                           <svg
                             width="10"
@@ -292,7 +303,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
             style={{ borderColor: 'var(--border-dim)' }}
           >
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              &copy; {new Date().getFullYear()} Liwaisi Tech. Technology for rural justice.
+              &copy; {new Date().getFullYear()} {t('footer.copyright')}
             </p>
 
             {/* "Built with CPN" badge */}
@@ -320,7 +331,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
                   color: 'var(--text-muted)',
                 }}
               >
-                Built with Coloured Petri Nets
+                {t('footer.builtWith')}
               </span>
             </div>
           </div>

@@ -1,0 +1,59 @@
+{
+  "executionMonitor": {
+    "title": "Execution Monitor",
+    "emptyWithSession": "Send a message to start monitoring CPN execution",
+    "emptyNoSession": "No active session",
+    "selectExecution": "Select an execution from the list"
+  },
+  "executionList": {
+    "title": "Executions ({{count}})",
+    "noExecutions": "No executions yet",
+    "sendToStart": "Send a message to start",
+    "loadingInput": "Loading...",
+    "runningDuration": "running..."
+  },
+  "liveGraph": {
+    "firingCount_one": "{{count}} firing",
+    "firingCount_other": "{{count}} firing"
+  },
+  "transitionInspector": {
+    "closeAriaLabel": "Close inspector",
+    "firing": "Firing...",
+    "error": "ERROR",
+    "cost": "Cost",
+    "duration": "Duration",
+    "inputTokens": "Input Tokens",
+    "outputTokens": "Output Tokens",
+    "llmConfig": "LLM Config",
+    "systemPrompt": "System Prompt",
+    "model": "Model",
+    "maxTokens": "Max Tokens",
+    "temperature": "Temperature",
+    "stream": "Stream",
+    "jsonMode": "JSON Mode",
+    "defaultModel": "default"
+  },
+  "costAccumulator": {
+    "title": "Execution Cost",
+    "llm": "LLM",
+    "transitions": "T"
+  },
+  "metricsSummary": {
+    "fired": "FIRED",
+    "llm": "LLM",
+    "cost": "COST",
+    "events": "EVENTS"
+  },
+  "cpnBreadcrumb": {
+    "rootLabel": "Root CPN"
+  },
+  "timelineScrubber": {
+    "label": "Timeline",
+    "waiting": "Waiting for execution events..."
+  },
+  "routeLabels": {
+    "direct": "DIRECT",
+    "plan": "PLAN",
+    "execute": "EXECUTE"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "panel": {
+    "title": "Identidad del agente",
+    "loading": "Cargando identidad del agente...",
+    "reset": "Restablecer",
+    "resetConfirm": "Restablecer a valores predeterminados?",
+    "resetting": "Restableciendo...",
+    "confirm": "Confirmar"
+  },
+  "principleEditor": {
+    "edit": "Editar",
+    "cancel": "Cancelar",
+    "rules": "Reglas",
+    "addRule": "+ Agregar regla",
+    "removeRuleAriaLabel": "Eliminar regla",
+    "saveChanges": "Guardar cambios",
+    "saving": "Guardando...",
+    "confirmSave": "Confirmar guardado?",
+    "yesSave": "Si, guardar"
+  },
+  "tensionVisualizer": {
+    "title": "Mapa de tensiones"
+  },
+  "hierarchyControl": {
+    "title": "Jerarquia de prioridad",
+    "positionLabels": {
+      "highest": "Mayor prioridad",
+      "secondary": "Secundario",
+      "foundation": "Fundamento"
+    },
+    "moveUpAriaLabel": "Subir {{item}}",
+    "moveDownAriaLabel": "Bajar {{item}}",
+    "eticaWarning": "Etica como Fundamento significa que las reglas eticas tienen la menor prioridad de anulacion. Considera esto con cuidado.",
+    "saveOrder": "Guardar orden",
+    "saving": "Guardando...",
+    "reset": "Restablecer"
+  }
+}

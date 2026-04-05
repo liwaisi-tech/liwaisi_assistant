@@ -1,0 +1,80 @@
+{
+  "flowBrowser": {
+    "title": "Biblioteca de flujos CPN",
+    "loading": "Cargando flujos...",
+    "errorPrefix": "No se pudieron cargar los flujos: {{error}}",
+    "emptyTitle": "Aun no hay flujos registrados",
+    "emptyDescription": "Envia un mensaje para crear tu primera ejecucion CPN",
+    "executions": "Ejecuciones: {{count}}",
+    "success": "Exito: {{rate}}%",
+    "avgCost": "Costo prom: ${{cost}}",
+    "avgTime": "Tiempo prom: {{time}}ms"
+  },
+  "flowDetail": {
+    "back": "Volver",
+    "placesAndTransitions": "{{places}} lugares \u00b7 {{transitions}} transiciones",
+    "runs": "ejecuciones",
+    "successRate": "exito",
+    "avgCost": "promedio",
+    "avgTime": "promedio",
+    "replay": "REPLAY",
+    "sessionIdPlaceholder": "ID de sesion...",
+    "load": "Cargar",
+    "firedAndEvents": "{{fired}} disparados \u00b7 {{events}} eventos",
+    "flowNotFound": "Flujo no encontrado: {{error}}"
+  },
+  "topologyGraph": {
+    "horizontal": "Horizontal",
+    "vertical": "Vertical",
+    "switchToVertical": "Cambiar a diseno vertical",
+    "switchToHorizontal": "Cambiar a diseno horizontal",
+    "fitToView": "Ajustar a la vista"
+  },
+  "transitionPanel": {
+    "transition": "TRANSICION",
+    "connections": "Conexiones",
+    "inputs": "Entradas",
+    "outputs": "Salidas",
+    "error": "Error",
+    "guardFunction": "Funcion guardiana",
+    "llmConfiguration": "Configuracion LLM",
+    "model": "Modelo",
+    "maxTokens": "Tokens maximos",
+    "temperature": "Temperatura",
+    "stream": "Streaming",
+    "jsonMode": "Modo JSON",
+    "history": "Historial",
+    "yes": "Si",
+    "no": "No",
+    "required": "Requerido",
+    "skipped": "Omitido",
+    "hitlConfiguration": "Configuracion HITL",
+    "prompt": "Prompt",
+    "none": "Ninguno",
+    "revision": "Revision",
+    "enabled": "Habilitado",
+    "systemPrompt": "Prompt del sistema"
+  },
+  "placeNode": {
+    "spaceLabels": {
+      "surface": "SRF",
+      "computation": "CMP",
+      "observation": "OBS"
+    }
+  },
+  "transitionNode": {
+    "kindLabels": {
+      "llm": "LLM",
+      "tool": "HERRAM",
+      "validate": "VALIDAR",
+      "subnet": "SUBRED",
+      "observer": "OBSERV",
+      "hitl": "HITL"
+    },
+    "humanGate": "Puerta humana",
+    "clickForDetails": "clic para detalles",
+    "model": "modelo",
+    "tokens": "tokens",
+    "guard": "guardia"
+  }
+}

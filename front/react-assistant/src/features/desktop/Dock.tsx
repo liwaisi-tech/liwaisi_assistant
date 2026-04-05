@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { DockIcon } from './DockIcon';
 
 interface DockProps {
@@ -8,6 +9,8 @@ interface DockProps {
 }
 
 export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorClick }: DockProps) {
+  const { t } = useTranslation('desktop');
+
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
       <nav
@@ -19,7 +22,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
         aria-label="Application dock"
       >
         <DockIcon
-          label="Chat"
+          label={t('dock.chat')}
           isActive={activeApp === 'chat'}
           onClick={onChatClick}
           icon={
@@ -29,7 +32,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Flows"
+          label={t('dock.flows')}
           isActive={activeApp === 'flows'}
           onClick={onFlowsClick}
           icon={
@@ -42,7 +45,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Monitor"
+          label={t('dock.monitor')}
           isActive={activeApp === 'monitor'}
           onClick={onMonitorClick}
           icon={
@@ -52,7 +55,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Audio"
+          label={t('dock.audio')}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M2 10v4M6 6v12M10 3v18M14 8v8M18 5v14M22 10v4" />
@@ -60,7 +63,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Code"
+          label={t('dock.code')}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="16 18 22 12 16 6" />
@@ -70,7 +73,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Calendar"
+          label={t('dock.calendar')}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -81,7 +84,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Notes"
+          label={t('dock.notes')}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -92,7 +95,7 @@ export function Dock({ activeApp = 'chat', onChatClick, onFlowsClick, onMonitorC
           }
         />
         <DockIcon
-          label="Settings"
+          label={t('dock.settings')}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />

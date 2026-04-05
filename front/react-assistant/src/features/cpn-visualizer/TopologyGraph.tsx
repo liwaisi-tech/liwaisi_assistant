@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ReactFlow,
   Background,
@@ -58,6 +59,7 @@ function layoutGraph(nodes: Node[], edges: Edge[], direction: Direction): Node[]
 }
 
 function GraphInner({ topology, firedTransitions, onSelectTransition }: TopologyGraphProps) {
+  const { t } = useTranslation('flows');
   const [direction, setDirection] = useState<Direction>('LR');
   const { fitView } = useReactFlow();
 
@@ -164,9 +166,9 @@ function GraphInner({ topology, firedTransitions, onSelectTransition }: Topology
             color: 'var(--accent)',
             fontFamily: "'JetBrains Mono', monospace",
           }}
-          title={`Switch to ${direction === 'LR' ? 'vertical' : 'horizontal'} layout`}
+          title={direction === 'LR' ? t('topologyGraph.switchToVertical') : t('topologyGraph.switchToHorizontal')}
         >
-          {direction === 'LR' ? '\u2194 Horizontal' : '\u2195 Vertical'}
+          {direction === 'LR' ? `\u2194 ${t('topologyGraph.horizontal')}` : `\u2195 ${t('topologyGraph.vertical')}`}
         </button>
 
         {/* Fit view */}
@@ -178,9 +180,9 @@ function GraphInner({ topology, firedTransitions, onSelectTransition }: Topology
             border: '1px solid var(--border-dim)',
             color: 'var(--text-muted)',
           }}
-          title="Fit to view"
+          title={t('topologyGraph.fitToView')}
         >
-          \u26F6
+          {'\u26F6'}
         </button>
       </div>
     </div>

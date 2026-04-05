@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 import type { ExecutionState, ExecutionRun } from '../../hooks/useExecutionMonitor';
 import { LiveGraph } from './LiveGraph';
 import { TransitionInspector } from './TransitionInspector';
@@ -27,6 +29,10 @@ export function ExecutionMonitor({
   onLoadTrace,
   sessionId,
 }: ExecutionMonitorProps) {
+  const { t } = useTranslation('monitor');
+
+  useEffect(() => { loadNamespace('monitor'); }, []);
+
   // Auto-load trace when entering monitor with a session
   useEffect(() => {
     if (sessionId && onLoadTrace && state.runs.length === 0) {
@@ -106,7 +112,7 @@ export function ExecutionMonitor({
             ) : (
               <div className="flex-1 flex items-center justify-center h-full">
                 <div className="text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                  Select an execution from the list
+                  {t('executionMonitor.selectExecution')}
                 </div>
               </div>
             )}
@@ -141,6 +147,8 @@ export function ExecutionMonitor({
 }
 
 function EmptyState({ sessionId }: { sessionId: string | null }) {
+  const { t } = useTranslation('monitor');
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ backgroundColor: 'var(--bg-deep)' }}>
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
@@ -148,12 +156,12 @@ function EmptyState({ sessionId }: { sessionId: string | null }) {
       </svg>
       <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
         <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
-          Execution Monitor
+          {t('executionMonitor.title')}
         </div>
         <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {sessionId
-            ? 'Send a message to start monitoring CPN execution'
-            : 'No active session'
+            ? t('executionMonitor.emptyWithSession')
+            : t('executionMonitor.emptyNoSession')
           }
         </div>
       </div>

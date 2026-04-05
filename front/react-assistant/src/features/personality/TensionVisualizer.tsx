@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { TensionResponse } from '../../types/personality';
 
 interface TensionVisualizerProps {
@@ -11,6 +12,8 @@ const kindColors: Record<string, string> = {
 };
 
 export function TensionVisualizer({ tensions }: TensionVisualizerProps) {
+  const { t } = useTranslation('personality');
+
   if (tensions.length === 0) return null;
 
   // Extract unique principle names from tensions
@@ -46,7 +49,7 @@ export function TensionVisualizer({ tensions }: TensionVisualizerProps) {
         className="text-[10px] font-semibold uppercase tracking-wider block mb-3"
         style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
       >
-        Tension Map
+        {t('tensionVisualizer.title')}
       </span>
 
       {/* Triangle diagram */}

@@ -1,0 +1,59 @@
+{
+  "executionMonitor": {
+    "title": "Monitor de ejecucion",
+    "emptyWithSession": "Envia un mensaje para comenzar a monitorear la ejecucion CPN",
+    "emptyNoSession": "Sin sesion activa",
+    "selectExecution": "Selecciona una ejecucion de la lista"
+  },
+  "executionList": {
+    "title": "Ejecuciones ({{count}})",
+    "noExecutions": "Aun no hay ejecuciones",
+    "sendToStart": "Envia un mensaje para comenzar",
+    "loadingInput": "Cargando...",
+    "runningDuration": "ejecutando..."
+  },
+  "liveGraph": {
+    "firingCount_one": "{{count}} disparando",
+    "firingCount_other": "{{count}} disparando"
+  },
+  "transitionInspector": {
+    "closeAriaLabel": "Cerrar inspector",
+    "firing": "Disparando...",
+    "error": "ERROR",
+    "cost": "Costo",
+    "duration": "Duracion",
+    "inputTokens": "Tokens de entrada",
+    "outputTokens": "Tokens de salida",
+    "llmConfig": "Configuracion LLM",
+    "systemPrompt": "Prompt del sistema",
+    "model": "Modelo",
+    "maxTokens": "Tokens maximos",
+    "temperature": "Temperatura",
+    "stream": "Streaming",
+    "jsonMode": "Modo JSON",
+    "defaultModel": "predeterminado"
+  },
+  "costAccumulator": {
+    "title": "Costo de ejecucion",
+    "llm": "LLM",
+    "transitions": "T"
+  },
+  "metricsSummary": {
+    "fired": "DISPAROS",
+    "llm": "LLM",
+    "cost": "COSTO",
+    "events": "EVENTOS"
+  },
+  "cpnBreadcrumb": {
+    "rootLabel": "CPN Raiz"
+  },
+  "timelineScrubber": {
+    "label": "Linea de tiempo",
+    "waiting": "Esperando eventos de ejecucion..."
+  },
+  "routeLabels": {
+    "direct": "DIRECTO",
+    "plan": "PLAN",
+    "execute": "EJECUTAR"
+  }
+}

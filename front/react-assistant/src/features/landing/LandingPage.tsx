@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
+import { LanguageSwitcher } from '../i18n/LanguageSwitcher';
 import { HeroSection } from './HeroSection';
 import { WhatIsSection } from './WhatIsSection';
 import { HowItWorksSection } from './HowItWorksSection';
@@ -7,15 +10,16 @@ import { MissionSection } from './MissionSection';
 import { FooterCTA } from './FooterCTA';
 import { SignInModal } from './SignInModal';
 
-const NAV_LINKS = [
-  { href: '#what-is', label: 'About' },
-  { href: '#how-it-works', label: 'How It Works' },
-  { href: '#features', label: 'Features' },
-  { href: '#mission', label: 'Our Mission' },
-  { href: '#get-access', label: 'Get Access' },
+const NAV_KEYS = [
+  { href: '#what-is', key: 'nav.about' as const },
+  { href: '#how-it-works', key: 'nav.howItWorks' as const },
+  { href: '#features', key: 'nav.features' as const },
+  { href: '#mission', key: 'nav.ourMission' as const },
+  { href: '#get-access', key: 'nav.getAccess' as const },
 ];
 
 function LandingNav({ onSignIn }: { onSignIn: () => void }) {
+  const { t } = useTranslation('landing');
   const [scrolled, setScrolled] = useState(false);
   const [active, setActive] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -27,7 +31,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
       setScrolled(window.scrollY > 80);
     };
 
-    const sectionIds = NAV_LINKS.map((l) => l.href.slice(1));
+    const sectionIds = NAV_KEYS.map((l) => l.href.slice(1));
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -126,7 +130,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
             className="hidden sm:flex items-center gap-6 transition-opacity duration-300"
             style={{ opacity: scrolled ? 1 : 0, pointerEvents: scrolled ? 'auto' : 'none' }}
           >
-            {NAV_LINKS.map((link) => (
+            {NAV_KEYS.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
@@ -141,10 +145,13 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
                     active === link.href.slice(1) ? 'var(--accent)' : 'var(--text-muted)';
                 }}
               >
-                {link.label}
+                {t(link.key)}
               </a>
             ))}
           </div>
+
+          {/* Language switcher */}
+          <LanguageSwitcher variant="landing" />
 
           {/* Sign In — always visible, with inline dropdown */}
           <div className="relative" ref={dropdownRef}>
@@ -180,7 +187,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
                 <circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
-              Sign In
+              {t('nav.signIn')}
             </button>
 
             {/* Inline dropdown with Google Sign-In */}
@@ -207,10 +214,10 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
                       className="text-sm font-semibold mb-0.5"
                       style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}
                     >
-                      Welcome back
+                      {t('signInDropdown.welcomeBack')}
                     </p>
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      Sign in to your command center
+                      {t('signInDropdown.subtitle')}
                     </p>
                   </div>
 
@@ -219,7 +226,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
                   <div className="w-full flex items-center gap-2">
                     <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border-dim)' }} />
                     <span className="text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                      or
+                      {t('signInDropdown.divider')}
                     </span>
                     <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border-dim)' }} />
                   </div>
@@ -245,7 +252,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
                       e.currentTarget.style.color = 'var(--text-secondary)';
                     }}
                   >
-                    Join Waitlist Instead
+                    {t('signInDropdown.joinWaitlist')}
                   </button>
                 </div>
               </div>
@@ -259,6 +266,10 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
 
 export function LandingPage() {
   const [showSignIn, setShowSignIn] = useState(false);
+
+  useEffect(() => {
+    loadNamespace('landing');
+  }, []);
 
   const handleOpenSignIn = useCallback(() => setShowSignIn(true), []);
   const handleCloseSignIn = useCallback(() => setShowSignIn(false), []);

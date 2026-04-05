@@ -1,7 +1,22 @@
+import { useTranslation } from 'react-i18next';
 import { CPNAnimation } from './CPNAnimation';
 import { WaitlistForm } from './WaitlistForm';
 
+function renderAccentText(raw: string) {
+  const match = raw.match(/^(.*)<accent>(.*)<\/accent>(.*)$/);
+  if (!match) return <>{raw}</>;
+  return (
+    <>
+      {match[1]}
+      <span className="gradient-text">{match[2]}</span>
+      {match[3]}
+    </>
+  );
+}
+
 export function HeroSection() {
+  const { t } = useTranslation('landing');
+
   return (
     <section
       id="hero"
@@ -24,7 +39,7 @@ export function HeroSection() {
         {/* Logo */}
         <img
           src="/liwaisi_logo_dark_bg.svg"
-          alt="Liwaisi"
+          alt={t('hero.logoAlt')}
           className="h-16 sm:h-20 w-auto"
         />
 
@@ -37,15 +52,13 @@ export function HeroSection() {
               color: 'var(--text-primary)',
             }}
           >
-            AI that works like{' '}
-            <span className="gradient-text">your best team</span>
+            {renderAccentText(t('hero.title'))}
           </h1>
           <p
             className="text-base sm:text-lg max-w-2xl mx-auto leading-relaxed"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Transparent, auditable, and always under your control.
-            Powered by Coloured Petri Nets. Built for rural innovation.
+            {t('hero.subtitle')}
           </p>
         </div>
 
@@ -58,7 +71,7 @@ export function HeroSection() {
         <div className="w-full max-w-md">
           <WaitlistForm variant="hero" />
           <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-            Join our early access program. B2B only — we'll reach out personally.
+            {t('hero.earlyAccessNote')}
           </p>
         </div>
       </div>
