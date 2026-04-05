@@ -39,7 +39,7 @@ export function ReadyStep({
   }, [language, model, modelOverrides, personalityPreset, onComplete]);
 
   const personalityLabel =
-    personalityPreset && personalityPreset !== 'custom' && personalityPreset !== ''
+    personalityPreset && personalityPreset !== 'custom'
       ? t(`personality.${personalityPreset}.name`)
       : personalityPreset === 'custom'
         ? t('personality.custom')
