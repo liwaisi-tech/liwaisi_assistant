@@ -281,7 +281,7 @@ func writeTooManyRequests(w http.ResponseWriter, retryAfter time.Duration) {
 	w.Header().Set("Retry-After", strings.TrimRight(strings.TrimRight(retryAfter.Truncate(time.Second).String(), "0"), "."))
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error":        "rate limit exceeded",
+		"error":         "rate limit exceeded",
 		"retry_after_s": seconds,
 	})
 }

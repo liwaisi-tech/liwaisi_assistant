@@ -459,4 +459,3 @@ func requestToPersonality(userID string, req *PreviewPersonalityRequest) *cpn.Pe
 		Tensions:   tensions,
 	}
 }
-

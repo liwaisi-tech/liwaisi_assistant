@@ -370,8 +370,7 @@ func makeAboutLiwaisi(deps *PersonalityToolDeps) func(context.Context, cpn.Token
 
 		// Parse topic from input (string or JSON).
 		topic := "all"
-		switch v := in.Payload.(type) {
-		case string:
+		if v, ok := in.Payload.(string); ok {
 			raw, err := payloadToJSON(v)
 			if err == nil {
 				var input aboutInput
@@ -389,12 +388,12 @@ func makeAboutLiwaisi(deps *PersonalityToolDeps) func(context.Context, cpn.Token
 		switch topic {
 		case "identity":
 			result = map[string]any{
-				"name":          id.Name,
-				"acronym":       id.Acronym,
-				"nature":        id.Nature,
-				"gender":        id.Gender,
-				"pronouns":      id.Pronouns,
-				"tagline":       id.Tagline,
+				"name":           id.Name,
+				"acronym":        id.Acronym,
+				"nature":         id.Nature,
+				"gender":         id.Gender,
+				"pronouns":       id.Pronouns,
+				"tagline":        id.Tagline,
 				"llm_disclosure": id.LLMDisclosure,
 			}
 		case "creator":
@@ -406,9 +405,9 @@ func makeAboutLiwaisi(deps *PersonalityToolDeps) func(context.Context, cpn.Token
 			}
 		case "platform":
 			result = map[string]any{
-				"platform":      id.Platform,
+				"platform":       id.Platform,
 				"llm_disclosure": id.LLMDisclosure,
-				"source_url":    id.SourceURL,
+				"source_url":     id.SourceURL,
 			}
 		case "mission":
 			result = map[string]any{
@@ -418,18 +417,18 @@ func makeAboutLiwaisi(deps *PersonalityToolDeps) func(context.Context, cpn.Token
 			}
 		default: // "all"
 			result = map[string]any{
-				"name":          id.Name,
-				"acronym":       id.Acronym,
-				"nature":        id.Nature,
-				"gender":        id.Gender,
-				"pronouns":      id.Pronouns,
-				"tagline":       id.Tagline,
-				"creator":       id.Creator,
-				"creator_url":   id.CreatorURL,
-				"source_url":    id.SourceURL,
-				"platform":      id.Platform,
+				"name":           id.Name,
+				"acronym":        id.Acronym,
+				"nature":         id.Nature,
+				"gender":         id.Gender,
+				"pronouns":       id.Pronouns,
+				"tagline":        id.Tagline,
+				"creator":        id.Creator,
+				"creator_url":    id.CreatorURL,
+				"source_url":     id.SourceURL,
+				"platform":       id.Platform,
 				"llm_disclosure": id.LLMDisclosure,
-				"mission":       id.Mission,
+				"mission":        id.Mission,
 			}
 		}
 
