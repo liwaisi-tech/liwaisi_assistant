@@ -111,8 +111,14 @@ func RegisterPersonalityTools(reg *Registry, deps *PersonalityToolDeps) error {
 
 // loadPersonality retrieves a personality from the repo or falls back to default.
 func loadPersonality(ctx context.Context, deps *PersonalityToolDeps, userID string) (*cpn.Personality, error) {
+	if userID == "" {
+		return cpn.DefaultPersonality(), nil
+	}
 	rec, err := deps.Repo.Get(ctx, userID)
-	if err != nil || rec == nil {
+	if err != nil {
+		return nil, fmt.Errorf("load personality: %w", err)
+	}
+	if rec == nil {
 		return cpn.DefaultPersonality(), nil
 	}
 	return recordToPersonality(rec)
@@ -176,10 +182,13 @@ func identityToken(p *cpn.Personality) cpn.Token {
 
 func makeGetIdentity(deps *PersonalityToolDeps) func(context.Context, cpn.Token) (cpn.Token, error) {
 	return func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
-		userID, _ := in.Payload.(string)
+		userID, ok := in.Payload.(string)
+		if !ok {
+			return cpn.Token{}, fmt.Errorf("get_identity: expected string user_id, got %T", in.Payload)
+		}
 		p, err := loadPersonality(ctx, deps, userID)
 		if err != nil {
-			p = cpn.DefaultPersonality()
+			return cpn.Token{}, fmt.Errorf("get_identity: %w", err)
 		}
 		return identityToken(p), nil
 	}
@@ -262,7 +271,10 @@ func makeSetPrinciple(deps *PersonalityToolDeps) func(context.Context, cpn.Token
 
 func makeReset(deps *PersonalityToolDeps) func(context.Context, cpn.Token) (cpn.Token, error) {
 	return func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
-		userID, _ := in.Payload.(string)
+		userID, ok := in.Payload.(string)
+		if !ok {
+			return cpn.Token{}, fmt.Errorf("reset: expected string user_id, got %T", in.Payload)
+		}
 		if err := deps.Repo.Delete(ctx, userID); err != nil {
 			return cpn.Token{}, fmt.Errorf("reset: delete: %w", err)
 		}
@@ -272,10 +284,13 @@ func makeReset(deps *PersonalityToolDeps) func(context.Context, cpn.Token) (cpn.
 
 func makeGetTensions(deps *PersonalityToolDeps) func(context.Context, cpn.Token) (cpn.Token, error) {
 	return func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
-		userID, _ := in.Payload.(string)
+		userID, ok := in.Payload.(string)
+		if !ok {
+			return cpn.Token{}, fmt.Errorf("get_tensions: expected string user_id, got %T", in.Payload)
+		}
 		p, err := loadPersonality(ctx, deps, userID)
 		if err != nil {
-			p = cpn.DefaultPersonality()
+			return cpn.Token{}, fmt.Errorf("get_tensions: %w", err)
 		}
 		raw, err := json.Marshal(p.Tensions)
 		if err != nil {

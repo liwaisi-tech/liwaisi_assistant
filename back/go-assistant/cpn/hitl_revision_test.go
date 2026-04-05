@@ -504,7 +504,7 @@ func TestFireLLMDirect_Success(t *testing.T) {
 	corrTransition := transitions["T:CORR"]
 	input := Token{Color: ColorString, Payload: "bad content"}
 
-	result, err := fireLLMDirect(context.Background(), corrTransition, c, &input)
+	result, _, err := fireLLMDirect(context.Background(), corrTransition, c, &input)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -533,7 +533,7 @@ func TestFireLLMDirect_Error(t *testing.T) {
 	corrTransition := transitions["T:CORR"]
 	input := Token{Color: ColorString, Payload: "bad content"}
 
-	_, err := fireLLMDirect(context.Background(), corrTransition, c, &input)
+	_, _, err := fireLLMDirect(context.Background(), corrTransition, c, &input)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -554,7 +554,7 @@ func TestFireLLMDirect_NilLLMClient(t *testing.T) {
 	// LLMClient deliberately nil.
 
 	input := Token{Color: ColorString, Payload: "bad"}
-	_, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	_, _, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
 	if err == nil {
 		t.Fatal("expected error for nil LLMClient, got nil")
 	}
@@ -576,7 +576,7 @@ func TestFireLLMDirect_RequireJSON(t *testing.T) {
 	c.LLMClient = mock
 
 	input := Token{Color: ColorString, Payload: "bad json"}
-	result, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	result, _, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -607,7 +607,7 @@ func TestFireLLMDirect_FallbackDefaults(t *testing.T) {
 	c.LLMClient = mock
 
 	input := Token{Color: ColorString, Payload: "bad"}
-	result, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
+	result, _, err := fireLLMDirect(context.Background(), transitions["T:CORR"], c, &input)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

@@ -77,6 +77,10 @@ func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Lo
 		RecoveryMiddleware(logger),
 		RequestIDMiddleware,
 	}
+	// Rate limiting is applied after auth so user identity is available.
+	if handlers.RateLimitCfg != nil {
+		middlewares = append(middlewares, rateLimitMiddleware(*handlers.RateLimitCfg))
+	}
 	handler := Chain(mux, middlewares...)
 
 	return &Server{
@@ -156,5 +160,12 @@ func WithPersonalityRepo(repo persist.PersonalityRepository) ServerOption {
 func WithToolRegistry(registry *tools.Registry) ServerOption {
 	return func(h *Handlers) {
 		h.ToolRegistry = registry
+	}
+}
+
+// WithRateLimiting enables rate limiting middleware with the given configuration.
+func WithRateLimiting(cfg RateLimitConfig) ServerOption {
+	return func(h *Handlers) {
+		h.RateLimitCfg = &cfg
 	}
 }

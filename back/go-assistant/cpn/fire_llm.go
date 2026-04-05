@@ -19,13 +19,13 @@ const MaxToolCallIterations = 10
 //  4. LLM call — Complete() via c.LLMClient
 //  5. Tool-call loop — if LLM requests tools, execute and re-call
 //  6. Deposit output — stamp metadata, deposit to OutputPlaces
-func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
+func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	if t.LLMConfig == nil {
-		return 0, fmt.Errorf("transition %s: nil LLMConfig", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: nil LLMConfig", t.ID)
 	}
 
 	if c.LLMClient == nil {
-		return 0, fmt.Errorf("transition %s: nil LLMClient on CPN", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: nil LLMClient on CPN", t.ID)
 	}
 
 	// Step 1: Context assembly (Axiom A12).
@@ -98,7 +98,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 	if t.LLMConfig.Budget > 0 {
 		estimatedCost, err := c.LLMClient.EstimateCost(req)
 		if err == nil && estimatedCost > t.LLMConfig.Budget {
-			return 0, fmt.Errorf("transition %s: estimated cost $%.4f exceeds budget $%.4f: %w",
+			return nil, 0, fmt.Errorf("transition %s: estimated cost $%.4f exceeds budget $%.4f: %w",
 				t.ID, estimatedCost, t.LLMConfig.Budget, ErrBudgetExceeded)
 		}
 		// If EstimateCost errors, graceful degradation — proceed with the call.
@@ -133,7 +133,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 		resp, err = c.LLMClient.Complete(ctx, req)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
+		return nil, 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
 	totalCostUSD += resp.CostUSD
 
@@ -143,7 +143,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 		var loopCost float64
 		content, loopCost, err = handleToolCalls(ctx, &resp, t, c, messages, tools, streamOutput, onChunk)
 		if err != nil {
-			return totalCostUSD, err
+			return nil, totalCostUSD, err
 		}
 		totalCostUSD += loopCost
 	} else {
@@ -221,19 +221,22 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 		Timestamp:   time.Now(),
 	}
 
+	// FIX-001: Build snapshot BEFORE deposit to avoid Peek race.
+	outputSnaps := []TokenSnapshot{result.Snapshot()}
+
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return totalCostUSD, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return nil, totalCostUSD, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 		tok := result // copy per output place
 		tok.Space = p.Space
 		if err := p.Deposit(&tok); err != nil {
-			return totalCostUSD, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return nil, totalCostUSD, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 	}
 
-	return totalCostUSD, nil
+	return outputSnaps, totalCostUSD, nil
 }
 
 // handleToolCalls executes the agentic tool-call loop.
@@ -330,7 +333,11 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					select {
 					case <-ctx.Done():
 						return "", loopCost, ctx.Err()
-					case response := <-t.HITLConfig.Channel:
+					case response, ok := <-t.HITLConfig.Channel:
+						if !ok {
+							c.setState(StateRunning)
+							return "", loopCost, fmt.Errorf("transition %s: HITL channel closed unexpectedly", t.ID)
+						}
 						c.setState(StateRunning)
 						payload := fmt.Sprintf("%v", response.Payload)
 						if strings.EqualFold(strings.TrimSpace(payload), "reject") ||

@@ -126,6 +126,9 @@ func main() {
 		logger.Info("google auth disabled (GOOGLE_CLIENT_ID not set); running in dev-mode")
 	}
 
+	// ── Rate limiting ──────────────────────────────────────────────
+	serverOpts = append(serverOpts, httpapi.WithRateLimiting(httpapi.DefaultRateLimitConfig()))
+
 	// ── Driving adapter (HTTP server) ───────────────────────────────
 	if store != nil {
 		serverOpts = append(serverOpts,

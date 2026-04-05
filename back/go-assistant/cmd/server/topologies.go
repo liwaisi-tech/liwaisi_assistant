@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -14,20 +15,30 @@ import (
 func guardDirectConversation(tokens []*cpn.Token) bool {
 	for _, tok := range tokens {
 		if s, ok := tok.Payload.(string); ok {
-			return !strings.Contains(strings.ToLower(s), `"task"`)
+			var result struct {
+				Intent string `json:"intent"`
+			}
+			if err := json.Unmarshal([]byte(s), &result); err == nil {
+				return !strings.EqualFold(result.Intent, "task")
+			}
 		}
 	}
-	return true
+	return true // default to conversation on parse failure
 }
 
 // guardPlanTask fires t-plan when the classifier output contains "task".
 func guardPlanTask(tokens []*cpn.Token) bool {
 	for _, tok := range tokens {
 		if s, ok := tok.Payload.(string); ok {
-			return strings.Contains(strings.ToLower(s), `"task"`)
+			var result struct {
+				Intent string `json:"intent"`
+			}
+			if err := json.Unmarshal([]byte(s), &result); err == nil {
+				return strings.EqualFold(result.Intent, "task")
+			}
 		}
 	}
-	return false
+	return false // default to not-task on parse failure
 }
 
 // newServerFuncRegistry creates a FuncRegistry with all topology functions registered.

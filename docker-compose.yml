@@ -15,6 +15,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks: [liwaisi]
     restart: unless-stopped
 
   redis:
@@ -30,16 +31,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks: [liwaisi]
     restart: unless-stopped
 
   backend:
     build:
       context: back/go-assistant
-      network: host
       args:
         VERSION: ${VERSION:-dev}
     container_name: liwaisi-backend
-    network_mode: host
+    networks: [liwaisi]
+    ports:
+      - "8080:8080"
     env_file: .env
     environment:
       - LISTEN_ADDR=:8080
@@ -59,11 +62,12 @@ services:
   frontend:
     build:
       context: front/react-assistant
-      network: host
       args:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
     container_name: liwaisi-frontend
-    network_mode: host
+    networks: [liwaisi]
+    ports:
+      - "80:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -72,3 +76,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+
+networks:
+  liwaisi:
+    driver: bridge

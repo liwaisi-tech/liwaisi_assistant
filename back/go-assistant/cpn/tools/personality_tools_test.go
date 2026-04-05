@@ -27,7 +27,7 @@ func (m *mockPersonalityRepo) Get(_ context.Context, userID string) (*persist.Pe
 	defer m.mu.Unlock()
 	rec, ok := m.store[userID]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, nil // not found — matches real Postgres behavior
 	}
 	return rec, nil
 }
@@ -150,19 +150,9 @@ func TestGetIdentity_RepoError(t *testing.T) {
 	deps := makeDeps(repo)
 
 	exec := makeGetIdentity(deps)
-	out, err := exec(context.Background(), stringToken("user-1"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	p, ok := out.Payload.(*cpn.Personality)
-	if !ok {
-		t.Fatalf("payload type = %T, want *cpn.Personality", out.Payload)
-	}
-
-	def := cpn.DefaultPersonality()
-	if p.Principles[0].Title != def.Principles[0].Title {
-		t.Errorf("got %q, want default %q", p.Principles[0].Title, def.Principles[0].Title)
+	_, err := exec(context.Background(), stringToken("user-1"))
+	if err == nil {
+		t.Fatal("expected error for repo failure, got nil")
 	}
 }
 
@@ -274,10 +264,13 @@ func TestReset(t *testing.T) {
 		t.Errorf("got %q, want default %q", p.Principles[0].Title, def.Principles[0].Title)
 	}
 
-	// Verify deleted.
-	_, err = repo.Get(context.Background(), "user-1")
-	if err == nil {
-		t.Error("expected error after delete, got nil")
+	// Verify deleted — Get returns nil record, nil error (not-found).
+	rec, err := repo.Get(context.Background(), "user-1")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if rec != nil {
+		t.Error("expected nil record after delete, got non-nil")
 	}
 }
 

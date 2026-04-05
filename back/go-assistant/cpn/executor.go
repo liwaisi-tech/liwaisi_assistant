@@ -144,21 +144,10 @@ func (c *CPN) Run(ctx context.Context) error {
 				defer wg.Done()
 				start := time.Now()
 				// REQ-008: fireWithRetry integrates Block 4 retry.
-				costUSD, err := fireWithRetry(ctx, t.Retry, t.CircuitBreaker(), func() (float64, error) {
+				outputSnaps, costUSD, err := fireWithRetry(ctx, t.Retry, t.CircuitBreaker(), func() ([]TokenSnapshot, float64, error) {
 					return dispatch(ctx, t, c, consumed)
 				})
 				elapsed := time.Since(start)
-
-				// Snapshot output places to capture produced tokens.
-				var outputSnaps []TokenSnapshot
-				for _, pid := range t.OutputPlaces {
-					if p, ok := c.Places[pid]; ok {
-						toks, _ := p.Peek()
-						for _, tok := range toks {
-							outputSnaps = append(outputSnaps, tok.Snapshot())
-						}
-					}
-				}
 
 				// Emit transition_completed (CON-002: inside fire goroutine).
 				payload := TransitionCompletedPayload{
@@ -307,7 +296,7 @@ func consumeAll(placeIDs []string, places map[string]*Place) []Token {
 // NodeKindTool (Block 6), NodeKindLLM (Block 9), NodeKindValidate (Block 10),
 // NodeKindSubNet (Block 12), NodeKindHITL (Block 14), and NodeKindHITL
 // with RevisionLoop (Block 15) are implemented.
-func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
+func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	switch t.Kind {
 	case NodeKindTool:
 		return fireTool(ctx, t, c, consumed)
@@ -323,28 +312,28 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) (flo
 		}
 		return fireHITL(ctx, t, c, consumed)
 	case NodeKindObserver:
-		return 0, fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
+		return nil, 0, fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
 	default:
-		return 0, fmt.Errorf("%w: unknown kind %q", ErrInvalidNodeKind, t.Kind)
+		return nil, 0, fmt.Errorf("%w: unknown kind %q", ErrInvalidNodeKind, t.Kind)
 	}
 }
 
 // fireTool executes a NodeKindTool transition.
 // REQ-016: Calls t.Executor, stamps origin metadata, deposits result in OutputPlaces.
 // Returns (0, error) — tool transitions have no LLM cost.
-func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) (float64, error) {
+func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	if t.Executor == nil {
-		return 0, fmt.Errorf("transition %s: nil Executor", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: nil Executor", t.ID)
 	}
 
 	if len(consumed) == 0 {
-		return 0, fmt.Errorf("transition %s: no consumed tokens", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: no consumed tokens", t.ID)
 	}
 
 	// Call the tool executor with the first consumed token.
 	result, err := t.Executor(ctx, consumed[0])
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
 	// REQ-019: Stamp origin metadata.
@@ -354,17 +343,20 @@ func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) (flo
 	result.SessionID = c.SessionID
 	result.Timestamp = time.Now()
 
+	// FIX-001: Build snapshot BEFORE deposit to avoid Peek race.
+	outputSnaps := []TokenSnapshot{result.Snapshot()}
+
 	// Deposit result into all output places.
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return nil, 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 		tok := result // copy per output place
 		if err := p.Deposit(&tok); err != nil {
-			return 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return nil, 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 	}
 
-	return 0, nil
+	return outputSnaps, 0, nil
 }

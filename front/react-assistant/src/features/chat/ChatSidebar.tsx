@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import type { SessionListItem } from '../../types/api';
 
 function timeAgo(dateStr: string): string {
@@ -39,7 +39,7 @@ interface ChatListItemProps {
   onFork: (id: string) => void;
 }
 
-function ChatListItem({ chat, isActive, onSelect, onRename, onDelete, onFork }: ChatListItemProps) {
+const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRename, onDelete, onFork }: ChatListItemProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(chat.title);
@@ -232,7 +232,7 @@ function ChatListItem({ chat, isActive, onSelect, onRename, onDelete, onFork }: 
       )}
     </div>
   );
-}
+});
 
 // ── ChatSidebar ─────────────────────────────────────────────────────────────
 
@@ -264,14 +264,24 @@ function ChatSidebarContent({
   onFork,
   onLoadMore,
 }: Omit<ChatSidebarProps, 'embedded'>) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el || !hasMore || isLoading) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
-      onLoadMore();
-    }
+  // Use IntersectionObserver instead of scroll handler for infinite loading
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoading) {
+          onLoadMore();
+        }
+      },
+      { threshold: 0.1 },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   }, [hasMore, isLoading, onLoadMore]);
 
   return (
@@ -306,9 +316,7 @@ function ChatSidebarContent({
 
       {/* Chat list */}
       <div
-        ref={scrollRef}
         className="flex-1 overflow-y-auto chat-scroll py-1.5"
-        onScroll={handleScroll}
       >
         {chats.length === 0 && !isLoading && (
           <div className="px-4 py-8 text-center">
@@ -337,6 +345,9 @@ function ChatSidebarContent({
             </span>
           </div>
         )}
+
+        {/* Sentinel for infinite scroll via IntersectionObserver */}
+        <div ref={sentinelRef} className="h-1" />
       </div>
     </>
   );

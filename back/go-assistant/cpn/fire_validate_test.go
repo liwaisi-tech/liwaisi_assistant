@@ -76,7 +76,7 @@ func TestFireValidate_ValidPassThrough(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"intent":"greeting"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestFireValidate_ValidWithOnSuccess(t *testing.T) {
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorJSON, Payload: `{"key":"value"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestFireValidate_InvalidOneCorrection(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"bad":"data"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestFireValidate_InvalidMaxCorrections_ErrorPlace(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"original":"data"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil error (ErrorPlace routing), got: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestFireValidate_InvalidMaxCorrections_NoErrorPlace(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"data":"invalid"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrValidationFailed) {
 		t.Fatalf("expected ErrValidationFailed, got: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestFireValidate_NoCorrectionLLMID(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil (ErrorPlace routing), got: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestFireValidate_MaxCorrectionsZero(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrValidationFailed) {
 		t.Fatalf("expected ErrValidationFailed, got: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestFireValidate_MaxCorrectionsCapped(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil (ErrorPlace routing), got: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestFireValidate_ValidateFuncPrecedence(t *testing.T) {
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorJSON, Payload: `{"name":"test"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestFireValidate_StructSchemaRoundTrip(t *testing.T) {
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorJSON, Payload: `{"intent":"greeting","confidence":0.95}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestFireValidate_StructSchemaRoundTrip_Invalid(t *testing.T) {
 	// Invalid JSON string.
 	consumed := []Token{{Color: ColorJSON, Payload: "not valid json at all"}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrValidationFailed) {
 		t.Fatalf("expected ErrValidationFailed for invalid JSON, got: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestFireValidate_NilSchema_AlwaysValid(t *testing.T) {
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorJSON, Payload: "anything goes"}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil error for nil schema + nil func, got: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestFireValidate_NilValidateConfig(t *testing.T) {
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorJSON, Payload: `{}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err == nil {
 		t.Fatal("expected error for nil ValidateConfig")
 	}
@@ -454,7 +454,7 @@ func TestFireValidate_NoConsumedTokens(t *testing.T) {
 	trans := newBasicValidateTransition()
 	cpn := newTestCPNForValidate(nil, map[string]*Transition{trans.ID: trans})
 
-	_, err := fireValidate(context.Background(), trans, cpn, []Token{})
+	_, _, err := fireValidate(context.Background(), trans, cpn, []Token{})
 	if err == nil {
 		t.Fatal("expected error for empty consumed")
 	}
@@ -492,7 +492,7 @@ func TestFireValidate_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	_, err := fireValidate(ctx, trans, cpn, consumed)
+	_, _, err := fireValidate(ctx, trans, cpn, consumed)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestFireValidate_CorrectionLLMError(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err == nil {
 		t.Fatal("expected error from correction LLM")
 	}
@@ -567,7 +567,7 @@ func TestFireValidate_MultipleOutputPlaces(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"data":"test"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestFireValidate_OriginMetadata(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"data":"test"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestFireValidate_ErrorTokenFormat(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"incomplete":true}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil (ErrorPlace routing), got: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestFireValidate_PreservesOriginalTokenColor(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"data":"test"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -708,7 +708,7 @@ func TestFireValidate_CorrectionLLMNonJSON(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: "not json"}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected nil (ErrorPlace routing), got: %v", err)
 	}
@@ -862,7 +862,7 @@ func TestFireValidate_DispatchIntegration(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"data":"test"}`}}
 
-	_, err := dispatch(context.Background(), trans, cpn, consumed)
+	_, _, err := dispatch(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("dispatch to fireValidate failed: %v", err)
 	}
@@ -905,7 +905,7 @@ func TestFireValidate_CorrectionPromptContent(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"bad":"data"}`}}
 
-	_, err := fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, err := fireValidate(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -960,7 +960,7 @@ func TestFireValidate_CorrectionLLMUsesStructuredModel(t *testing.T) {
 
 	consumed := []Token{{Color: ColorJSON, Payload: `{"bad":"data"}`}}
 
-	_, _ = fireValidate(context.Background(), trans, cpn, consumed)
+	_, _, _ = fireValidate(context.Background(), trans, cpn, consumed)
 
 	if capturedReq == nil {
 		t.Fatal("expected LLM to be called")

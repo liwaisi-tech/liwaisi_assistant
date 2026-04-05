@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { TransitionTopology } from '../../../types/flow';
 
@@ -36,7 +37,7 @@ interface TransitionNodeData {
   onSelect?: (transition: TransitionTopology) => void;
 }
 
-export function TransitionNode({ data }: { data: TransitionNodeData }) {
+export const TransitionNode = memo(function TransitionNode({ data }: { data: TransitionNodeData }) {
   const { transition, fired, executionOrder, direction = 'LR', onSelect } = data;
   const color = KIND_COLORS[transition.kind] || '#64748b';
   const icon = KIND_ICONS[transition.kind] || '?';
@@ -159,4 +160,4 @@ export function TransitionNode({ data }: { data: TransitionNodeData }) {
       />
     </>
   );
-}
+});

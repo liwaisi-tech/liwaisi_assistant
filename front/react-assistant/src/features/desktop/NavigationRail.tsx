@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useTooltip } from '../../hooks/useTooltip';
 
 type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
 
@@ -74,31 +74,14 @@ function NavButton({
   isExpanded: boolean;
   onClick: () => void;
 }) {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
-    };
-  }, []);
-
-  const handleMouseEnter = useCallback(() => {
-    if (isExpanded) return;
-    tooltipTimer.current = setTimeout(() => setShowTooltip(true), 200);
-  }, [isExpanded]);
-
-  const handleMouseLeave = useCallback(() => {
-    if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
-    setShowTooltip(false);
-  }, []);
+  const tooltip = useTooltip(200);
 
   return (
     <div className="relative">
       <button
         onClick={onClick}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
+        onMouseEnter={isExpanded ? undefined : tooltip.onMouseEnter}
+        onMouseLeave={tooltip.onMouseLeave}
         className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
         style={{
           padding: '10px 12px',
@@ -126,7 +109,7 @@ function NavButton({
       </button>
 
       {/* Tooltip — only when collapsed */}
-      {showTooltip && !isExpanded && (
+      {tooltip.visible && !isExpanded && (
         <div
           className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-medium z-50 pointer-events-none"
           style={{
@@ -161,37 +144,8 @@ export function NavigationRail({
   onToolsClick,
   sidebarContent,
 }: NavigationRailProps) {
-  const [settingsTooltip, setSettingsTooltip] = useState(false);
-  const settingsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [toolsTooltip, setToolsTooltip] = useState(false);
-  const toolsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (settingsTimer.current) clearTimeout(settingsTimer.current);
-      if (toolsTimer.current) clearTimeout(toolsTimer.current);
-    };
-  }, []);
-
-  const handleSettingsMouseEnter = useCallback(() => {
-    if (isExpanded) return;
-    settingsTimer.current = setTimeout(() => setSettingsTooltip(true), 200);
-  }, [isExpanded]);
-
-  const handleSettingsMouseLeave = useCallback(() => {
-    if (settingsTimer.current) clearTimeout(settingsTimer.current);
-    setSettingsTooltip(false);
-  }, []);
-
-  const handleToolsMouseEnter = useCallback(() => {
-    if (isExpanded) return;
-    toolsTimer.current = setTimeout(() => setToolsTooltip(true), 200);
-  }, [isExpanded]);
-
-  const handleToolsMouseLeave = useCallback(() => {
-    if (toolsTimer.current) clearTimeout(toolsTimer.current);
-    setToolsTooltip(false);
-  }, []);
+  const settingsTooltip = useTooltip(200);
+  const toolsTooltip = useTooltip(200);
 
   return (
     <nav
@@ -231,8 +185,8 @@ export function NavigationRail({
       <div className="relative p-1 pb-0">
         <button
           onClick={onToolsClick}
-          onMouseEnter={handleToolsMouseEnter}
-          onMouseLeave={handleToolsMouseLeave}
+          onMouseEnter={isExpanded ? undefined : toolsTooltip.onMouseEnter}
+          onMouseLeave={toolsTooltip.onMouseLeave}
           className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
           style={{
             padding: '10px 12px',
@@ -259,7 +213,7 @@ export function NavigationRail({
         </button>
 
         {/* Tools tooltip — only when collapsed */}
-        {toolsTooltip && !isExpanded && (
+        {toolsTooltip.visible && !isExpanded && (
           <div
             className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-medium z-50 pointer-events-none"
             style={{
@@ -288,8 +242,8 @@ export function NavigationRail({
       <div className="relative p-1 pb-2">
         <button
           onClick={onSettingsClick}
-          onMouseEnter={handleSettingsMouseEnter}
-          onMouseLeave={handleSettingsMouseLeave}
+          onMouseEnter={isExpanded ? undefined : settingsTooltip.onMouseEnter}
+          onMouseLeave={settingsTooltip.onMouseLeave}
           className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
           style={{
             padding: '10px 12px',
@@ -316,7 +270,7 @@ export function NavigationRail({
         </button>
 
         {/* Settings tooltip — only when collapsed */}
-        {settingsTooltip && !isExpanded && (
+        {settingsTooltip.visible && !isExpanded && (
           <div
             className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-medium z-50 pointer-events-none"
             style={{

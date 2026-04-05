@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { PlaceTopology } from '../../../types/flow';
 
@@ -25,7 +26,7 @@ interface PlaceNodeData {
   direction?: 'LR' | 'TB';
 }
 
-export function PlaceNode({ data }: { data: PlaceNodeData }) {
+export const PlaceNode = memo(function PlaceNode({ data }: { data: PlaceNodeData }) {
   const { place, fired, direction = 'LR' } = data;
   const color = COLOR_MAP[place.color] || '#64748b';
   const isHorizontal = direction === 'LR';
@@ -73,4 +74,4 @@ export function PlaceNode({ data }: { data: PlaceNodeData }) {
       />
     </>
   );
-}
+});

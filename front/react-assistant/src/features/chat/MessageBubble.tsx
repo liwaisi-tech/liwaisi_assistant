@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { MarkdownContent } from './MarkdownContent.tsx';
 import type { HITLAction } from '../../types/chat';
 
@@ -15,7 +16,7 @@ interface MessageBubbleProps {
   onOpenMonitor?: () => void;
 }
 
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
@@ -112,7 +113,7 @@ export function MessageBubble({
       </div>
     </div>
   );
-}
+});
 
 function formatTime(date: Date): string {
   try {
