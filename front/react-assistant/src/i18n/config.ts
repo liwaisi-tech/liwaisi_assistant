@@ -2,8 +2,26 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 
+// Bundle all namespaces synchronously — ensures translations are available on first render
 import commonEn from './locales/en/common.json';
+import landingEn from './locales/en/landing.json';
+import authEn from './locales/en/auth.json';
+import chatEn from './locales/en/chat.json';
+import desktopEn from './locales/en/desktop.json';
+import monitorEn from './locales/en/monitor.json';
+import flowsEn from './locales/en/flows.json';
+import personalityEn from './locales/en/personality.json';
+import toolsEn from './locales/en/tools.json';
+
 import commonEs from './locales/es/common.json';
+import landingEs from './locales/es/landing.json';
+import authEs from './locales/es/auth.json';
+import chatEs from './locales/es/chat.json';
+import desktopEs from './locales/es/desktop.json';
+import monitorEs from './locales/es/monitor.json';
+import flowsEs from './locales/es/flows.json';
+import personalityEs from './locales/es/personality.json';
+import toolsEs from './locales/es/tools.json';
 
 export interface LanguageMeta {
   code: string;
@@ -44,15 +62,36 @@ i18n
   .use(initReactI18next)
   .init({
     resources: {
-      en: { common: commonEn },
-      es: { common: commonEs },
+      en: {
+        common: commonEn,
+        landing: landingEn,
+        auth: authEn,
+        chat: chatEn,
+        desktop: desktopEn,
+        monitor: monitorEn,
+        flows: flowsEn,
+        personality: personalityEn,
+        tools: toolsEn,
+      },
+      es: {
+        common: commonEs,
+        landing: landingEs,
+        auth: authEs,
+        chat: chatEs,
+        desktop: desktopEs,
+        monitor: monitorEs,
+        flows: flowsEs,
+        personality: personalityEs,
+        tools: toolsEs,
+      },
     },
     defaultNS: 'common',
     fallbackLng: 'en',
+    lng: DEFAULT_LANGUAGE,
     supportedLngs: SUPPORTED_LANGUAGES.map(l => l.code),
     interpolation: { escapeValue: false },
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage'],
       lookupLocalStorage: LANGUAGE_STORAGE_KEY,
       caches: ['localStorage'],
     },
