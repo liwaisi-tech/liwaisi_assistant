@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
 
 // ServerConfig holds HTTP server configuration.
@@ -48,7 +51,7 @@ type Server struct {
 }
 
 // NewServer creates an HTTP server with all routes and middleware wired.
-func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Logger, billingFetcher BillingFetcher) *Server {
+func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Logger, billingFetcher BillingFetcher, opts ...ServerOption) *Server {
 	broker := NewSSEBroker(logger)
 
 	handlers := &Handlers{
@@ -57,17 +60,28 @@ func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Lo
 		Logger:         logger,
 		BillingFetcher: billingFetcher,
 	}
+	for _, opt := range opts {
+		opt(handlers)
+	}
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, handlers)
 
-	// Apply middleware chain.
-	handler := Chain(mux,
+	// Build middleware chain.
+	// Auth middleware is applied after CORS and before handlers.
+	// When handlers.Verifier is nil (dev-mode), auth middleware passes through.
+	middlewares := []func(http.Handler) http.Handler{
 		CORSMiddleware(cfg.AllowedOrigins),
+		AuthMiddleware(handlers.Verifier, logger),
 		LoggingMiddleware(logger),
 		RecoveryMiddleware(logger),
 		RequestIDMiddleware,
-	)
+	}
+	// Rate limiting is applied after auth so user identity is available.
+	if handlers.RateLimitCfg != nil {
+		middlewares = append(middlewares, rateLimitMiddleware(*handlers.RateLimitCfg))
+	}
+	handler := Chain(mux, middlewares...)
 
 	return &Server{
 		httpServer: &http.Server{
@@ -105,4 +119,53 @@ func (s *Server) Serve(ln net.Listener) error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("server shutting down")
 	return s.httpServer.Shutdown(ctx)
+}
+
+// ServerOption configures optional server dependencies.
+type ServerOption func(*Handlers)
+
+// WithRepos injects persistence repositories for flow/execution endpoints.
+func WithRepos(flowRepo persist.FlowRepository, intelRepo persist.IntelligenceRepository, eventRepo persist.EventRepository) ServerOption {
+	return func(h *Handlers) {
+		h.FlowRepo = flowRepo
+		h.IntelRepo = intelRepo
+		h.EventRepo = eventRepo
+	}
+}
+
+// WithAuth injects a token verifier for authentication.
+// When set, auth middleware is applied to protected routes.
+// When nil, all requests pass through with a synthetic dev-user (dev-mode).
+func WithAuth(verifier auth.TokenVerifier) ServerOption {
+	return func(h *Handlers) {
+		h.Verifier = verifier
+	}
+}
+
+// WithUserRepo injects the user repository for user upsert on authentication.
+func WithUserRepo(repo persist.UserRepository) ServerOption {
+	return func(h *Handlers) {
+		h.UserRepo = repo
+	}
+}
+
+// WithPersonalityRepo injects the personality repository for personality endpoints.
+func WithPersonalityRepo(repo persist.PersonalityRepository) ServerOption {
+	return func(h *Handlers) {
+		h.PersonalityRepo = repo
+	}
+}
+
+// WithToolRegistry injects the tool registry for tools endpoints.
+func WithToolRegistry(registry *tools.Registry) ServerOption {
+	return func(h *Handlers) {
+		h.ToolRegistry = registry
+	}
+}
+
+// WithRateLimiting enables rate limiting middleware with the given configuration.
+func WithRateLimiting(cfg RateLimitConfig) ServerOption {
+	return func(h *Handlers) {
+		h.RateLimitCfg = &cfg
+	}
 }

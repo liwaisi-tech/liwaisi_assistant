@@ -150,15 +150,17 @@ func defaultSleep(ctx context.Context, d time.Duration) error {
 // On success, cb.RecordSuccess() is called. On failure, cb.RecordFailure().
 // Backoff is exponential: InitialWait * Multiplier^(attempt-1), capped at MaxWait.
 // Context cancellation terminates the wait immediately with ctx.Err().
-func fireWithRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, fire func() error) error {
+// The returned []TokenSnapshot are the output snapshots built by the fire function.
+// The returned float64 is the cost (USD) incurred by the fire function.
+func fireWithRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, fire func() ([]TokenSnapshot, float64, error)) ([]TokenSnapshot, float64, error) {
 	return doRetry(ctx, retry, cb, fire, defaultSleep)
 }
 
 // doRetry is the internal retry loop with an injectable sleep for testing.
-func doRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, fire func() error, sleep sleepFunc) error {
+func doRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, fire func() ([]TokenSnapshot, float64, error), sleep sleepFunc) ([]TokenSnapshot, float64, error) {
 	// Circuit breaker gate check.
 	if cb != nil && !cb.Allow() {
-		return ErrCircuitOpen
+		return nil, 0, ErrCircuitOpen
 	}
 
 	// No retry policy — fire once.
@@ -169,13 +171,18 @@ func doRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, f
 	maxAttempts := max(retry.MaxAttempts, 1)
 
 	var lastErr error
+	var totalCost float64
+	var lastSnaps []TokenSnapshot
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		lastErr = fire()
+		snaps, cost, err := fire()
+		totalCost += cost
+		lastErr = err
 		if lastErr == nil {
+			lastSnaps = snaps
 			if cb != nil {
 				cb.RecordSuccess()
 			}
-			return nil
+			return lastSnaps, totalCost, nil
 		}
 
 		if cb != nil {
@@ -184,7 +191,7 @@ func doRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, f
 
 		// Check if we should retry this error.
 		if retry.RetryOn != nil && !retry.RetryOn(lastErr, attempt) {
-			return lastErr
+			return nil, totalCost, lastErr
 		}
 
 		// Don't sleep after the last attempt.
@@ -195,16 +202,16 @@ func doRetry(ctx context.Context, retry *RetryPolicy, cb *CircuitBreakerState, f
 		// Exponential backoff.
 		wait := backoffDuration(retry, attempt)
 		if err := sleep(ctx, wait); err != nil {
-			return err
+			return nil, totalCost, err
 		}
 	}
 
-	return lastErr
+	return nil, totalCost, lastErr
 }
 
 // fireOnce calls fire() and records success/failure on the circuit breaker.
-func fireOnce(cb *CircuitBreakerState, fire func() error) error {
-	err := fire()
+func fireOnce(cb *CircuitBreakerState, fire func() ([]TokenSnapshot, float64, error)) ([]TokenSnapshot, float64, error) {
+	snaps, cost, err := fire()
 	if cb != nil {
 		if err == nil {
 			cb.RecordSuccess()
@@ -212,7 +219,7 @@ func fireOnce(cb *CircuitBreakerState, fire func() error) error {
 			cb.RecordFailure()
 		}
 	}
-	return err
+	return snaps, cost, err
 }
 
 // backoffDuration computes the wait time for the given attempt.

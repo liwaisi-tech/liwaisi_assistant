@@ -127,6 +127,22 @@ func (m *mockSessionRepo) Delete(ctx context.Context, sid string) error {
 	return nil
 }
 
+func (m *mockSessionRepo) ListByUserID(_ context.Context, _ string, _ *persist.SessionListOpts) (*persist.Page[*persist.SessionListItem], error) {
+	return &persist.Page[*persist.SessionListItem]{}, nil
+}
+
+func (m *mockSessionRepo) UpdateTitle(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
+func (m *mockSessionRepo) SoftDelete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionRepo) ForkSession(_ context.Context, _ string, _ string, _ int, _ string, _ string) (*persist.SessionRecord, error) {
+	return nil, nil
+}
+
 // ---------------------------------------------------------------------------
 // pool.go tests
 // ---------------------------------------------------------------------------

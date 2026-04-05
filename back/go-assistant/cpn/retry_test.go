@@ -286,9 +286,9 @@ func TestCircuitBreakerState_RecordFailureAfterSuccess(t *testing.T) {
 
 func TestFireWithRetry_NilRetry(t *testing.T) {
 	called := 0
-	err := doRetry(context.Background(), nil, nil, func() error {
+	_, _, err := doRetry(context.Background(), nil, nil, func() ([]TokenSnapshot, float64, error) {
 		called++
-		return nil
+		return nil, 0, nil
 	}, (&sleepRecorder{}).sleep)
 
 	if err != nil {
@@ -301,8 +301,8 @@ func TestFireWithRetry_NilRetry(t *testing.T) {
 
 func TestFireWithRetry_NilRetry_Error(t *testing.T) {
 	want := errors.New("boom")
-	err := doRetry(context.Background(), nil, nil, func() error {
-		return want
+	_, _, err := doRetry(context.Background(), nil, nil, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, want
 	}, (&sleepRecorder{}).sleep)
 
 	if !errors.Is(err, want) {
@@ -315,9 +315,9 @@ func TestFireWithRetry_SuccessFirstAttempt(t *testing.T) {
 	policy := DefaultRetryPolicy()
 	called := 0
 
-	err := doRetry(context.Background(), policy, nil, func() error {
+	_, _, err := doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
 		called++
-		return nil
+		return nil, 0, nil
 	}, rec.sleep)
 
 	if err != nil {
@@ -336,12 +336,12 @@ func TestFireWithRetry_SuccessSecondAttempt(t *testing.T) {
 	policy := DefaultRetryPolicy()
 	attempt := 0
 
-	err := doRetry(context.Background(), policy, nil, func() error {
+	_, _, err := doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
 		attempt++
 		if attempt == 1 {
-			return errors.New("transient")
+			return nil, 0, errors.New("transient")
 		}
-		return nil
+		return nil, 0, nil
 	}, rec.sleep)
 
 	if err != nil {
@@ -364,12 +364,12 @@ func TestFireWithRetry_ExhaustedRetries(t *testing.T) {
 	lastErr := errors.New("final-error")
 	attempt := 0
 
-	err := doRetry(context.Background(), policy, nil, func() error {
+	_, _, err := doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
 		attempt++
 		if attempt == 3 {
-			return lastErr
+			return nil, 0, lastErr
 		}
-		return errors.New("transient")
+		return nil, 0, errors.New("transient")
 	}, rec.sleep)
 
 	if !errors.Is(err, lastErr) {
@@ -397,9 +397,9 @@ func TestFireWithRetry_RetryOnStopsEarly(t *testing.T) {
 	}
 	attempt := 0
 
-	err := doRetry(context.Background(), policy, nil, func() error {
+	_, _, err := doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
 		attempt++
-		return nonRetryable
+		return nil, 0, nonRetryable
 	}, rec.sleep)
 
 	if !errors.Is(err, nonRetryable) {
@@ -429,9 +429,9 @@ func TestFireWithRetry_ContextCancelled(t *testing.T) {
 		return ctx.Err()
 	}
 
-	err := doRetry(ctx, policy, nil, func() error {
+	_, _, err := doRetry(ctx, policy, nil, func() ([]TokenSnapshot, float64, error) {
 		attempt++
-		return errors.New("transient")
+		return nil, 0, errors.New("transient")
 	}, sleepFn)
 
 	if !errors.Is(err, context.Canceled) {
@@ -453,9 +453,9 @@ func TestFireWithRetry_CircuitOpen(t *testing.T) {
 	policy := DefaultRetryPolicy()
 	called := false
 
-	err := doRetry(context.Background(), policy, cb, func() error {
+	_, _, err := doRetry(context.Background(), policy, cb, func() ([]TokenSnapshot, float64, error) {
 		called = true
-		return nil
+		return nil, 0, nil
 	}, rec.sleep)
 
 	if !errors.Is(err, ErrCircuitOpen) {
@@ -475,8 +475,8 @@ func TestFireWithRetry_RecordsSuccessOnCB(t *testing.T) {
 	rec := &sleepRecorder{}
 	policy := DefaultRetryPolicy()
 
-	err := doRetry(context.Background(), policy, cb, func() error {
-		return nil
+	_, _, err := doRetry(context.Background(), policy, cb, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, nil
 	}, rec.sleep)
 
 	if err != nil {
@@ -499,8 +499,8 @@ func TestFireWithRetry_RecordsFailureOnCB(t *testing.T) {
 		Multiplier:  2.0,
 	}
 
-	err := doRetry(context.Background(), policy, cb, func() error {
-		return errors.New("fail")
+	_, _, err := doRetry(context.Background(), policy, cb, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, errors.New("fail")
 	}, rec.sleep)
 
 	if err == nil {
@@ -520,8 +520,8 @@ func TestFireWithRetry_BackoffProgression(t *testing.T) {
 		Multiplier:  2.0,
 	}
 
-	_ = doRetry(context.Background(), policy, nil, func() error {
-		return errors.New("fail")
+	_, _, _ = doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, errors.New("fail")
 	}, rec.sleep)
 
 	// 6 attempts = 5 sleeps
@@ -553,8 +553,8 @@ func TestFireWithRetry_MaxWaitCap(t *testing.T) {
 		Multiplier:  2.0,
 	}
 
-	_ = doRetry(context.Background(), policy, nil, func() error {
-		return errors.New("fail")
+	_, _, _ = doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, errors.New("fail")
 	}, rec.sleep)
 
 	// 10 attempts = 9 sleeps
@@ -580,9 +580,9 @@ func TestFireWithRetry_MaxAttemptsZero(t *testing.T) {
 	}
 	called := 0
 
-	err := doRetry(context.Background(), policy, nil, func() error {
+	_, _, err := doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
 		called++
-		return nil
+		return nil, 0, nil
 	}, rec.sleep)
 
 	if err != nil {
@@ -602,8 +602,8 @@ func TestFireWithRetry_MultiplierOne(t *testing.T) {
 		Multiplier:  1.0,
 	}
 
-	_ = doRetry(context.Background(), policy, nil, func() error {
-		return errors.New("fail")
+	_, _, _ = doRetry(context.Background(), policy, nil, func() ([]TokenSnapshot, float64, error) {
+		return nil, 0, errors.New("fail")
 	}, rec.sleep)
 
 	// Constant wait: 200ms, 200ms, 200ms
@@ -620,9 +620,9 @@ func TestFireWithRetry_Exported(t *testing.T) {
 	// Smoke test for the exported function — verifies it calls doRetry with defaultSleep.
 	// Uses nil retry so fire() is called once with no actual sleep.
 	called := 0
-	err := fireWithRetry(context.Background(), nil, nil, func() error {
+	_, _, err := fireWithRetry(context.Background(), nil, nil, func() ([]TokenSnapshot, float64, error) {
 		called++
-		return nil
+		return nil, 0, nil
 	})
 
 	if err != nil {

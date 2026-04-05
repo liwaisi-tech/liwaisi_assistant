@@ -44,10 +44,10 @@ type HITLConfig struct {
 //  6. Set StateRunning, notify group, emit EventHITLResolved
 //  7. Deposit token into OutputPlaces (space bridging)
 //  8. Check Centaurian mode switch
-func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
+func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) ([]TokenSnapshot, float64, error) {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
-		return fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
+		return nil, 0, fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
 	}
 
 	// REQ-002: Emit EventHITLRequested with the prompt before blocking.
@@ -71,22 +71,28 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 
 	// REQ-005: Block on channel or ctx.Done.
 	var tok Token
+	var chanOK bool
 	select {
-	case tok = <-cfg.Channel:
+	case tok, chanOK = <-cfg.Channel:
+		// FIX-003: Protect against closed channel.
+		if !chanOK {
+			c.setFailed(fmt.Errorf("HITL channel closed"))
+			return nil, 0, fmt.Errorf("transition %s: HITL channel closed unexpectedly", t.ID)
+		}
 	case <-ctx.Done():
 		// REQ-011: Context cancellation → StateFailed, ErrTimeout.
 		c.setFailed(ErrTimeout)
-		return ErrTimeout
+		return nil, 0, ErrTimeout
 	}
 
 	// REQ-006: Received token MUST have Color == ColorHuman.
 	if tok.Color != ColorHuman {
-		return fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
+		return nil, 0, fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
 	}
 
 	// REQ-007: If token payload is HITLResponse{Action: HITLReject}, return ErrHITLRejected.
 	if resp, ok := tok.Payload.(HITLResponse); ok && resp.Action == HITLReject {
-		return ErrHITLRejected
+		return nil, 0, ErrHITLRejected
 	}
 
 	// REQ-008: Set StateRunning, emit EventHITLResolved.
@@ -105,27 +111,36 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 	})
 
 	// REQ-008/REQ-009: Deposit token into all OutputPlaces with space bridging.
+	// FIX-001: Build snapshot BEFORE deposit to avoid Peek race.
+	out := tok // template for snapshot
+	out.OriginID = c.ID
+	out.OriginDepth = c.Depth
+	out.OriginKind = NodeKindHITL
+	out.SessionID = c.SessionID
+	out.Timestamp = time.Now()
+	outputSnaps := []TokenSnapshot{out.Snapshot()}
+
 	needCentaurian := false
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return nil, 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 
 		// GUD-001: Space bridging — HITL is the sanctioned boundary crossing
 		// between Surface and Computation. Adjust token Space to match
 		// each output place's Space before deposit. This is the ONLY
 		// transition type that adjusts token Space.
-		out := tok // copy per output place
-		out.Space = p.Space
-		out.OriginID = c.ID
-		out.OriginDepth = c.Depth
-		out.OriginKind = NodeKindHITL
-		out.SessionID = c.SessionID
-		out.Timestamp = time.Now()
+		deposit := tok // copy per output place
+		deposit.Space = p.Space
+		deposit.OriginID = c.ID
+		deposit.OriginDepth = c.Depth
+		deposit.OriginKind = NodeKindHITL
+		deposit.SessionID = c.SessionID
+		deposit.Timestamp = time.Now()
 
-		if err := p.Deposit(&out); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+		if err := p.Deposit(&deposit); err != nil {
+			return nil, 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 
 		// REQ-010: Track if any output place is SpaceComputation.
@@ -139,7 +154,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 		c.switchModeToCentaurian()
 	}
 
-	return nil
+	return outputSnaps, 0, nil
 }
 
 // fireHITLWithRevision executes a multi-round HITL revision loop.
@@ -152,14 +167,15 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
 //  5. Approve -> deposit + exit | Reject -> error | Revise -> LLM correction -> loop
 //
 // Bounded by MaxRevisions. Context cancellation unblocks at every round.
-func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token) error {
+func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token) ([]TokenSnapshot, float64, error) {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
-		return fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
+		return nil, 0, fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
 	}
 
 	prompt := cfg.Prompt
 	rounds := 0
+	var totalRevisionCost float64
 
 	for {
 		// REQ-014: Set StateWaiting before blocking.
@@ -183,16 +199,22 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 
 		// REQ-012: Block on channel or context cancellation.
 		var tok Token
+		var chanOK bool
 		select {
-		case tok = <-cfg.Channel:
+		case tok, chanOK = <-cfg.Channel:
+			// FIX-003: Protect against closed channel.
+			if !chanOK {
+				c.setFailed(fmt.Errorf("HITL channel closed"))
+				return nil, totalRevisionCost, fmt.Errorf("transition %s: HITL channel closed unexpectedly", t.ID)
+			}
 		case <-ctx.Done():
 			c.setFailed(ErrTimeout)
-			return ErrTimeout
+			return nil, totalRevisionCost, ErrTimeout
 		}
 
 		// Validate color.
 		if tok.Color != ColorHuman {
-			return fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
+			return nil, totalRevisionCost, fmt.Errorf("%w: expected %s, got %s", ErrColorMismatch, ColorHuman, tok.Color)
 		}
 
 		// REQ-014: Set StateRunning after receiving.
@@ -212,7 +234,7 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 			// GUD-004: Bare string treated as approve for backward compat.
 			resp = HITLResponse{Action: HITLApprove, Content: v}
 		default:
-			return fmt.Errorf("transition %s: unsupported HITL payload type %T", t.ID, tok.Payload)
+			return nil, totalRevisionCost, fmt.Errorf("transition %s: unsupported HITL payload type %T", t.ID, tok.Payload)
 		}
 
 		// PAT-002: Action dispatch.
@@ -225,32 +247,35 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 				TransitionKind: NodeKindHITL,
 				Token:          &tok,
 			})
-			return depositHITLRevision(t, c, &tok)
+			snaps, depErr := depositHITLRevision(t, c, &tok)
+			return snaps, totalRevisionCost, depErr
 
 		case HITLReject:
 			// REQ-003: Reject returns error.
-			return ErrHITLRejected
+			return nil, totalRevisionCost, ErrHITLRejected
 
 		case HITLRevise:
 			// REQ-005: Check MaxRevisions cap.
 			if rounds >= cfg.MaxRevisions {
-				return ErrHITLMaxRevisions
+				return nil, totalRevisionCost, ErrHITLMaxRevisions
 			}
 
 			// REQ-011: Validate correction transition exists.
 			corrTransition, ok := c.Transitions[cfg.CorrectionLLMID]
 			if !ok {
-				return fmt.Errorf("transition %s: correction LLM transition %s not found", t.ID, cfg.CorrectionLLMID)
+				return nil, totalRevisionCost, fmt.Errorf("transition %s: correction LLM transition %s not found", t.ID, cfg.CorrectionLLMID)
 			}
 
 			// REQ-007: Call correction LLM via fireLLMDirect.
+			// FIX-006: Propagate revision LLM cost.
 			feedbackToken := Token{
 				Color:   ColorString,
 				Payload: resp.Content,
 			}
-			revised, err := fireLLMDirect(ctx, corrTransition, c, &feedbackToken)
+			revised, revCost, err := fireLLMDirect(ctx, corrTransition, c, &feedbackToken)
+			totalRevisionCost += revCost
 			if err != nil {
-				return fmt.Errorf("transition %s: revision LLM (round %d): %w", t.ID, rounds, err)
+				return nil, totalRevisionCost, fmt.Errorf("transition %s: revision LLM (round %d): %w", t.ID, rounds, err)
 			}
 
 			// Update prompt with revised text.
@@ -259,31 +284,41 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 			continue
 
 		default:
-			return fmt.Errorf("transition %s: unknown HITL action %q", t.ID, resp.Action)
+			return nil, totalRevisionCost, fmt.Errorf("transition %s: unknown HITL action %q", t.ID, resp.Action)
 		}
 	}
 }
 
 // depositHITLRevision deposits the approved token into all output places
 // with space bridging, following the same pattern as fireHITL.
-func depositHITLRevision(t *Transition, c *CPN, tok *Token) error {
+// Returns output snapshots built before deposit (FIX-001).
+func depositHITLRevision(t *Transition, c *CPN, tok *Token) ([]TokenSnapshot, error) {
+	// FIX-001: Build snapshot BEFORE deposit to avoid Peek race.
+	out := *tok
+	out.OriginID = c.ID
+	out.OriginDepth = c.Depth
+	out.OriginKind = NodeKindHITL
+	out.SessionID = c.SessionID
+	out.Timestamp = time.Now()
+	outputSnaps := []TokenSnapshot{out.Snapshot()}
+
 	needCentaurian := false
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return nil, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 
-		out := *tok
-		out.Space = p.Space
-		out.OriginID = c.ID
-		out.OriginDepth = c.Depth
-		out.OriginKind = NodeKindHITL
-		out.SessionID = c.SessionID
-		out.Timestamp = time.Now()
+		deposit := *tok
+		deposit.Space = p.Space
+		deposit.OriginID = c.ID
+		deposit.OriginDepth = c.Depth
+		deposit.OriginKind = NodeKindHITL
+		deposit.SessionID = c.SessionID
+		deposit.Timestamp = time.Now()
 
-		if err := p.Deposit(&out); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+		if err := p.Deposit(&deposit); err != nil {
+			return nil, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 
 		if p.Space == SpaceComputation {
@@ -295,16 +330,16 @@ func depositHITLRevision(t *Transition, c *CPN, tok *Token) error {
 		c.switchModeToCentaurian()
 	}
 
-	return nil
+	return outputSnaps, nil
 }
 
 // fireLLMDirect makes an inline LLM call for the revision correction loop.
 // Uses the correction transition's LLMConfig for model selection.
 // Returns the LLM's text response content.
 // Does NOT consume from or deposit to places — this is an inline sub-call.
-func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, input *Token) (string, error) {
+func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, input *Token) (string, float64, error) {
 	if c.LLMClient == nil {
-		return "", fmt.Errorf("nil LLMClient on CPN")
+		return "", 0, fmt.Errorf("nil LLMClient on CPN")
 	}
 
 	// GUD-001: Build minimal LLMRequest.
@@ -345,10 +380,11 @@ func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, inpu
 
 	resp, err := c.LLMClient.Complete(ctx, req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
-	return resp.Content, nil
+	// FIX-006: Return cost for proper cost propagation.
+	return resp.Content, resp.CostUSD, nil
 }
 
 // formatRevisionPrompt creates a human-facing prompt for the next revision round.

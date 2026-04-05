@@ -189,6 +189,123 @@ func (r *MemorySessionRepository) Delete(ctx context.Context, sessionID string) 
 	return nil
 }
 
+func (r *MemorySessionRepository) ListByUserID(ctx context.Context, userID string, opts *SessionListOpts) (*Page[*SessionListItem], error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var items []*SessionListItem
+	for _, s := range r.sessions {
+		if s.UserID != userID || s.DeletedAt != nil || s.State == SessionExpired {
+			continue
+		}
+		preview := ""
+		if len(s.Messages) > 0 {
+			last := s.Messages[len(s.Messages)-1]
+			preview = last.Content
+			if len(preview) > 120 {
+				preview = preview[:120]
+			}
+		}
+		items = append(items, &SessionListItem{
+			ID:                  s.ID,
+			Title:               s.Title,
+			State:               s.State,
+			LastMessagePreview:  preview,
+			LastActivityAt:      s.LastActivityAt,
+			CreatedAt:           s.CreatedAt,
+			MessageCount:        len(s.Messages),
+			ForkedFromSessionID: s.ForkedFromSessionID,
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].LastActivityAt.After(items[j].LastActivityAt)
+	})
+
+	limit := 50
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+	if limit > len(items) {
+		limit = len(items)
+	}
+
+	return &Page[*SessionListItem]{Items: items[:limit], HasMore: len(items) > limit}, nil
+}
+
+func (r *MemorySessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	s.Title = title
+	return nil
+}
+
+func (r *MemorySessionRepository) SoftDelete(ctx context.Context, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	now := time.Now()
+	s.DeletedAt = &now
+	return nil
+}
+
+func (r *MemorySessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*SessionRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src, ok := r.sessions[sourceSessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	// Validate message index
+	if messageIndex < 0 || messageIndex >= len(src.Messages) {
+		return nil, ErrInvalidInput
+	}
+
+	// Copy messages up to messageIndex (inclusive)
+	now := time.Now()
+	copiedMessages := make([]*MessageRecord, messageIndex+1)
+	for i := 0; i <= messageIndex; i++ {
+		mc := *src.Messages[i]
+		mc.SessionID = newSessionID
+		copiedMessages[i] = &mc
+	}
+
+	forked := &SessionRecord{
+		ID:                  newSessionID,
+		UserID:              userID,
+		Channel:             channel,
+		State:               SessionActive,
+		CreatedAt:           now,
+		LastActivityAt:      now,
+		Messages:            copiedMessages,
+		Title:               "Fork of: " + src.Title,
+		ForkedFromSessionID: sourceSessionID,
+		ForkMessageCount:    messageIndex + 1,
+	}
+	r.sessions[newSessionID] = forked
+	return forked, nil
+}
+
 // ---- MemoryEventRepository ----
 
 // MemoryEventRepository is a thread-safe in-memory EventRepository (append-only).

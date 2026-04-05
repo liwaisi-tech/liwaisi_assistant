@@ -50,13 +50,13 @@ const correctionSystemPrompt = "You are a JSON correction assistant. Fix the JSO
 //  2. On success: apply OnSuccess transform, deposit to OutputPlaces
 //  3. On failure + corrections available: call correction LLM, re-validate
 //  4. On failure + corrections exhausted: ErrorPlace routing or ErrValidationFailed
-func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) error {
+func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	if t.ValidateConfig == nil {
-		return fmt.Errorf("transition %s: nil ValidateConfig", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: nil ValidateConfig", t.ID)
 	}
 
 	if len(consumed) == 0 {
-		return fmt.Errorf("transition %s: no consumed tokens", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: no consumed tokens", t.ID)
 	}
 
 	cfg := t.ValidateConfig
@@ -67,7 +67,8 @@ func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) 
 	err := validatePayload(payload, cfg)
 	if err == nil {
 		// Valid on first try — deposit.
-		return depositValidated(t, c, payload, originalColor, cfg)
+		snaps, depErr := depositValidated(t, c, payload, originalColor, cfg)
+		return snaps, 0, depErr
 	}
 
 	// Step 2: Correction loop.
@@ -75,24 +76,27 @@ func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) 
 
 	if maxCorr <= 0 || cfg.CorrectionLLMID == "" {
 		// No corrections available — route error.
-		return routeValidationError(t, c, err, payload)
+		return nil, 0, routeValidationError(t, c, err, payload)
 	}
 
 	currentPayload := payload
 	lastErr := err
+	var totalCorrectionCost float64
 
 	for i := range maxCorr {
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, totalCorrectionCost, ctx.Err()
 		default:
 		}
 
 		// Call correction LLM.
-		corrected, corrErr := callCorrectionLLM(ctx, c, cfg.CorrectionLLMID, currentPayload, lastErr.Error())
+		// FIX-006: Propagate correction LLM cost.
+		corrected, corrCost, corrErr := callCorrectionLLM(ctx, c, cfg.CorrectionLLMID, currentPayload, lastErr.Error())
+		totalCorrectionCost += corrCost
 		if corrErr != nil {
-			return fmt.Errorf("transition %s: correction LLM (iteration %d): %w", t.ID, i+1, corrErr)
+			return nil, totalCorrectionCost, fmt.Errorf("transition %s: correction LLM (iteration %d): %w", t.ID, i+1, corrErr)
 		}
 
 		// Re-validate corrected output.
@@ -100,16 +104,18 @@ func fireValidate(ctx context.Context, t *Transition, c *CPN, consumed []Token) 
 		lastErr = validatePayload(currentPayload, cfg)
 		if lastErr == nil {
 			// Correction succeeded — deposit.
-			return depositValidated(t, c, currentPayload, originalColor, cfg)
+			snaps, depErr := depositValidated(t, c, currentPayload, originalColor, cfg)
+			return snaps, totalCorrectionCost, depErr
 		}
 	}
 
 	// All corrections exhausted.
-	return routeValidationError(t, c, lastErr, payload)
+	return nil, totalCorrectionCost, routeValidationError(t, c, lastErr, payload)
 }
 
 // depositValidated applies OnSuccess and deposits to all OutputPlaces.
-func depositValidated(t *Transition, c *CPN, payload any, color ColorSet, cfg *ValidateConfig) error {
+// Returns output snapshots built before deposit (FIX-001).
+func depositValidated(t *Transition, c *CPN, payload any, color ColorSet, cfg *ValidateConfig) ([]TokenSnapshot, error) {
 	if cfg.OnSuccess != nil {
 		payload = cfg.OnSuccess(payload)
 	}
@@ -124,19 +130,22 @@ func depositValidated(t *Transition, c *CPN, payload any, color ColorSet, cfg *V
 		Timestamp:   time.Now(),
 	}
 
+	// FIX-001: Build snapshot BEFORE deposit to avoid Peek race.
+	outputSnaps := []TokenSnapshot{result.Snapshot()}
+
 	for _, pid := range t.OutputPlaces {
 		p, ok := c.Places[pid]
 		if !ok {
-			return fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			return nil, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
 		}
 		tok := result // copy per output place
 		tok.Space = p.Space
 		if err := p.Deposit(&tok); err != nil {
-			return fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			return nil, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
 		}
 	}
 
-	return nil
+	return outputSnaps, nil
 }
 
 // routeValidationError deposits a ColorError token to ErrorPlace or returns ErrValidationFailed.
@@ -222,9 +231,10 @@ func validateAgainstSchema(payload, schema any) error {
 
 // callCorrectionLLM sends the invalid payload to a correction LLM.
 // Uses c.LLMClient.Complete() directly with a focused correction prompt.
-func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, invalidPayload any, schemaError string) (any, error) {
+// FIX-006: Returns the LLM call cost for proper cost propagation.
+func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, invalidPayload any, schemaError string) (any, float64, error) {
 	if c.LLMClient == nil {
-		return nil, fmt.Errorf("nil LLMClient on CPN")
+		return nil, 0, fmt.Errorf("nil LLMClient on CPN")
 	}
 
 	prompt := buildCorrectionPrompt(invalidPayload, schemaError)
@@ -259,12 +269,12 @@ func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, inva
 
 	resp, err := c.LLMClient.Complete(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Strip code fences and return the corrected output.
 	corrected := stripCodeFences(resp.Content)
-	return corrected, nil
+	return corrected, resp.CostUSD, nil
 }
 
 // buildCorrectionPrompt formats the correction request for the LLM.

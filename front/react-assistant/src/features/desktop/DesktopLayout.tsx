@@ -1,37 +1,424 @@
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useChat } from '../../hooks/useChat';
+import { useSessionManager } from '../../hooks/useSessionManager';
+import { useMonitorManager } from '../../hooks/useMonitorManager';
+import { usePanelManager } from '../../hooks/usePanelManager';
+import { useIsMobile } from '../../hooks/useMediaQuery';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { StatusBar } from './StatusBar';
-import { Dock } from './Dock';
+import { NavigationRail } from './NavigationRail';
+import { CommandPalette } from './CommandPalette';
+import type { PaletteAction } from './CommandPalette';
+import { AdaptivePanel } from './AdaptivePanel';
+import { MobileTabBar } from './MobileTabBar';
 import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
+import { ChatSidebar } from '../chat/ChatSidebar';
+import { ForkDialog } from '../chat/ForkDialog';
+import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
+import { FlowDetail } from '../cpn-visualizer/FlowDetail';
+import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
+import { PersonalityPanel } from '../personality/PersonalityPanel';
+import { ToolBrowser } from '../tools/ToolBrowser';
 
 interface DesktopLayoutProps {
   userId: string;
 }
 
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
-  const { messages, sessionState, isConnected, sendMessage, resolveHITL, error } = useChat(userId);
+  const isMobile = useIsMobile();
+
+  // ── Session + navigation state ──────────────────────────────────────────
+  const session = useSessionManager(userId);
+  const {
+    activeApp, setActiveApp, isRailExpanded, setIsRailExpanded,
+    isPaletteOpen, forkingSessionId, chatList,
+    togglePalette, closePalette,
+    handleForkRequest, handleForkConfirm, closeForkDialog,
+  } = session;
+
+  // ── Panel state ─────────────────────────────────────────────────────────
+  const panel = usePanelManager();
+
+  // ── Monitor + SSE coordination ──────────────────────────────────────────
+  const onSessionCompleted = useCallback(() => {
+    chatList.refresh();
+  }, [chatList.refresh]);
+
+  const monitorMgr = useMonitorManager(onSessionCompleted);
+
+  const { messages, sessionState, sessionId, isConnected, sendMessage, resolveHITL, error } = useChat(
+    chatList.activeSessionId,
+    monitorMgr.sseCallbacks,
+  );
+
+  // ── Coordination effects (bridge chat <-> monitor) ──────────────────────
+
+  // Track message count to detect new user messages -> new execution
+  const prevMessageCountRef = useRef(0);
+  useEffect(() => {
+    const currentCount = messages.length;
+    const prev = prevMessageCountRef.current;
+    prevMessageCountRef.current = currentCount;
+
+    if (currentCount > prev && currentCount > 0) {
+      const lastMsg = messages[currentCount - 1];
+      if (lastMsg.role === 'user') {
+        monitorMgr.monitor.startNewExecution(lastMsg.content);
+      }
+    }
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset monitor and reload execution data when the active session changes
+  const prevMonitorSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionId || sessionId === prevMonitorSessionRef.current) return;
+    prevMonitorSessionRef.current = sessionId;
+
+    monitorMgr.monitor.reset();
+    monitorMgr.loadMonitorDataForSession(sessionId);
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When session goes from running -> idle, reload monitor data
+  const prevSessionStateRef = useRef<string>(sessionState);
+  useEffect(() => {
+    const wasRunning = prevSessionStateRef.current === 'running';
+    prevSessionStateRef.current = sessionState;
+
+    if (wasRunning && sessionState === 'idle' && sessionId) {
+      monitorMgr.loadMonitorDataForSession(sessionId);
+      chatList.refresh();
+    }
+  }, [sessionState, sessionId, monitorMgr.loadMonitorDataForSession]);
+
+  // ── Send message handler ────────────────────────────────────────────────
+  const handleSendMessage = useCallback(async (content: string) => {
+    if (sessionState === 'completed') {
+      const newId = await chatList.createChat();
+      if (newId) {
+        setTimeout(() => sendMessage(content), 200);
+      }
+    } else {
+      sendMessage(content);
+    }
+  }, [sessionState, chatList.createChat, sendMessage]);
+
+  const handleOpenMonitor = useCallback(() => {
+    setActiveApp('monitor');
+    panel.closePanel();
+    setIsRailExpanded(false);
+  }, [setActiveApp, panel.closePanel, setIsRailExpanded]);
+
+  // ── Navigation helpers that also clear panel ────────────────────────────
+  const navigateAndClearPanel = useCallback((app: typeof activeApp) => {
+    setActiveApp(app);
+    panel.closePanel();
+    setIsRailExpanded(false);
+    panel.setFlowHash(null);
+  }, [setActiveApp, panel.closePanel, setIsRailExpanded, panel.setFlowHash]);
+
+  const handlePanelPopOut = useCallback(() => {
+    if (panel.panelContent) {
+      setActiveApp(panel.panelContent);
+      panel.closePanel();
+      setIsRailExpanded(false);
+    }
+  }, [panel.panelContent, setActiveApp, panel.closePanel, setIsRailExpanded]);
+
+  const toggleFlowsPanel = useCallback(() => {
+    if (activeApp !== 'chat') return;
+    panel.togglePanel('flows');
+  }, [activeApp, panel.togglePanel]);
+
+  const toggleMonitorPanel = useCallback(() => {
+    if (activeApp !== 'chat') return;
+    panel.togglePanel('monitor');
+  }, [activeApp, panel.togglePanel]);
+
+  // Override rail navigate to also clear panel
+  const handleRailNav = useCallback((app: typeof activeApp) => {
+    if (app === 'chat' && activeApp === 'chat') {
+      setIsRailExpanded((prev) => !prev);
+      return;
+    }
+    navigateAndClearPanel(app);
+  }, [activeApp, setIsRailExpanded, navigateAndClearPanel]);
+
+  const handleSettingsNav = useCallback(() => {
+    navigateAndClearPanel('personality');
+  }, [navigateAndClearPanel]);
+
+  const handleToolsNav = useCallback(() => {
+    navigateAndClearPanel('tools');
+  }, [navigateAndClearPanel]);
+
+  // ── Command Palette actions ─────────────────────────────────────────────
+
+  const paletteActions: PaletteAction[] = useMemo(() => [
+    {
+      id: 'nav-chat',
+      label: 'Go to Chat',
+      category: 'Navigation',
+      shortcut: '\u2318 1',
+      keywords: ['conversation', 'message'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        </svg>
+      ),
+      handler: () => navigateAndClearPanel('chat'),
+    },
+    {
+      id: 'nav-flows',
+      label: 'Go to Flows',
+      category: 'Navigation',
+      shortcut: '\u2318 2',
+      keywords: ['topology', 'cpn', 'petri'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="19" r="2" />
+          <path d="M12 7v4M12 11l-6 6M12 11l6 6" />
+        </svg>
+      ),
+      handler: () => navigateAndClearPanel('flows'),
+    },
+    {
+      id: 'nav-monitor',
+      label: 'Go to Monitor',
+      category: 'Navigation',
+      shortcut: '\u2318 3',
+      keywords: ['execution', 'trace', 'debug'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
+      ),
+      handler: () => { setActiveApp('monitor'); panel.closePanel(); setIsRailExpanded(false); },
+    },
+    {
+      id: 'nav-personality',
+      label: 'Agent Identity',
+      category: 'Navigation',
+      shortcut: '\u2318 4',
+      keywords: ['personality', 'principles', 'identity', 'settings'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      ),
+      handler: () => navigateAndClearPanel('personality'),
+    },
+    {
+      id: 'nav-tools',
+      label: 'Tool Browser',
+      category: 'Navigation',
+      shortcut: '\u2318 5',
+      keywords: ['tools', 'registry', 'wrench', 'browser'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+        </svg>
+      ),
+      handler: () => navigateAndClearPanel('tools'),
+    },
+    {
+      id: 'chat-new',
+      label: 'New Chat',
+      category: 'Chat',
+      shortcut: '\u2318 N',
+      keywords: ['create', 'start', 'conversation'],
+      handler: () => { chatList.createChat(); setActiveApp('chat'); panel.closePanel(); },
+    },
+    {
+      id: 'view-sidebar',
+      label: 'Toggle Chat Sidebar',
+      category: 'View',
+      shortcut: '\u2318 B',
+      keywords: ['sessions', 'history', 'list'],
+      handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); },
+    },
+    {
+      id: 'view-flows-panel',
+      label: 'Open Flows Panel',
+      category: 'View',
+      shortcut: '\u2318\u21E7F',
+      keywords: ['split', 'dual', 'side'],
+      handler: toggleFlowsPanel,
+    },
+    {
+      id: 'view-monitor-panel',
+      label: 'Open Monitor Panel',
+      category: 'View',
+      shortcut: '\u2318\u21E7M',
+      keywords: ['split', 'dual', 'execution'],
+      handler: toggleMonitorPanel,
+    },
+  ], [activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel]);
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+
+  const shortcuts = useMemo(() => [
+    { key: 'k', meta: true, handler: togglePalette, global: true },
+    { key: '1', meta: true, handler: () => navigateAndClearPanel('chat') },
+    { key: '2', meta: true, handler: () => navigateAndClearPanel('flows') },
+    { key: '3', meta: true, handler: () => { setActiveApp('monitor'); panel.closePanel(); setIsRailExpanded(false); } },
+    { key: '4', meta: true, handler: () => navigateAndClearPanel('personality') },
+    { key: '5', meta: true, handler: () => navigateAndClearPanel('tools') },
+    { key: 'n', meta: true, handler: () => { chatList.createChat(); setActiveApp('chat'); panel.closePanel(); } },
+    { key: 'b', meta: true, handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); } },
+    { key: 'f', meta: true, shift: true, handler: toggleFlowsPanel },
+    { key: 'm', meta: true, shift: true, handler: toggleMonitorPanel },
+    { key: 'Escape', handler: () => { if (isPaletteOpen) { closePalette(); } else if (panel.panelContent) { panel.closePanel(); } } },
+  ], [activeApp, isPaletteOpen, panel.panelContent, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, togglePalette, closePalette, toggleFlowsPanel, toggleMonitorPanel]);
+
+  useKeyboardShortcuts(shortcuts);
+
+  // ── Sidebar content for rail expansion ──────────────────────────────────
+
+  const sidebarContent = activeApp === 'chat' ? (
+    <ChatSidebar
+      embedded
+      chats={chatList.chats}
+      activeSessionId={chatList.activeSessionId}
+      isLoading={chatList.isLoading}
+      hasMore={chatList.hasMore}
+      onSelect={chatList.switchChat}
+      onCreate={chatList.createChat}
+      onRename={chatList.renameChat}
+      onDelete={chatList.deleteChat}
+      onFork={handleForkRequest}
+      onLoadMore={chatList.loadMore}
+    />
+  ) : undefined;
+
+  // ── Panel content ───────────────────────────────────────────────────────
+
+  const panelTitle = panel.panelContent === 'flows' ? 'Flows' : panel.panelContent === 'monitor' ? 'Monitor' : '';
+
+  const renderPanelContent = () => {
+    if (panel.panelContent === 'flows') {
+      if (panel.selectedPanelFlowHash) {
+        return <FlowDetail hash={panel.selectedPanelFlowHash} onBack={() => panel.setPanelFlowHash(null)} />;
+      }
+      return <FlowBrowser onSelectFlow={(hash) => panel.setPanelFlowHash(hash)} />;
+    }
+    if (panel.panelContent === 'monitor') {
+      return (
+        <ExecutionMonitor
+          state={monitorMgr.monitor.state}
+          selectedRun={monitorMgr.monitor.selectedRun}
+          onSelectRun={monitorMgr.monitor.selectRun}
+          onSelectTransition={monitorMgr.monitor.selectTransition}
+          onNavigateCPN={monitorMgr.monitor.navigateCPN}
+          onLoadTrace={monitorMgr.handleLoadTrace}
+          sessionId={sessionId}
+        />
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="scan-lines flex flex-col h-dvh relative" style={{ backgroundColor: 'var(--bg-deep)' }}>
-      <StatusBar sessionState={sessionState} isConnected={isConnected} />
+      <StatusBar sessionState={sessionState} isConnected={isConnected} activeApp={activeApp} />
 
-      <MessageList
-        messages={messages}
-        sessionState={sessionState}
-        onSuggestionClick={sendMessage}
-        onHITLAction={resolveHITL}
-      />
+      <div className="flex flex-1 min-h-0">
+        {/* Navigation Rail -- hidden on mobile */}
+        {!isMobile && (
+          <NavigationRail
+            activeApp={activeApp}
+            isExpanded={isRailExpanded}
+            onNavigate={handleRailNav}
+            onSettingsClick={handleSettingsNav}
+            onToolsClick={handleToolsNav}
+            sidebarContent={sidebarContent}
+          />
+        )}
 
-      <div className="pb-20">
-        <MessageInput
-          onSend={sendMessage}
-          disabled={sessionState === 'running' || sessionState === 'waiting'}
-          sessionState={sessionState}
-          error={error}
-        />
+        {/* Main content area */}
+        <div className="flex-1 flex min-w-0 relative overflow-hidden">
+          {/* Primary content */}
+          <div className="flex-1 flex flex-col min-w-0">
+            {activeApp === 'chat' && (
+              <>
+                <MessageList
+                  messages={messages}
+                  sessionState={sessionState}
+                  onSuggestionClick={handleSendMessage}
+                  onHITLAction={resolveHITL}
+                  onOpenMonitor={handleOpenMonitor}
+                />
+                <div className={isMobile ? 'pb-16' : ''}>
+                  <MessageInput
+                    onSend={handleSendMessage}
+                    disabled={sessionState === 'running' || sessionState === 'waiting'}
+                    sessionState={sessionState}
+                    error={error}
+                  />
+                </div>
+              </>
+            )}
+
+            {activeApp === 'flows' && !panel.selectedFlowHash && (
+              <FlowBrowser onSelectFlow={(hash) => panel.setFlowHash(hash)} />
+            )}
+
+            {activeApp === 'flows' && panel.selectedFlowHash && (
+              <FlowDetail hash={panel.selectedFlowHash} onBack={() => panel.setFlowHash(null)} />
+            )}
+
+            {activeApp === 'monitor' && (
+              <ExecutionMonitor
+                state={monitorMgr.monitor.state}
+                selectedRun={monitorMgr.monitor.selectedRun}
+                onSelectRun={monitorMgr.monitor.selectRun}
+                onSelectTransition={monitorMgr.monitor.selectTransition}
+                onNavigateCPN={monitorMgr.monitor.navigateCPN}
+                onLoadTrace={monitorMgr.handleLoadTrace}
+                sessionId={sessionId}
+              />
+            )}
+
+            {activeApp === 'personality' && <PersonalityPanel />}
+
+            {activeApp === 'tools' && <ToolBrowser />}
+          </div>
+
+          {/* Adaptive Right Panel -- only in chat mode, desktop only */}
+          {!isMobile && activeApp === 'chat' && (
+            <AdaptivePanel
+              isOpen={panel.panelContent !== null}
+              title={panelTitle}
+              onClose={panel.closePanel}
+              onPopOut={handlePanelPopOut}
+            >
+              {renderPanelContent()}
+            </AdaptivePanel>
+          )}
+        </div>
       </div>
 
-      <Dock />
+      {/* Mobile Tab Bar */}
+      {isMobile && (
+        <MobileTabBar activeApp={activeApp} onNavigate={handleRailNav} />
+      )}
+
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={isPaletteOpen}
+        onClose={closePalette}
+        actions={paletteActions}
+      />
+
+      {/* Fork Dialog */}
+      {forkingSessionId && (
+        <ForkDialog
+          messages={messages}
+          onFork={handleForkConfirm}
+          onClose={closeForkDialog}
+        />
+      )}
     </div>
   );
 }

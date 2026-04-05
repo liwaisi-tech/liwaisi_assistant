@@ -33,6 +33,9 @@ var (
 	// ErrLedgerNotFound is returned when a ledger record does not exist.
 	ErrLedgerNotFound = errors.New("persist: ledger record not found")
 
+	// ErrUserNotFound is returned when a user ID or email does not exist.
+	ErrUserNotFound = errors.New("persist: user not found")
+
 	// ErrInvalidInput is returned when method arguments fail validation.
 	ErrInvalidInput = errors.New("persist: invalid input")
 )

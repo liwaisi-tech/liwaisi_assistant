@@ -9,6 +9,12 @@ RUN npm ci --network-timeout=120000
 
 # Copy source and build
 COPY . .
+
+# Vite embeds VITE_* env vars at build time.
+# Pass VITE_GOOGLE_CLIENT_ID as a build arg so it's available during `vite build`.
+ARG VITE_GOOGLE_CLIENT_ID
+ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
+
 RUN npm run build
 
 # ── Runtime stage ──

@@ -131,6 +131,35 @@ func (r *SessionRepository) Delete(ctx context.Context, sessionID string) error 
 	return nil
 }
 
+func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opts *persist.SessionListOpts) (*persist.Page[*persist.SessionListItem], error) {
+	return r.fallback.ListByUserID(ctx, userID, opts)
+}
+
+func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+	if err := r.fallback.UpdateTitle(ctx, sessionID, title); err != nil {
+		return err
+	}
+	r.invalidate(ctx, sessionID)
+	return nil
+}
+
+func (r *SessionRepository) SoftDelete(ctx context.Context, sessionID string) error {
+	if err := r.fallback.SoftDelete(ctx, sessionID); err != nil {
+		return err
+	}
+	r.evict(ctx, sessionID)
+	return nil
+}
+
+func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*persist.SessionRecord, error) {
+	rec, err := r.fallback.ForkSession(ctx, newSessionID, sourceSessionID, messageIndex, userID, channel)
+	if err != nil {
+		return nil, err
+	}
+	r.cacheSession(ctx, rec)
+	return rec, nil
+}
+
 func (r *SessionRepository) cacheSession(ctx context.Context, s *persist.SessionRecord) {
 	data, err := json.Marshal(s)
 	if err != nil {

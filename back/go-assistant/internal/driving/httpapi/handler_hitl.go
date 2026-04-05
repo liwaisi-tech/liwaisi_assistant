@@ -18,6 +18,20 @@ func (h *Handlers) HandleResolveHITL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check ownership before resolving HITL.
+	info, err := h.App.GetSession(sessionID)
+	if err != nil {
+		if errors.Is(err, app.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !h.checkSessionOwnership(w, r, info.UserID) {
+		return
+	}
+
 	var req ResolveHITLRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -33,7 +47,7 @@ func (h *Handlers) HandleResolveHITL(w http.ResponseWriter, r *http.Request) {
 		Content: req.Content,
 	}
 
-	err := h.App.ResolveHITL(r.Context(), sessionID, transitionID, resp)
+	err = h.App.ResolveHITL(r.Context(), sessionID, transitionID, resp)
 	if err != nil {
 		if errors.Is(err, app.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")

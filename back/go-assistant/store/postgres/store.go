@@ -25,12 +25,14 @@ type Store struct {
 	rdb     *goredis.Client
 	batcher *EventBatcher
 
-	sessions     persist.SessionRepository
-	events       persist.EventRepository
-	ledger       persist.LedgerRepository
-	flows        persist.FlowRepository
-	intelligence persist.IntelligenceRepository
-	hitl         persist.HITLRepository
+	sessions      persist.SessionRepository
+	events        persist.EventRepository
+	ledger        persist.LedgerRepository
+	flows         persist.FlowRepository
+	intelligence  persist.IntelligenceRepository
+	hitl          persist.HITLRepository
+	users         persist.UserRepository
+	personalities persist.PersonalityRepository
 }
 
 // NewStore creates all persistence backends, runs migrations, and returns the facade.
@@ -63,15 +65,17 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 	batcher := NewEventBatcher(pgEventRepo, 100, 500*time.Millisecond)
 
 	s := &Store{
-		pool:         pool,
-		rdb:          rdb,
-		batcher:      batcher,
-		sessions:     storeredis.NewSessionRepository(rdb, pgSessionRepo),
-		events:       pgEventRepo,
-		ledger:       NewLedgerRepository(pool),
-		flows:        NewFlowRepository(pool),
-		intelligence: NewIntelligenceRepository(pool),
-		hitl:         storeredis.NewHITLRepository(rdb),
+		pool:          pool,
+		rdb:           rdb,
+		batcher:       batcher,
+		sessions:      storeredis.NewSessionRepository(rdb, pgSessionRepo),
+		events:        pgEventRepo,
+		ledger:        NewLedgerRepository(pool),
+		flows:         NewFlowRepository(pool),
+		intelligence:  NewIntelligenceRepository(pool),
+		hitl:          storeredis.NewHITLRepository(rdb),
+		users:         NewUserRepository(pool),
+		personalities: NewPersonalityStore(pool),
 	}
 
 	return s, nil
@@ -132,3 +136,9 @@ func (s *Store) Intelligence() persist.IntelligenceRepository { return s.intelli
 
 // HITL returns the HITL repository (Redis).
 func (s *Store) HITL() persist.HITLRepository { return s.hitl }
+
+// Users returns the user repository (Postgres).
+func (s *Store) Users() persist.UserRepository { return s.users }
+
+// Personalities returns the personality repository (Postgres).
+func (s *Store) Personalities() persist.PersonalityRepository { return s.personalities }

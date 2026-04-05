@@ -16,9 +16,10 @@ interface MessageListProps {
   sessionState: SessionState;
   onSuggestionClick?: (prompt: string) => void;
   onHITLAction?: (transitionId: string, action: HITLAction) => void;
+  onOpenMonitor?: () => void;
 }
 
-export function MessageList({ messages, sessionState, onSuggestionClick, onHITLAction }: MessageListProps) {
+export function MessageList({ messages, sessionState, onSuggestionClick, onHITLAction, onOpenMonitor }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const lastMessage = messages.at(-1);
@@ -100,6 +101,7 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
             key={msg.id}
             role={msg.role}
             content={msg.content}
+            cpnId={msg.cpnId}
             cpnRole={msg.cpnRole}
             timestamp={msg.timestamp}
             isStreaming={msg.isStreaming}
@@ -107,6 +109,7 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
             hitlActions={msg.hitlActions}
             hitlResolved={msg.hitlResolved}
             onHITLAction={onHITLAction}
+            onOpenMonitor={onOpenMonitor}
           />
         ))}
 

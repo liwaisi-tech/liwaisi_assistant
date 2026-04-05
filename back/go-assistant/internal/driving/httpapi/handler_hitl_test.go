@@ -33,7 +33,9 @@ func TestHandleResolveHITL_InvalidAction(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	// Session ownership check runs before input validation,
+	// so a nonexistent session returns 404 instead of 400.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 (ownership check before validation), got %d: %s", rec.Code, rec.Body.String())
 	}
 }

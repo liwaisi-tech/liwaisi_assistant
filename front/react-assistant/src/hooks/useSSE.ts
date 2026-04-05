@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
+import { getAuthToken } from '../services/api';
 
 interface UseSSEOptions {
   sessionId: string | null;
@@ -8,6 +9,11 @@ interface UseSSEOptions {
   onSessionFailed: () => void;
   onHITLRequested?: (data: CPNEventData) => void;
   onTransitionFired?: (data: CPNEventData) => void;
+  onTransitionStarted?: (data: CPNEventData) => void;
+  onTransitionCompleted?: (data: CPNEventData) => void;
+  onSubNetStarted?: (data: CPNEventData) => void;
+  onSubNetCompleted?: (data: CPNEventData) => void;
+  onSubNetFailed?: (data: CPNEventData) => void;
   onError?: (error: Event) => void;
 }
 
@@ -22,6 +28,11 @@ export function useSSE({
   onSessionFailed,
   onHITLRequested,
   onTransitionFired,
+  onTransitionStarted,
+  onTransitionCompleted,
+  onSubNetStarted,
+  onSubNetCompleted,
+  onSubNetFailed,
   onError,
 }: UseSSEOptions): UseSSEReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -30,13 +41,22 @@ export function useSSE({
   const sessionTerminalRef = useRef(false);
 
   // Use refs for callbacks to avoid reconnection on callback changes
-  const callbacksRef = useRef({ onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired, onError });
-  callbacksRef.current = { onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired, onError };
+  const callbacksRef = useRef({
+    onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError,
+  });
+  callbacksRef.current = {
+    onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError,
+  };
 
   const connect = useCallback((sid: string) => {
     if (sessionTerminalRef.current) return;
 
-    const url = `/api/v1/sessions/${sid}/events`;
+    const token = getAuthToken();
+    const url = token
+      ? `/api/v1/sessions/${sid}/events?token=${encodeURIComponent(token)}`
+      : `/api/v1/sessions/${sid}/events`;
     const es = new EventSource(url);
 
     es.onopen = () => {
@@ -88,6 +108,41 @@ export function useSSE({
       try {
         const data: CPNEventData = JSON.parse(evt.data);
         callbacksRef.current.onTransitionFired?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('transition_started', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onTransitionStarted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('transition_completed', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onTransitionCompleted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('subnet_started', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onSubNetStarted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('subnet_completed', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onSubNetCompleted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('subnet_failed', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onSubNetFailed?.(data);
       } catch { /* malformed SSE data — skip event */ }
     });
 

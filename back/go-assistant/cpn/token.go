@@ -2,6 +2,7 @@ package cpn
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -33,6 +34,56 @@ type Token struct {
 
 	// Timestamp records when this token was created.
 	Timestamp time.Time
+}
+
+// maxPayloadPreviewLen is the truncation threshold for TokenSnapshot.PayloadPreview.
+const maxPayloadPreviewLen = 500
+
+// Snapshot returns a serializable, truncated representation of this token.
+// PayloadPreview is capped at 500 characters; longer payloads are truncated
+// with a "..." suffix.
+func (t *Token) Snapshot() TokenSnapshot {
+	if t == nil {
+		return TokenSnapshot{}
+	}
+
+	preview := formatPayloadPreview(t.Payload)
+
+	return TokenSnapshot{
+		Color:          string(t.Color),
+		PayloadPreview: preview,
+		Space:          string(t.Space),
+		OriginID:       t.OriginID,
+		OriginKind:     string(t.OriginKind),
+	}
+}
+
+// formatPayloadPreview converts any payload to a string preview,
+// truncated to maxPayloadPreviewLen characters.
+func formatPayloadPreview(payload any) string {
+	if payload == nil {
+		return ""
+	}
+
+	var s string
+	switch v := payload.(type) {
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			s = fmt.Sprintf("%v", v)
+		} else {
+			s = string(b)
+		}
+	}
+
+	if len(s) > maxPayloadPreviewLen {
+		return s[:maxPayloadPreviewLen] + "..."
+	}
+	return s
 }
 
 // IsHumanOrigin returns true if this token was produced by a HITL transition

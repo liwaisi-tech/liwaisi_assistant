@@ -16,10 +16,13 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/driving/httpapi"
+	storepostgres "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/store/postgres"
 )
 
 func main() {
@@ -60,14 +63,82 @@ func main() {
 		topologyFactory = unifiedTopologyFactory
 	}
 
+	// ── Persistence layer (optional) ────────────────────────────────
+	var serviceOpts []app.SessionServiceOption
+	var store *storepostgres.Store
+	registry := newServerFuncRegistry()
+	toolReg := tools.NewRegistry()
+
+	if dsn := os.Getenv("LIWAISI_DB_DSN"); dsn != "" {
+		redisURL := envOr("LIWAISI_REDIS_URL", "redis://localhost:6379")
+		migrationsPath := envOr("MIGRATIONS_PATH", "store/postgres/migrations")
+
+		var err error
+		store, err = storepostgres.NewStore(context.Background(), storepostgres.PoolConfig{DSN: dsn}, storepostgres.RedisConfig{URL: redisURL}, migrationsPath)
+		if err != nil {
+			logger.Error("store initialization failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		logger.Info("persistence enabled", "postgres", "connected", "redis", "connected")
+
+		// Register personality tools (requires persistence for personality repo).
+		persDeps := &tools.PersonalityToolDeps{
+			Repo:        store.Personalities(),
+			DefaultPers: cpn.DefaultPersonality(),
+		}
+		if err := tools.RegisterPersonalityTools(toolReg, persDeps); err != nil {
+			logger.Error("register personality tools failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		toolReg.Seal()
+		toolReg.InjectIntoFuncRegistry(registry)
+		logger.Info("personality tools registered and sealed")
+
+		serviceOpts = append(serviceOpts,
+			app.WithPersistence(&app.PersistDeps{
+				Sessions:     store.Sessions(),
+				Events:       store.Events(),
+				Ledger:       store.Ledger(),
+				Flows:        store.Flows(),
+				Intelligence: store.Intelligence(),
+				FuncRegistry: registry,
+			}),
+			app.WithTokenLedger(&tokenLedgerAdapter{ledger: llmClient.TokenLedger}),
+			app.WithToolRegistry(toolReg),
+		)
+	} else {
+		logger.Info("persistence disabled (LIWAISI_DB_DSN not set)")
+	}
+
 	// ── Application layer ───────────────────────────────────────────
-	appService := app.NewSessionService(llmClient, costProvider, logger, topologyFactory)
+	appService := app.NewSessionService(llmClient, costProvider, logger, topologyFactory, serviceOpts...)
 
 	// ── Billing adapter ────────────────────────────────────────────
 	billingClient := billing.NewClient(apiKey, "https://openrouter.ai/api/v1")
 
+	// ── Authentication adapter ──────────────────────────────────────
+	var serverOpts []httpapi.ServerOption
+	if googleClientID := os.Getenv("GOOGLE_CLIENT_ID"); googleClientID != "" {
+		verifier := googleauth.NewGoogleTokenVerifier(googleClientID)
+		serverOpts = append(serverOpts, httpapi.WithAuth(verifier))
+		logger.Info("google auth enabled", slog.String("client_id", googleClientID[:min(len(googleClientID), 20)]+"..."))
+	} else {
+		logger.Info("google auth disabled (GOOGLE_CLIENT_ID not set); running in dev-mode")
+	}
+
+	// ── Rate limiting ──────────────────────────────────────────────
+	serverOpts = append(serverOpts, httpapi.WithRateLimiting(httpapi.DefaultRateLimitConfig()))
+
 	// ── Driving adapter (HTTP server) ───────────────────────────────
-	srv := httpapi.NewServer(cfg, appService, logger, billingClient)
+	if store != nil {
+		serverOpts = append(serverOpts,
+			httpapi.WithRepos(store.Flows(), store.Intelligence(), store.Events()),
+			httpapi.WithUserRepo(store.Users()),
+			httpapi.WithPersonalityRepo(store.Personalities()),
+			httpapi.WithToolRegistry(toolReg),
+		)
+	}
+	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
 
 	// Wire event callback: CPN events → SSE broker.
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {
@@ -100,6 +171,11 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown error", slog.Any("error", err))
 	}
+	if store != nil {
+		if err := store.Close(); err != nil {
+			logger.Error("store close error", slog.Any("error", err))
+		}
+	}
 	logger.Info("server stopped")
 }
 
@@ -116,6 +192,24 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 		return 0
 	}
 	return rec.TotalCostUSD
+}
+
+// tokenLedgerAdapter adapts openrouter.TokenLedger to app.TokenLedgerReader.
+type tokenLedgerAdapter struct {
+	ledger *openrouter.TokenLedger
+}
+
+func (a *tokenLedgerAdapter) Get(sessionID string) *app.TokenUsage {
+	rec := a.ledger.Get(sessionID)
+	if rec == nil {
+		return nil
+	}
+	return &app.TokenUsage{
+		InputTokens:  rec.InputTokens,
+		OutputTokens: rec.OutputTokens,
+		Calls:        rec.Calls,
+		TotalCostUSD: rec.TotalCostUSD,
+	}
 }
 
 // envOr returns the environment variable value or the default.

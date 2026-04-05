@@ -115,7 +115,7 @@ func TestFireLLM_ContextWindowAssembly(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "test input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestFireLLM_BudgetExceeded(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("expected ErrBudgetExceeded, got: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestFireLLM_BudgetZero_NoBudgetCheck(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestFireLLM_ToolCallDispatched(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestFireLLM_ToolCallLoop_MaxIterations(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrToolCallLoopExceeded) {
 		t.Fatalf("expected ErrToolCallLoopExceeded, got: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestFireLLM_DisallowedTool(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if !errors.Is(err, ErrDisallowedTool) {
 		t.Fatalf("expected ErrDisallowedTool, got: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestFireLLM_ToolExecutorError_PassedToLLM(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -436,7 +436,7 @@ func TestFireLLM_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	err := fireLLM(ctx, trans, cpn, consumed)
+	_, _, err := fireLLM(ctx, trans, cpn, consumed)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestFireLLM_RequireJSON_OutputColorJSON(t *testing.T) {
 	}
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestFireLLM_NoRequireJSON_OutputColorArtifact(t *testing.T) {
 	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestFireLLM_MultipleInputPlaces(t *testing.T) {
 		{Color: ColorString, Payload: "second input"},
 	}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestFireLLM_SkipsNonUserTokenColors(t *testing.T) {
 		{Color: ColorJSON, Payload: `{"intent":"conversation"}`},
 	}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestFireLLM_MultipleOutputPlaces(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestFireLLM_LLMClientError_Propagates(t *testing.T) {
 	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -626,7 +626,7 @@ func TestFireLLM_NilLLMConfig(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err == nil {
 		t.Fatal("expected error for nil LLMConfig")
 	}
@@ -647,7 +647,7 @@ func TestFireLLM_OutputMetadata(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -734,7 +734,7 @@ func TestHandleToolCalls_NoToolCalls(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestFireLLM_EstimateCostError_GracefulDegradation(t *testing.T) {
 	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("expected graceful degradation, got error: %v", err)
 	}
@@ -826,7 +826,7 @@ func TestFireLLM_SetsTrace(t *testing.T) {
 	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
 	consumed := []Token{{Color: ColorString, Payload: "test"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("fireLLM() error = %v", err)
 	}
@@ -868,7 +868,7 @@ func TestFireLLM_StreamOutput_EmitsChunks(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -952,7 +952,7 @@ func TestFireLLM_StreamOutput_False_NoChunks(t *testing.T) {
 
 	consumed := []Token{{Color: ColorString, Payload: "input"}}
 
-	err := fireLLM(context.Background(), trans, cpn, consumed)
+	_, _, err := fireLLM(context.Background(), trans, cpn, consumed)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1015,7 +1015,7 @@ func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
 			defer wg.Done()
 			tID := fmt.Sprintf("t-llm-%d", idx)
 			consumed := []Token{{Color: ColorString, Payload: fmt.Sprintf("msg-%d", idx)}}
-			if err := fireLLM(context.Background(), transitions[tID], c, consumed); err != nil {
+			if _, _, err := fireLLM(context.Background(), transitions[tID], c, consumed); err != nil {
 				errs <- fmt.Errorf("fireLLM %d: %w", idx, err)
 			}
 		}(i)
@@ -1035,5 +1035,51 @@ func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
 	expected := goroutines * 2
 	if histLen != expected {
 		t.Errorf("expected %d history entries, got %d", expected, histLen)
+	}
+}
+
+// ── buildToolSchema tests ───────────────────────────────────────────────────
+
+func TestBuildToolSchema_WithToolMeta(t *testing.T) {
+	params := json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	tr := &Transition{
+		ToolName: "system/search",
+		ToolMeta: &ToolMeta{
+			Description:  "Search the web",
+			Parameters:   params,
+			RequiresHITL: false,
+			Namespace:    "system",
+		},
+	}
+
+	schema := buildToolSchema(tr)
+	if schema.Name != "system/search" {
+		t.Errorf("name = %q, want %q", schema.Name, "system/search")
+	}
+	if schema.Description != "Search the web" {
+		t.Errorf("description = %q, want %q", schema.Description, "Search the web")
+	}
+	if schema.Parameters == nil {
+		t.Fatal("expected non-nil Parameters")
+	}
+	if string(schema.Parameters) != string(params) {
+		t.Errorf("parameters = %s, want %s", schema.Parameters, params)
+	}
+}
+
+func TestBuildToolSchema_WithoutToolMeta(t *testing.T) {
+	tr := &Transition{
+		ToolName: "system/search",
+	}
+
+	schema := buildToolSchema(tr)
+	if schema.Name != "system/search" {
+		t.Errorf("name = %q, want %q", schema.Name, "system/search")
+	}
+	if schema.Description != "Execute tool: system/search" {
+		t.Errorf("description = %q, want %q", schema.Description, "Execute tool: system/search")
+	}
+	if schema.Parameters != nil {
+		t.Errorf("expected nil Parameters, got %s", schema.Parameters)
 	}
 }

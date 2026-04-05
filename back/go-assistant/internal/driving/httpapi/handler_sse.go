@@ -28,7 +28,20 @@ func (h *Handlers) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Validate session exists and get stream channel.
+	// 1. Validate session exists, check ownership, and get stream channel.
+	info, err := h.App.GetSession(sessionID)
+	if err != nil {
+		if errors.Is(err, app.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !h.checkSessionOwnership(w, r, info.UserID) {
+		return
+	}
+
 	streamCh, err := h.App.StreamChannel(sessionID)
 	if err != nil {
 		if errors.Is(err, app.ErrSessionNotFound) {

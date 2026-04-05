@@ -50,3 +50,37 @@ export interface BalanceResponse {
   usage_monthly: number;
   is_free_tier: boolean;
 }
+
+export interface SessionListItem {
+  id: string;
+  title: string;
+  state: SessionState;
+  last_message_preview: string;
+  last_activity_at: string;
+  created_at: string;
+  total_cost_usd: number;
+  message_count: number;
+  forked_from_session_id: string;
+}
+
+export interface SessionListResponse {
+  items: SessionListItem[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
+export interface UpdateSessionRequest {
+  title?: string;
+  deleted?: boolean;
+}
+
+export interface ForkSessionRequest {
+  message_index: number;
+}
+
+export interface ForkSessionResponse extends SessionResponse {
+  title: string;
+  forked_from_session_id: string;
+  fork_message_count: number;
+  total_cost_usd: number;
+}

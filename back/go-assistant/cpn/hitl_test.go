@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -379,9 +380,13 @@ func TestFireHITL_ClosedChannel(t *testing.T) {
 	close(ch)
 
 	err := c.Run(context.Background())
-	// Closed channel returns zero-value Token (Color="") → ErrColorMismatch.
-	if !errors.Is(err, ErrColorMismatch) {
-		t.Fatalf("expected ErrColorMismatch from closed channel, got %v", err)
+	// FIX-003: Closed channel is now detected via two-value receive,
+	// returning an explicit "HITL channel closed" error instead of ErrColorMismatch.
+	if err == nil {
+		t.Fatal("expected error from closed channel, got nil")
+	}
+	if !strings.Contains(err.Error(), "HITL channel closed") {
+		t.Fatalf("expected 'HITL channel closed' error, got %v", err)
 	}
 }
 

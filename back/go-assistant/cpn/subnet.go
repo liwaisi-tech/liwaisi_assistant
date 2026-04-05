@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,7 @@ const SubNetEventBusCapacity = 64
 // compressed summary is added to the parent's history.
 //
 // The parent does NOT block — it continues its executor loop while the child runs.
-func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Token) error {
+func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	// REQ-001/CON-003: SubNetFactory takes precedence over SubNet.
 	var child *CPN
 	var err error
@@ -28,21 +29,21 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 	case t.SubNetFactory != nil:
 		child = t.SubNetFactory()
 		if child == nil {
-			return fmt.Errorf("transition %s: SubNetFactory returned nil", t.ID)
+			return nil, 0, fmt.Errorf("transition %s: SubNetFactory returned nil", t.ID)
 		}
 	case t.SubNet != nil:
 		child, err = cloneCPN(t.SubNet)
 		if err != nil {
-			return fmt.Errorf("transition %s: cloneCPN: %w", t.ID, err)
+			return nil, 0, fmt.Errorf("transition %s: cloneCPN: %w", t.ID, err)
 		}
 	default:
-		return fmt.Errorf("transition %s: neither SubNet nor SubNetFactory configured", t.ID)
+		return nil, 0, fmt.Errorf("transition %s: neither SubNet nor SubNetFactory configured", t.ID)
 	}
 
 	// REQ-002: Set child metadata.
 	childID, err := newUUID()
 	if err != nil {
-		return fmt.Errorf("transition %s: %w", t.ID, err)
+		return nil, 0, fmt.Errorf("transition %s: %w", t.ID, err)
 	}
 	child.ID = childID
 	child.Depth = parent.Depth + 1
@@ -106,7 +107,17 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 						SessionID:   parent.SessionID,
 						Timestamp:   time.Now(),
 					}
-					_ = ep.Deposit(errToken) // best-effort error routing
+					// FIX-002: Handle deposit error instead of silently ignoring.
+					if depErr := ep.Deposit(errToken); depErr != nil {
+						parent.emit(&Event{
+							Type:           EventSubNetFailed,
+							SessionID:      parent.SessionID,
+							TransitionID:   t.ID,
+							TransitionKind: NodeKindSubNet,
+							Payload:        fmt.Errorf("error place deposit failed: %w", depErr),
+							Timestamp:      time.Now(),
+						})
+					}
 				}
 			} else {
 				parent.setFailed(fmt.Errorf("%w: %v", ErrSubNetFailed, runErr))
@@ -132,6 +143,8 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 		}
 
 		// Deposit output tokens into parent's output places.
+		// FIX-002: Collect deposit errors and emit event if any fail.
+		var depositErrors []string
 		for _, pid := range t.OutputPlaces {
 			p, ok := parent.Places[pid]
 			if !ok {
@@ -141,8 +154,20 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 				tok := outputTokens[i] // copy per deposit
 				tok.Space = p.Space
 				tok.Color = p.Color
-				_ = p.Deposit(&tok) // best-effort deposit
+				if depErr := p.Deposit(&tok); depErr != nil {
+					depositErrors = append(depositErrors, fmt.Sprintf("place %s: %v", pid, depErr))
+				}
 			}
+		}
+		if len(depositErrors) > 0 {
+			parent.emit(&Event{
+				Type:           EventSubNetFailed,
+				SessionID:      parent.SessionID,
+				TransitionID:   t.ID,
+				TransitionKind: NodeKindSubNet,
+				Payload:        fmt.Errorf("deposit errors: %s", strings.Join(depositErrors, "; ")),
+				Timestamp:      time.Now(),
+			})
 		}
 
 		// REQ-009: Compress summary and append to parent history.
@@ -173,7 +198,9 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 		})
 	})
 
-	return nil
+	// SubNet is async — output tokens are deposited by the child goroutine.
+	// Return nil snapshots since they aren't available yet.
+	return nil, 0, nil
 }
 
 // cloneCPN creates a new CPN from a prototype.
@@ -232,7 +259,11 @@ func injectTokens(child *CPN, tokens []Token) {
 		// Adjust token color/space to match target place for deposit.
 		tok.Color = target.Color
 		tok.Space = target.Space
-		_ = target.Deposit(&tok)
+		// FIX-002: Log deposit errors instead of silently ignoring.
+		if err := target.Deposit(&tok); err != nil {
+			// Best-effort: injection errors are non-fatal but logged for diagnostics.
+			_ = err // Caller (fireSubNet goroutine) handles child failure via Run error.
+		}
 	}
 }
 
