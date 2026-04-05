@@ -2,3 +2,4 @@ skills-lock.json
 .env
 .claude/
 .handle-issue-state.json
+node_modules/
