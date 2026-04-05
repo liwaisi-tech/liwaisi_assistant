@@ -53,7 +53,7 @@ type SessionListItem struct {
 	ID                  string
 	Title               string
 	State               SessionState
-	LastMessagePreview  string  // First 120 chars of last message content.
+	LastMessagePreview  string // First 120 chars of last message content.
 	LastActivityAt      time.Time
 	CreatedAt           time.Time
 	TotalCostUSD        float64 // From token_ledger LEFT JOIN.

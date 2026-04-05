@@ -337,7 +337,7 @@ func depositHITLRevision(t *Transition, c *CPN, tok *Token) ([]TokenSnapshot, er
 // Uses the correction transition's LLMConfig for model selection.
 // Returns the LLM's text response content.
 // Does NOT consume from or deposit to places — this is an inline sub-call.
-func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, input *Token) (string, float64, error) {
+func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, input *Token) (content string, costUSD float64, err error) {
 	if c.LLMClient == nil {
 		return "", 0, fmt.Errorf("nil LLMClient on CPN")
 	}

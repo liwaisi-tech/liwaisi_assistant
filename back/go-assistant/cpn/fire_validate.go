@@ -232,7 +232,7 @@ func validateAgainstSchema(payload, schema any) error {
 // callCorrectionLLM sends the invalid payload to a correction LLM.
 // Uses c.LLMClient.Complete() directly with a focused correction prompt.
 // FIX-006: Returns the LLM call cost for proper cost propagation.
-func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, invalidPayload any, schemaError string) (any, float64, error) {
+func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, invalidPayload any, schemaError string) (corrected any, costUSD float64, err error) {
 	if c.LLMClient == nil {
 		return nil, 0, fmt.Errorf("nil LLMClient on CPN")
 	}
@@ -273,8 +273,8 @@ func callCorrectionLLM(ctx context.Context, c *CPN, correctionLLMID string, inva
 	}
 
 	// Strip code fences and return the corrected output.
-	corrected := stripCodeFences(resp.Content)
-	return corrected, resp.CostUSD, nil
+	result := stripCodeFences(resp.Content)
+	return result, resp.CostUSD, nil
 }
 
 // buildCorrectionPrompt formats the correction request for the LLM.
