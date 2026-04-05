@@ -131,3 +131,14 @@ var ErrSessionClosed = errors.New("session is closed")
 // ErrHITLAlreadyRegistered is returned when a HITL channel is registered
 // for a transition ID that already has one.
 var ErrHITLAlreadyRegistered = errors.New("HITL channel already registered for transition")
+
+// ── v1.5 Personality Errors ───────────────────────────────────────────────
+
+// ErrEticaViolation is returned when a modification violates base ethics constraints.
+var ErrEticaViolation = errors.New("modification violates base ethics constraints")
+
+// ErrInvalidHierarchy is returned when a principle hierarchy is invalid.
+var ErrInvalidHierarchy = errors.New("invalid principle hierarchy")
+
+// ErrEticaCannotBeLast is returned when etica principle is placed as lowest priority.
+var ErrEticaCannotBeLast = errors.New("etica principle cannot be lowest priority")

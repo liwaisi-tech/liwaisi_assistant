@@ -42,6 +42,21 @@ const (
 	// returns (success or failure). Carries a TransitionCompletedPayload
 	// with output token snapshots, cost, duration, and optional error.
 	EventTransitionCompleted EventType = "transition_completed"
+
+	// EventToolExecuted is emitted when a tool finishes execution.
+	EventToolExecuted EventType = "tool_executed"
+
+	// EventPersonalityLoaded is emitted when a personality is loaded into a session.
+	EventPersonalityLoaded EventType = "personality_loaded"
+
+	// EventPersonalityModified is emitted when a personality principle is modified.
+	EventPersonalityModified EventType = "personality_modified"
+
+	// EventConflictDetected is emitted when a personality validation conflict is detected.
+	EventConflictDetected EventType = "conflict_detected"
+
+	// EventToolRegistered is emitted when a new tool is registered with the engine.
+	EventToolRegistered EventType = "tool_registered"
 )
 
 // TransitionStartedPayload captures input tokens consumed before firing.
@@ -66,6 +81,43 @@ type TokenSnapshot struct {
 	Space          string `json:"space"`
 	OriginID       string `json:"origin_id"`
 	OriginKind     string `json:"origin_kind"`
+}
+
+// ToolExecutedPayload carries metadata about a tool execution.
+type ToolExecutedPayload struct {
+	ToolName   string `json:"tool_name"`
+	Namespace  string `json:"namespace"`
+	DurationMs int64  `json:"duration_ms"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+}
+
+// PersonalityLoadedPayload carries metadata about a personality load.
+type PersonalityLoadedPayload struct {
+	UserID     string              `json:"user_id"`
+	Source     string              `json:"source"`
+	Principles []PrincipleSnapshot `json:"principles"`
+}
+
+// PrincipleSnapshot is a lightweight summary of a principle.
+type PrincipleSnapshot struct {
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+}
+
+// PersonalityModifiedPayload carries metadata about a personality modification.
+type PersonalityModifiedPayload struct {
+	UserID       string `json:"user_id"`
+	ModifiedKind string `json:"modified_kind"`
+	ChangeType   string `json:"change_type"`
+}
+
+// ConflictPayload carries metadata about a personality validation conflict.
+type ConflictPayload struct {
+	Attempted  string `json:"attempted"`
+	Rejected   string `json:"rejected"`
+	Reason     string `json:"reason"`
+	Suggestion string `json:"suggestion"`
 }
 
 // Event is an append-only record emitted by transitions and sub-CPNs,

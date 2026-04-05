@@ -1,4 +1,4 @@
-type ActiveApp = 'chat' | 'flows' | 'monitor';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
 
 interface MobileTabBarProps {
   activeApp: ActiveApp;

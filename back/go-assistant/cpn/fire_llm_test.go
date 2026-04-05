@@ -1037,3 +1037,49 @@ func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
 		t.Errorf("expected %d history entries, got %d", expected, histLen)
 	}
 }
+
+// ── buildToolSchema tests ───────────────────────────────────────────────────
+
+func TestBuildToolSchema_WithToolMeta(t *testing.T) {
+	params := json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	tr := &Transition{
+		ToolName: "system/search",
+		ToolMeta: &ToolMeta{
+			Description:  "Search the web",
+			Parameters:   params,
+			RequiresHITL: false,
+			Namespace:    "system",
+		},
+	}
+
+	schema := buildToolSchema(tr)
+	if schema.Name != "system/search" {
+		t.Errorf("name = %q, want %q", schema.Name, "system/search")
+	}
+	if schema.Description != "Search the web" {
+		t.Errorf("description = %q, want %q", schema.Description, "Search the web")
+	}
+	if schema.Parameters == nil {
+		t.Fatal("expected non-nil Parameters")
+	}
+	if string(schema.Parameters) != string(params) {
+		t.Errorf("parameters = %s, want %s", schema.Parameters, params)
+	}
+}
+
+func TestBuildToolSchema_WithoutToolMeta(t *testing.T) {
+	tr := &Transition{
+		ToolName: "system/search",
+	}
+
+	schema := buildToolSchema(tr)
+	if schema.Name != "system/search" {
+		t.Errorf("name = %q, want %q", schema.Name, "system/search")
+	}
+	if schema.Description != "Execute tool: system/search" {
+		t.Errorf("description = %q, want %q", schema.Description, "Execute tool: system/search")
+	}
+	if schema.Parameters != nil {
+		t.Errorf("expected nil Parameters, got %s", schema.Parameters)
+	}
+}

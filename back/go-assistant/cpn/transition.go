@@ -1,6 +1,9 @@
 package cpn
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Transition represents a CPN transition — a unit of computation that fires
 // when its input places contain tokens and its guard condition is satisfied.
@@ -52,6 +55,11 @@ type Transition struct {
 	// Only meaningful when Kind == NodeKindTool.
 	ToolName string
 
+	// ToolMeta holds metadata from the ToolRegistry for MCP-compatible tool descriptions.
+	// Populated at topology build time by tools.Registry.InjectIntoCPN().
+	// Nil for non-registry tools or transitions without tool metadata.
+	ToolMeta *ToolMeta
+
 	// Executor is called when this tool transition fires.
 	// Receives context and the first consumed input token.
 	// Returns a result token deposited into OutputPlaces.
@@ -94,6 +102,14 @@ type Transition struct {
 	// When nil, all events (passing ObservedCPNID check) are accepted.
 	// Only meaningful when Kind == NodeKindObserver.
 	EventFilter func(e Event) bool
+}
+
+// ToolMeta carries tool metadata from the registry to the CPN execution layer.
+type ToolMeta struct {
+	Description  string          `json:"description"`
+	Parameters   json.RawMessage `json:"parameters,omitempty"`
+	RequiresHITL bool            `json:"requires_hitl"`
+	Namespace    string          `json:"namespace"`
 }
 
 // SetCircuitBreaker sets the runtime circuit breaker state.

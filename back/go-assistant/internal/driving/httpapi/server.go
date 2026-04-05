@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
@@ -141,5 +142,19 @@ func WithAuth(verifier auth.TokenVerifier) ServerOption {
 func WithUserRepo(repo persist.UserRepository) ServerOption {
 	return func(h *Handlers) {
 		h.UserRepo = repo
+	}
+}
+
+// WithPersonalityRepo injects the personality repository for personality endpoints.
+func WithPersonalityRepo(repo persist.PersonalityRepository) ServerOption {
+	return func(h *Handlers) {
+		h.PersonalityRepo = repo
+	}
+}
+
+// WithToolRegistry injects the tool registry for tools endpoints.
+func WithToolRegistry(registry *tools.Registry) ServerOption {
+	return func(h *Handlers) {
+		h.ToolRegistry = registry
 	}
 }

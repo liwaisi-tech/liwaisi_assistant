@@ -1,5 +1,6 @@
 import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse, SessionListResponse, UpdateSessionRequest, ForkSessionRequest, ForkSessionResponse } from '../types/api';
 import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
+import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
 
 const BASE_URL = '/api/v1';
 
@@ -123,4 +124,46 @@ export async function forkSession(sessionId: string, req: ForkSessionRequest): P
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+// ── Personality API ─────────────────────────────────────────────────────
+
+export async function getPersonality(): Promise<PersonalityResponse> {
+  return request<PersonalityResponse>('/personality');
+}
+
+export async function updatePrinciple(kind: string, data: UpdatePrincipleRequest): Promise<PersonalityResponse> {
+  return request<PersonalityResponse>(`/personality/principles/${kind}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function setHierarchy(data: SetHierarchyRequest): Promise<PersonalityResponse> {
+  return request<PersonalityResponse>('/personality/hierarchy', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function resetPersonality(): Promise<PersonalityResponse> {
+  return request<PersonalityResponse>('/personality/reset', {
+    method: 'POST',
+  });
+}
+
+export async function previewPersonality(data: { principles: PrincipleResponse[]; hierarchy: string[]; tensions: TensionResponse[]; sample_prompt: string }): Promise<{ system_prompt: string }> {
+  return request<{ system_prompt: string }>('/personality/preview', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// ── Tools API ───────────────────────────────────────────────────────────
+
+export async function listTools(namespace?: string): Promise<ToolListResponse> {
+  const params = new URLSearchParams();
+  if (namespace) params.set('namespace', namespace);
+  const qs = params.toString();
+  return request<ToolListResponse>(`/tools${qs ? `?${qs}` : ''}`);
 }

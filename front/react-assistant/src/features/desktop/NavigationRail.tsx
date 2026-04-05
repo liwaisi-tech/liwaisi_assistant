@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
 
 interface NavigationRailProps {
   activeApp: ActiveApp;
   isExpanded: boolean;
   onNavigate: (app: ActiveApp) => void;
   onSettingsClick: () => void;
+  onToolsClick: () => void;
   sidebarContent?: React.ReactNode;
 }
 
@@ -48,6 +49,12 @@ const navItems: NavItem[] = [
     ),
   },
 ];
+
+const toolsIcon = (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+  </svg>
+);
 
 const settingsIcon = (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -151,14 +158,18 @@ export function NavigationRail({
   isExpanded,
   onNavigate,
   onSettingsClick,
+  onToolsClick,
   sidebarContent,
 }: NavigationRailProps) {
   const [settingsTooltip, setSettingsTooltip] = useState(false);
   const settingsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toolsTooltip, setToolsTooltip] = useState(false);
+  const toolsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (settingsTimer.current) clearTimeout(settingsTimer.current);
+      if (toolsTimer.current) clearTimeout(toolsTimer.current);
     };
   }, []);
 
@@ -170,6 +181,16 @@ export function NavigationRail({
   const handleSettingsMouseLeave = useCallback(() => {
     if (settingsTimer.current) clearTimeout(settingsTimer.current);
     setSettingsTooltip(false);
+  }, []);
+
+  const handleToolsMouseEnter = useCallback(() => {
+    if (isExpanded) return;
+    toolsTimer.current = setTimeout(() => setToolsTooltip(true), 200);
+  }, [isExpanded]);
+
+  const handleToolsMouseLeave = useCallback(() => {
+    if (toolsTimer.current) clearTimeout(toolsTimer.current);
+    setToolsTooltip(false);
   }, []);
 
   return (
@@ -206,6 +227,63 @@ export function NavigationRail({
       {/* Spacer */}
       {!isExpanded && <div className="flex-1" />}
 
+      {/* Tools button */}
+      <div className="relative p-1 pb-0">
+        <button
+          onClick={onToolsClick}
+          onMouseEnter={handleToolsMouseEnter}
+          onMouseLeave={handleToolsMouseLeave}
+          className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
+          style={{
+            padding: '10px 12px',
+            color: activeApp === 'tools' ? 'var(--accent)' : 'var(--text-muted)',
+            backgroundColor: activeApp === 'tools' ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
+            borderLeft: activeApp === 'tools' ? '2px solid var(--accent)' : '2px solid transparent',
+          }}
+          aria-label="Tools"
+        >
+          <div className="shrink-0 w-5 h-5 flex items-center justify-center">
+            {toolsIcon}
+          </div>
+          {isExpanded && (
+            <span
+              className="text-xs font-medium tracking-wide whitespace-nowrap"
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                color: activeApp === 'tools' ? 'var(--accent)' : 'var(--text-secondary)',
+              }}
+            >
+              Tools
+            </span>
+          )}
+        </button>
+
+        {/* Tools tooltip — only when collapsed */}
+        {toolsTooltip && !isExpanded && (
+          <div
+            className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-medium z-50 pointer-events-none"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-dim)',
+              color: 'var(--text-secondary)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
+            }}
+          >
+            Tools
+            <div
+              className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
+              style={{
+                marginRight: '-4px',
+                backgroundColor: 'var(--bg-surface)',
+                borderLeft: '1px solid var(--border-dim)',
+                borderBottom: '1px solid var(--border-dim)',
+              }}
+            />
+          </div>
+        )}
+      </div>
+
       {/* Settings button at bottom */}
       <div className="relative p-1 pb-2">
         <button
@@ -215,7 +293,9 @@ export function NavigationRail({
           className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
           style={{
             padding: '10px 12px',
-            color: 'var(--text-muted)',
+            color: activeApp === 'personality' ? 'var(--accent)' : 'var(--text-muted)',
+            backgroundColor: activeApp === 'personality' ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
+            borderLeft: activeApp === 'personality' ? '2px solid var(--accent)' : '2px solid transparent',
           }}
           aria-label="Settings"
         >
@@ -227,10 +307,10 @@ export function NavigationRail({
               className="text-xs font-medium tracking-wide whitespace-nowrap"
               style={{
                 fontFamily: "'JetBrains Mono', monospace",
-                color: 'var(--text-secondary)',
+                color: activeApp === 'personality' ? 'var(--accent)' : 'var(--text-secondary)',
               }}
             >
-              Settings
+              Identity
             </span>
           )}
         </button>
@@ -247,7 +327,7 @@ export function NavigationRail({
               boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
             }}
           >
-            Settings
+            Identity
             <div
               className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
               style={{

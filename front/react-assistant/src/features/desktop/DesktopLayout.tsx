@@ -17,9 +17,11 @@ import { ForkDialog } from '../chat/ForkDialog';
 import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
 import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
+import { PersonalityPanel } from '../personality/PersonalityPanel';
+import { ToolBrowser } from '../tools/ToolBrowser';
 import { getFlows, getFlow } from '../../services/api';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
 type PanelContent = 'flows' | 'monitor' | null;
 
 interface DesktopLayoutProps {
@@ -166,7 +168,17 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
   }, [activeApp]);
 
   const handleSettingsClick = useCallback(() => {
-    // Settings panel placeholder — no-op for now
+    setActiveApp('personality');
+    setPanelContent(null);
+    setIsRailExpanded(false);
+    setSelectedFlowHash(null);
+  }, []);
+
+  const handleToolsClick = useCallback(() => {
+    setActiveApp('tools');
+    setPanelContent(null);
+    setIsRailExpanded(false);
+    setSelectedFlowHash(null);
   }, []);
 
   const handlePanelClose = useCallback(() => {
@@ -238,6 +250,33 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
       handler: () => { setActiveApp('monitor'); setPanelContent(null); setIsRailExpanded(false); },
     },
     {
+      id: 'nav-personality',
+      label: 'Agent Identity',
+      category: 'Navigation',
+      shortcut: '⌘4',
+      keywords: ['personality', 'principles', 'identity', 'settings'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      ),
+      handler: () => { setActiveApp('personality'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); },
+    },
+    {
+      id: 'nav-tools',
+      label: 'Tool Browser',
+      category: 'Navigation',
+      shortcut: '⌘5',
+      keywords: ['tools', 'registry', 'wrench', 'browser'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+        </svg>
+      ),
+      handler: () => { setActiveApp('tools'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); },
+    },
+    {
       id: 'chat-new',
       label: 'New Chat',
       category: 'Chat',
@@ -278,6 +317,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     { key: '1', meta: true, handler: () => { setActiveApp('chat'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); } },
     { key: '2', meta: true, handler: () => { setActiveApp('flows'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); } },
     { key: '3', meta: true, handler: () => { setActiveApp('monitor'); setPanelContent(null); setIsRailExpanded(false); } },
+    { key: '4', meta: true, handler: () => { setActiveApp('personality'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); } },
+    { key: '5', meta: true, handler: () => { setActiveApp('tools'); setPanelContent(null); setIsRailExpanded(false); setSelectedFlowHash(null); } },
     { key: 'n', meta: true, handler: () => { chatList.createChat(); setActiveApp('chat'); setPanelContent(null); } },
     { key: 'b', meta: true, handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); } },
     { key: 'f', meta: true, shift: true, handler: toggleFlowsPanel },
@@ -344,6 +385,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             isExpanded={isRailExpanded}
             onNavigate={handleRailNavigate}
             onSettingsClick={handleSettingsClick}
+            onToolsClick={handleToolsClick}
             sidebarContent={sidebarContent}
           />
         )}
@@ -391,6 +433,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
                 sessionId={sessionId}
               />
             )}
+
+            {activeApp === 'personality' && <PersonalityPanel />}
+
+            {activeApp === 'tools' && <ToolBrowser />}
           </div>
 
           {/* Adaptive Right Panel — only in chat mode, desktop only */}

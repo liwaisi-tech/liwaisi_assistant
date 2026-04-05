@@ -141,7 +141,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 	var content string
 	if len(resp.ToolCalls) > 0 {
 		var loopCost float64
-		content, loopCost, err = handleToolCalls(ctx, &resp, t, c, messages, streamOutput, onChunk)
+		content, loopCost, err = handleToolCalls(ctx, &resp, t, c, messages, tools, streamOutput, onChunk)
 		if err != nil {
 			return totalCostUSD, err
 		}
@@ -238,23 +238,16 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) (floa
 
 // handleToolCalls executes the agentic tool-call loop.
 // Returns the final content string when the LLM stops requesting tools.
-func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage, streamOutput bool, onChunk func(string)) (content string, costUSD float64, err error) {
+// prebuiltTools are the LLMTool schemas already built by fireLLM, avoiding duplicate work.
+func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *CPN, messages []*LLMMessage, prebuiltTools []*LLMTool, streamOutput bool, onChunk func(string)) (content string, costUSD float64, err error) {
 	// Build allowlist for O(1) lookup (PAT-003).
 	allowed := make(map[string]bool, len(t.LLMTools))
 	for _, id := range t.LLMTools {
 		allowed[id] = true
 	}
 
-	// Pre-build tool schemas (static for the loop).
-	loopTools := make([]*LLMTool, 0, len(t.LLMTools))
-	for _, toolID := range t.LLMTools {
-		toolTrans, ok := c.Transitions[toolID]
-		if !ok {
-			continue
-		}
-		schema := buildToolSchema(toolTrans)
-		loopTools = append(loopTools, &schema)
-	}
+	// Reuse pre-built tool schemas from the caller (static for the loop).
+	loopTools := prebuiltTools
 
 	var loopCost float64
 
@@ -291,8 +284,94 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 				continue
 			}
 
+			// Emit tool call start event for frontend ExecutionMonitor.
+			startTime := time.Now()
+			c.emit(&Event{
+				Type:           EventTransitionStarted,
+				TransitionID:   tc.ToolName,
+				TransitionKind: NodeKindTool,
+				SessionID:      c.SessionID,
+				CPNID:          c.ID,
+				CPNDepth:       c.Depth,
+				CPNRole:        c.Role,
+				Payload: TransitionStartedPayload{
+					InputTokens: []TokenSnapshot{{
+						Color:          string(ColorJSON),
+						PayloadPreview: formatPayloadPreview(string(tc.Arguments)),
+						OriginID:       t.ID,
+						OriginKind:     string(NodeKindLLM),
+					}},
+				},
+				Timestamp: startTime,
+			})
+
+			// HITL gate: tools with RequiresHITL block until human approval.
+			if toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
+				c.emit(&Event{
+					Type:           EventHITLRequested,
+					TransitionID:   tc.ToolName,
+					TransitionKind: NodeKindTool,
+					SessionID:      c.SessionID,
+					CPNID:          c.ID,
+					CPNDepth:       c.Depth,
+					CPNRole:        c.Role,
+					Payload: map[string]any{
+						"tool_name":    tc.ToolName,
+						"arguments":    string(tc.Arguments),
+						"tool_call_id": tc.ID,
+						"description":  toolTransition.ToolMeta.Description,
+					},
+					Timestamp: time.Now(),
+				})
+
+				c.setState(StateWaiting)
+
+				if t.HITLConfig != nil && t.HITLConfig.Channel != nil {
+					select {
+					case <-ctx.Done():
+						return "", loopCost, ctx.Err()
+					case response := <-t.HITLConfig.Channel:
+						c.setState(StateRunning)
+						payload := fmt.Sprintf("%v", response.Payload)
+						if strings.EqualFold(strings.TrimSpace(payload), "reject") ||
+							response.Color == ColorError {
+							// Tool rejected — send error to LLM.
+							messages = append(messages, &LLMMessage{
+								Role: "tool",
+								ToolResult: &LLMToolResult{
+									ToolCallID: tc.ID,
+									Content:    "Tool execution rejected by user",
+								},
+							})
+							c.emit(&Event{
+								Type:           EventHITLResolved,
+								TransitionID:   tc.ToolName,
+								TransitionKind: NodeKindTool,
+								SessionID:      c.SessionID,
+								CPNID:          c.ID,
+								Payload:        "rejected",
+								Timestamp:      time.Now(),
+							})
+							continue // Skip tool execution, proceed to next tool call.
+						}
+						// Approved — continue to tool execution.
+						c.emit(&Event{
+							Type:           EventHITLResolved,
+							TransitionID:   tc.ToolName,
+							TransitionKind: NodeKindTool,
+							SessionID:      c.SessionID,
+							CPNID:          c.ID,
+							Payload:        "approved",
+							Timestamp:      time.Now(),
+						})
+					}
+				}
+				// If no HITL channel configured, log warning and proceed (graceful degradation).
+			}
+
 			// Execute the tool.
 			var resultContent string
+			var execErr error
 			if toolTransition.Executor == nil {
 				resultContent = fmt.Sprintf("error: tool %q has nil executor", tc.ToolName)
 			} else {
@@ -300,7 +379,8 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					Color:   ColorJSON,
 					Payload: string(tc.Arguments),
 				}
-				toolResult, execErr := toolTransition.Executor(ctx, toolInput)
+				toolResult, err := toolTransition.Executor(ctx, toolInput)
+				execErr = err
 				if execErr != nil {
 					// REQ-009: Tool errors sent back to LLM for recovery.
 					resultContent = fmt.Sprintf("error: %s", execErr.Error())
@@ -308,6 +388,30 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					resultContent = fmt.Sprintf("%v", toolResult.Payload)
 				}
 			}
+
+			// Emit tool executed event with duration and success/failure.
+			durationMs := time.Since(startTime).Milliseconds()
+			namespace := ""
+			if toolTransition.ToolMeta != nil {
+				namespace = toolTransition.ToolMeta.Namespace
+			}
+			c.emit(&Event{
+				Type:           EventToolExecuted,
+				TransitionID:   tc.ToolName,
+				TransitionKind: NodeKindTool,
+				SessionID:      c.SessionID,
+				CPNID:          c.ID,
+				CPNDepth:       c.Depth,
+				CPNRole:        c.Role,
+				Payload: ToolExecutedPayload{
+					ToolName:   tc.ToolName,
+					Namespace:  namespace,
+					DurationMs: durationMs,
+					Success:    execErr == nil,
+					Error:      errorString(execErr),
+				},
+				Timestamp: time.Now(),
+			})
 
 			messages = append(messages, &LLMMessage{
 				Role:       "tool",
@@ -373,13 +477,20 @@ func formatTokenPayload(consumed []Token) string {
 }
 
 // buildToolSchema converts a NodeKindTool transition to an LLMTool.
-// NOTE: Parameters is intentionally omitted — Transition does not carry
-// tool schema yet. A ToolSchema field will be added in a future block.
+// When ToolMeta is populated (via tools.Registry.InjectIntoCPN), the
+// description and JSON Schema parameters are forwarded to the LLM.
 func buildToolSchema(tool *Transition) LLMTool {
-	return LLMTool{
-		Name:        tool.ToolName,
-		Description: fmt.Sprintf("Execute tool: %s", tool.ToolName),
+	lt := LLMTool{
+		Name: tool.ToolName,
 	}
+	if tool.ToolMeta != nil {
+		lt.Description = tool.ToolMeta.Description
+		lt.Parameters = tool.ToolMeta.Parameters
+	}
+	if lt.Description == "" {
+		lt.Description = fmt.Sprintf("Execute tool: %s", tool.ToolName)
+	}
+	return lt
 }
 
 // buildTrace creates a TraceConfig for observability.
@@ -394,6 +505,14 @@ func buildTrace(t *Transition, c *CPN) *TraceConfig {
 		GenerationName: t.ID,
 		SpanName:       c.ID + "/" + t.ID,
 	}
+}
+
+// errorString returns the error message or empty string if nil.
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // inferOutputColor returns ColorJSON if requireJSON, else ColorArtifact.

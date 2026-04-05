@@ -9,6 +9,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
@@ -57,15 +58,17 @@ type ForkSessionResponse struct {
 
 // Handlers holds dependencies for HTTP handlers.
 type Handlers struct {
-	App            *app.SessionService
-	Broker         *SSEBroker
-	Logger         *slog.Logger
-	BillingFetcher BillingFetcher
-	FlowRepo       persist.FlowRepository
-	IntelRepo      persist.IntelligenceRepository
-	EventRepo      persist.EventRepository
-	Verifier       auth.TokenVerifier
-	UserRepo       persist.UserRepository
+	App             *app.SessionService
+	Broker          *SSEBroker
+	Logger          *slog.Logger
+	BillingFetcher  BillingFetcher
+	FlowRepo        persist.FlowRepository
+	IntelRepo       persist.IntelligenceRepository
+	EventRepo       persist.EventRepository
+	Verifier        auth.TokenVerifier
+	UserRepo        persist.UserRepository
+	PersonalityRepo persist.PersonalityRepository
+	ToolRegistry    *tools.Registry
 }
 
 // HandleCreateSession creates a new session.

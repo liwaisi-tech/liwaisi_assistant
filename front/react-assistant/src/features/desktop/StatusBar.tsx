@@ -2,10 +2,16 @@ import type { SessionState } from '../../types/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { BalanceWidget } from '../billing/BalanceWidget';
 
+interface PersonalityBadge {
+  kind: string;
+  title: string;
+}
+
 interface StatusBarProps {
   sessionState: SessionState;
   isConnected: boolean;
-  activeApp?: 'chat' | 'flows' | 'monitor';
+  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
+  personalityPrinciples?: PersonalityBadge[];
 }
 
 const stateConfig: Record<SessionState, { label: string; className: string }> = {
@@ -20,9 +26,17 @@ const appLabels: Record<string, string> = {
   chat: 'Chat',
   flows: 'Flows',
   monitor: 'Monitor',
+  personality: 'Identity',
+  tools: 'Tools',
 };
 
-export function StatusBar({ sessionState, isConnected, activeApp = 'chat' }: StatusBarProps) {
+const principleColors: Record<string, string> = {
+  nucleo: 'text-sky-400',
+  conducta: 'text-amber-400',
+  etica: 'text-emerald-400',
+};
+
+export function StatusBar({ sessionState, isConnected, activeApp = 'chat', personalityPrinciples }: StatusBarProps) {
   const state = stateConfig[sessionState];
   const { user, logout } = useAuth();
 
@@ -87,6 +101,23 @@ export function StatusBar({ sessionState, isConnected, activeApp = 'chat' }: Sta
             {isConnected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
+
+        {/* Personality principle badges */}
+        {personalityPrinciples && personalityPrinciples.length > 0 && (
+          <div className="hidden md:flex items-center gap-1">
+            {personalityPrinciples.map((p, i) => (
+              <span key={i}>
+                {i > 0 && <span className="text-[9px] mx-0.5" style={{ color: 'var(--text-muted)' }}>|</span>}
+                <span
+                  className={`text-[9px] font-medium ${principleColors[p.kind] ?? 'text-slate-400'}`}
+                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {p.title}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Cmd+K hint */}
         <span

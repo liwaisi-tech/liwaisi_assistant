@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
@@ -66,6 +67,7 @@ func main() {
 	var serviceOpts []app.SessionServiceOption
 	var store *storepostgres.Store
 	registry := newServerFuncRegistry()
+	toolReg := tools.NewRegistry()
 
 	if dsn := os.Getenv("LIWAISI_DB_DSN"); dsn != "" {
 		redisURL := envOr("LIWAISI_REDIS_URL", "redis://localhost:6379")
@@ -79,6 +81,19 @@ func main() {
 		}
 		logger.Info("persistence enabled", "postgres", "connected", "redis", "connected")
 
+		// Register personality tools (requires persistence for personality repo).
+		persDeps := &tools.PersonalityToolDeps{
+			Repo:        store.Personalities(),
+			DefaultPers: cpn.DefaultPersonality(),
+		}
+		if err := tools.RegisterPersonalityTools(toolReg, persDeps); err != nil {
+			logger.Error("register personality tools failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		toolReg.Seal()
+		toolReg.InjectIntoFuncRegistry(registry)
+		logger.Info("personality tools registered and sealed")
+
 		serviceOpts = append(serviceOpts,
 			app.WithPersistence(&app.PersistDeps{
 				Sessions:     store.Sessions(),
@@ -89,6 +104,7 @@ func main() {
 				FuncRegistry: registry,
 			}),
 			app.WithTokenLedger(&tokenLedgerAdapter{ledger: llmClient.TokenLedger}),
+			app.WithToolRegistry(toolReg),
 		)
 	} else {
 		logger.Info("persistence disabled (LIWAISI_DB_DSN not set)")
@@ -115,6 +131,8 @@ func main() {
 		serverOpts = append(serverOpts,
 			httpapi.WithRepos(store.Flows(), store.Intelligence(), store.Events()),
 			httpapi.WithUserRepo(store.Users()),
+			httpapi.WithPersonalityRepo(store.Personalities()),
+			httpapi.WithToolRegistry(toolReg),
 		)
 	}
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)

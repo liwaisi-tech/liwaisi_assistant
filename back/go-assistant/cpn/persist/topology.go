@@ -44,6 +44,7 @@ type TransitionTopology struct {
 
 	SystemPrompt   string                  `json:"systemPrompt,omitempty"`
 	ToolName       string                  `json:"toolName,omitempty"`
+	ToolParameters json.RawMessage         `json:"toolParameters,omitempty"`
 	LLMConfig      *LLMConfigTopology      `json:"llmConfig,omitempty"`
 	LLMTools       []string                `json:"llmTools,omitempty"`
 	ValidateConfig *ValidateConfigTopology `json:"validateConfig,omitempty"`
@@ -202,6 +203,11 @@ func marshalTransition(t *cpn.Transition, reg *FuncRegistry) (TransitionTopology
 		ToolName:      t.ToolName,
 		LLMTools:      t.LLMTools,
 		ObservedCPNID: t.ObservedCPNID,
+	}
+
+	// Serialize ToolMeta parameters if present.
+	if t.ToolMeta != nil && len(t.ToolMeta.Parameters) > 0 {
+		tt.ToolParameters = t.ToolMeta.Parameters
 	}
 
 	// Guard func
@@ -461,6 +467,14 @@ func unmarshalTransition(tt *TransitionTopology, reg *FuncRegistry) (*cpn.Transi
 		ToolName:      tt.ToolName,
 		LLMTools:      tt.LLMTools,
 		ObservedCPNID: tt.ObservedCPNID,
+	}
+
+	// Restore ToolMeta from serialized parameters.
+	if len(tt.ToolParameters) > 0 {
+		if t.ToolMeta == nil {
+			t.ToolMeta = &cpn.ToolMeta{}
+		}
+		t.ToolMeta.Parameters = tt.ToolParameters
 	}
 
 	// Guard func

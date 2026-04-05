@@ -34,4 +34,7 @@ const (
 
 	// ColorError represents an error payload for recovery transitions.
 	ColorError ColorSet = "ERROR"
+
+	// ColorIdentity carries a Personality state token.
+	ColorIdentity ColorSet = "IDENTITY"
 )

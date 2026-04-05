@@ -28,4 +28,15 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("GET /api/v1/flows", h.HandleListFlows)
 	mux.HandleFunc("GET /api/v1/flows/{hash}", h.HandleGetFlow)
 	mux.HandleFunc("GET /api/v1/flows/{hash}/executions", h.HandleGetFlowExecutions)
+
+	// Personality
+	mux.HandleFunc("GET /api/v1/personality", h.HandleGetPersonality)
+	mux.HandleFunc("PATCH /api/v1/personality/principles/{kind}", h.HandleUpdatePrinciple)
+	mux.HandleFunc("PUT /api/v1/personality/hierarchy", h.HandleSetHierarchy)
+	mux.HandleFunc("DELETE /api/v1/personality", h.HandleResetPersonality)
+	mux.HandleFunc("POST /api/v1/personality/preview", h.HandlePreviewPersonality)
+
+	// Tools
+	mux.HandleFunc("GET /api/v1/tools", h.HandleListTools)
+	mux.HandleFunc("GET /api/v1/tools/{name...}", h.HandleGetTool)
 }

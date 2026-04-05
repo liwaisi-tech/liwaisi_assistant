@@ -31,7 +31,11 @@ export type SSEEventType =
   | 'hitl_resolved'
   | 'mode_switch'
   | 'session_completed'
-  | 'session_failed';
+  | 'session_failed'
+  | 'tool_executed'
+  | 'personality_loaded'
+  | 'personality_modified'
+  | 'conflict_detected';
 
 // ── Monitor Payload Types ─────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
 
 // TopologyFactory builds a CPN topology for a given session ID.
@@ -46,6 +47,7 @@ type SessionService struct {
 	topologyFactory TopologyFactory
 	persist         *PersistDeps
 	tokenLedger     TokenLedgerReader
+	toolRegistry    *tools.Registry
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -79,6 +81,11 @@ func WithPersistence(deps *PersistDeps) SessionServiceOption {
 // WithTokenLedger sets the in-memory token ledger reader for cost sync.
 func WithTokenLedger(reader TokenLedgerReader) SessionServiceOption {
 	return func(s *SessionService) { s.tokenLedger = reader }
+}
+
+// WithToolRegistry sets the tool registry for personality injection and tool resolution.
+func WithToolRegistry(reg *tools.Registry) SessionServiceOption {
+	return func(s *SessionService) { s.toolRegistry = reg }
 }
 
 // NewSessionService creates a SessionService with the given dependencies.
@@ -139,6 +146,14 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		if err := session.RegisterHITL(t.ID, ch); err != nil {
 			s.logger.Error("register HITL channel", "transition", t.ID, "err", err)
 		}
+	}
+
+	// Inject personality into LLM system prompts (best-effort).
+	s.injectPersonality(ctx, root, userID)
+
+	// Inject tool metadata (Parameters, Description, Executor) into transitions.
+	if s.toolRegistry != nil {
+		s.toolRegistry.InjectIntoCPN(root)
 	}
 
 	st := &sessionState{state: cpn.StateIdle}
@@ -603,6 +618,14 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 		}
 	}
 
+	// Inject personality into LLM system prompts (best-effort).
+	s.injectPersonality(ctx, root, userID)
+
+	// Inject tool metadata (Parameters, Description, Executor) into transitions.
+	if s.toolRegistry != nil {
+		s.toolRegistry.InjectIntoCPN(root)
+	}
+
 	// Load forked messages into in-memory session history.
 	if rec.Messages != nil {
 		for _, mr := range rec.Messages {
@@ -645,6 +668,82 @@ func (s *SessionService) SetEventCallback(fn func(string, cpn.Event)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onEvent = fn
+}
+
+// injectPersonality loads the user's personality and prefixes all LLM system prompts.
+// Called after topology creation but before CPN.Run().
+// If the tool registry is nil or the identity tool is not registered, this is a no-op.
+func (s *SessionService) injectPersonality(ctx context.Context, c *cpn.CPN, userID string) {
+	if s.toolRegistry == nil {
+		return
+	}
+
+	entry, ok := s.toolRegistry.Resolve("system/personality.get_identity")
+	if !ok {
+		return
+	}
+
+	// Call the identity tool executor directly (outside CPN execution).
+	inToken := cpn.Token{
+		Color:   cpn.ColorIdentity,
+		Payload: userID,
+		Space:   cpn.SpaceComputation,
+	}
+
+	outToken, err := entry.Executor(ctx, inToken)
+	if err != nil {
+		s.logger.Warn("personality injection failed, using defaults", "error", err)
+		return
+	}
+
+	personality, ok := outToken.Payload.(*cpn.Personality)
+	if !ok {
+		return
+	}
+
+	// Prefix all LLM transitions' system prompts with the personality.
+	promptPrefix := personality.AsSystemPrompt()
+	for _, t := range c.Transitions {
+		if t.Kind != cpn.NodeKindLLM {
+			continue
+		}
+		if t.SystemPrompt != "" {
+			t.SystemPrompt = promptPrefix + "\n\n" + t.SystemPrompt
+		} else {
+			t.SystemPrompt = promptPrefix
+		}
+	}
+
+	// Emit personality loaded event for observability.
+	if c.EventSink != nil {
+		source := "default"
+		if personality.UserID != "" {
+			source = "database"
+		}
+
+		// Build principle snapshots (up to 3).
+		snapshots := make([]cpn.PrincipleSnapshot, 0, len(personality.Principles))
+		for _, p := range personality.Principles {
+			snapshots = append(snapshots, cpn.PrincipleSnapshot{
+				Kind:  string(p.Kind),
+				Title: p.Title,
+			})
+		}
+
+		c.EventSink(&cpn.Event{
+			Type:      cpn.EventPersonalityLoaded,
+			SessionID: c.SessionID,
+			CPNID:     c.ID,
+			CPNDepth:  c.Depth,
+			CPNRole:   c.Role,
+			Payload: cpn.PersonalityLoadedPayload{
+				UserID:     userID,
+				Source:     source,
+				Principles: snapshots,
+			},
+			Timestamp: time.Now(),
+		})
+	}
 }
 
 // persistEvent converts a CPN event to an EventRecord and appends it.
