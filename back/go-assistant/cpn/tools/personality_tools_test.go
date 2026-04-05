@@ -383,6 +383,266 @@ func TestRegisterPersonalityTools(t *testing.T) {
 	}
 }
 
+// ── makeAboutLiwaisi tests ──────────────────────────────────────────────────
+
+func TestAboutLiwaisi_Topics(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeAboutLiwaisi(deps)
+	id := cpn.DefaultPersonality().Identity
+
+	tests := []struct {
+		name     string
+		topic    string
+		wantKeys []string
+	}{
+		{
+			name:     "TopicIdentity",
+			topic:    `{"topic":"identity"}`,
+			wantKeys: []string{"name", "acronym", "nature", "gender", "pronouns", "tagline", "llm_disclosure"},
+		},
+		{
+			name:     "TopicCreator",
+			topic:    `{"topic":"creator"}`,
+			wantKeys: []string{"creator", "creator_url", "source_url", "mission"},
+		},
+		{
+			name:     "TopicPlatform",
+			topic:    `{"topic":"platform"}`,
+			wantKeys: []string{"platform", "llm_disclosure", "source_url"},
+		},
+		{
+			name:     "TopicMission",
+			topic:    `{"topic":"mission"}`,
+			wantKeys: []string{"mission", "creator", "creator_url"},
+		},
+		{
+			name:     "TopicAll",
+			topic:    `{"topic":"all"}`,
+			wantKeys: []string{"name", "acronym", "nature", "gender", "pronouns", "tagline", "creator", "creator_url", "source_url", "platform", "llm_disclosure", "mission"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec(context.Background(), stringToken(tc.topic))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if out.Color != cpn.ColorJSON {
+				t.Errorf("color = %s, want JSON", out.Color)
+			}
+
+			raw, ok := out.Payload.(string)
+			if !ok {
+				t.Fatalf("payload type = %T, want string", out.Payload)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(raw), &result); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			for _, key := range tc.wantKeys {
+				if _, ok := result[key]; !ok {
+					t.Errorf("missing key %q in result", key)
+				}
+			}
+			if len(result) != len(tc.wantKeys) {
+				t.Errorf("result has %d keys, want %d", len(result), len(tc.wantKeys))
+			}
+		})
+	}
+
+	// Verify a concrete field value to ensure data correctness.
+	t.Run("IdentityNameMatches", func(t *testing.T) {
+		out, _ := exec(context.Background(), stringToken(`{"topic":"identity"}`))
+		var result map[string]any
+		json.Unmarshal([]byte(out.Payload.(string)), &result)
+		if result["name"] != id.Name {
+			t.Errorf("name = %v, want %v", result["name"], id.Name)
+		}
+	})
+}
+
+func TestAboutLiwaisi_PlainStringTopic(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeAboutLiwaisi(deps)
+
+	out, err := exec(context.Background(), stringToken("creator"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]any
+	json.Unmarshal([]byte(out.Payload.(string)), &result)
+
+	// Plain string "creator" should select the creator topic.
+	if _, ok := result["creator"]; !ok {
+		t.Error("expected 'creator' key in result for plain string topic")
+	}
+	if _, ok := result["name"]; ok {
+		t.Error("unexpected 'name' key — should not be 'all' topic")
+	}
+}
+
+func TestAboutLiwaisi_DefaultsToAll(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeAboutLiwaisi(deps)
+
+	out, err := exec(context.Background(), stringToken(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]any
+	json.Unmarshal([]byte(out.Payload.(string)), &result)
+
+	if len(result) != 12 {
+		t.Errorf("empty input should default to 'all' (12 fields), got %d", len(result))
+	}
+}
+
+// ── payloadToJSON tests ─────────────────────────────────────────────────────
+
+func TestPayloadToJSON(t *testing.T) {
+	type testStruct struct {
+		Key string `json:"key"`
+	}
+
+	tests := []struct {
+		name    string
+		input   any
+		wantStr string
+	}{
+		{"String", `{"a":"b"}`, `{"a":"b"}`},
+		{"RawMessage", json.RawMessage(`{"x":1}`), `{"x":1}`},
+		{"Bytes", []byte(`{"y":2}`), `{"y":2}`},
+		{"Struct", testStruct{Key: "val"}, `{"key":"val"}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := payloadToJSON(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tc.wantStr {
+				t.Errorf("got %s, want %s", got, tc.wantStr)
+			}
+		})
+	}
+}
+
+// ── Type assertion error paths (FIX-005) ────────────────────────────────────
+
+func TestGetIdentity_NonStringPayload(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeGetIdentity(deps)
+
+	tok := cpn.Token{Color: cpn.ColorString, Payload: 42}
+	_, err := exec(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected error for non-string payload")
+	}
+	if !contains(err.Error(), "expected string user_id") {
+		t.Errorf("error = %q, want to contain 'expected string user_id'", err)
+	}
+}
+
+func TestReset_NonStringPayload(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeReset(deps)
+
+	tok := cpn.Token{Color: cpn.ColorString, Payload: 42}
+	_, err := exec(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected error for non-string payload")
+	}
+	if !contains(err.Error(), "expected string user_id") {
+		t.Errorf("error = %q, want to contain 'expected string user_id'", err)
+	}
+}
+
+func TestGetTensions_NonStringPayload(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+	exec := makeGetTensions(deps)
+
+	tok := cpn.Token{Color: cpn.ColorString, Payload: 42}
+	_, err := exec(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected error for non-string payload")
+	}
+	if !contains(err.Error(), "expected string user_id") {
+		t.Errorf("error = %q, want to contain 'expected string user_id'", err)
+	}
+}
+
+// ── loadPersonality contract (FIX-004) ──────────────────────────────────────
+
+func TestLoadPersonality_EmptyUserID(t *testing.T) {
+	repo := newMockRepo()
+	deps := makeDeps(repo)
+
+	exec := makeGetIdentity(deps)
+	out, err := exec(context.Background(), stringToken(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	p := out.Payload.(*cpn.Personality)
+	def := cpn.DefaultPersonality()
+	if p.Principles[0].Title != def.Principles[0].Title {
+		t.Errorf("expected default personality, got %q", p.Principles[0].Title)
+	}
+}
+
+func TestLoadPersonality_NotFound(t *testing.T) {
+	repo := newMockRepo() // empty repo, no seeded data
+	deps := makeDeps(repo)
+
+	exec := makeGetIdentity(deps)
+	out, err := exec(context.Background(), stringToken("nonexistent-user"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	p := out.Payload.(*cpn.Personality)
+	def := cpn.DefaultPersonality()
+	if p.Principles[0].Title != def.Principles[0].Title {
+		t.Errorf("expected default personality for not-found user")
+	}
+}
+
+func TestLoadPersonality_RepoError(t *testing.T) {
+	repo := &errRepo{}
+	deps := makeDeps(repo)
+
+	exec := makeGetIdentity(deps)
+	_, err := exec(context.Background(), stringToken("user-1"))
+	if err == nil {
+		t.Fatal("expected error when repo returns error")
+	}
+}
+
+// contains is a helper to check substring presence.
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPersonalityTools_HaveParameters(t *testing.T) {
 	repo := newMockRepo()
 	deps := makeDeps(repo)
@@ -411,7 +671,7 @@ func TestPersonalityTools_HaveParameters(t *testing.T) {
 			continue
 		}
 		// Verify it's valid JSON.
-		var parsed map[string]interface{}
+		var parsed map[string]any
 		if err := json.Unmarshal(entry.Schema.Parameters, &parsed); err != nil {
 			t.Errorf("tool %q Parameters is not valid JSON: %v", qn, err)
 		}

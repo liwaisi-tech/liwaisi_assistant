@@ -163,6 +163,13 @@ func WithToolRegistry(registry *tools.Registry) ServerOption {
 	}
 }
 
+// WithWaitlistRepo injects the waitlist repository for the public waitlist endpoint.
+func WithWaitlistRepo(repo persist.WaitlistRepository) ServerOption {
+	return func(h *Handlers) {
+		h.WaitlistRepo = repo
+	}
+}
+
 // WithRateLimiting enables rate limiting middleware with the given configuration.
 func WithRateLimiting(cfg RateLimitConfig) ServerOption {
 	return func(h *Handlers) {

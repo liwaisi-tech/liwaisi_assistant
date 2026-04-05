@@ -167,3 +167,24 @@ export async function listTools(namespace?: string): Promise<ToolListResponse> {
   const qs = params.toString();
   return request<ToolListResponse>(`/tools${qs ? `?${qs}` : ''}`);
 }
+
+// ── Waitlist API (public, no auth) ─────────────────────────────────────
+
+export interface WaitlistResponse {
+  ok: boolean;
+  message: string;
+}
+
+export async function joinWaitlist(email: string): Promise<WaitlistResponse> {
+  const response = await fetch(`${BASE_URL}/waitlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new ApiError(response.status, error.error || response.statusText);
+  }
+  return response.json();
+}

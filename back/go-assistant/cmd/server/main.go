@@ -136,6 +136,7 @@ func main() {
 			httpapi.WithUserRepo(store.Users()),
 			httpapi.WithPersonalityRepo(store.Personalities()),
 			httpapi.WithToolRegistry(toolReg),
+			httpapi.WithWaitlistRepo(store.Waitlist()),
 		)
 	}
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)

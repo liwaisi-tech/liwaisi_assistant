@@ -126,6 +126,12 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*UserRecord, error)
 }
 
+// WaitlistRepository manages early-access email collection.
+type WaitlistRepository interface {
+	// Add inserts an email into the waitlist. Returns nil on duplicate (idempotent).
+	Add(ctx context.Context, email, source string) error
+}
+
 // HITLRepository manages human-in-the-loop pending request persistence.
 type HITLRepository interface {
 	// Enqueue adds a pending HITL request.

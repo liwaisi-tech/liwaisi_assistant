@@ -39,4 +39,7 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	// Tools
 	mux.HandleFunc("GET /api/v1/tools", h.HandleListTools)
 	mux.HandleFunc("GET /api/v1/tools/{name...}", h.HandleGetTool)
+
+	// Waitlist (public, no auth required)
+	mux.HandleFunc("POST /api/v1/waitlist", h.HandleWaitlist)
 }
