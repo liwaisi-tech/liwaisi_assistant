@@ -69,6 +69,7 @@ type Handlers struct {
 	UserRepo        persist.UserRepository
 	PersonalityRepo persist.PersonalityRepository
 	ToolRegistry    *tools.Registry
+	WaitlistRepo    persist.WaitlistRepository
 	RateLimitCfg    *RateLimitConfig
 }
 

@@ -33,6 +33,7 @@ type Store struct {
 	hitl          persist.HITLRepository
 	users         persist.UserRepository
 	personalities persist.PersonalityRepository
+	waitlist      persist.WaitlistRepository
 }
 
 // NewStore creates all persistence backends, runs migrations, and returns the facade.
@@ -76,6 +77,7 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 		hitl:          storeredis.NewHITLRepository(rdb),
 		users:         NewUserRepository(pool),
 		personalities: NewPersonalityStore(pool),
+		waitlist:      NewWaitlistRepository(pool),
 	}
 
 	return s, nil
@@ -142,3 +144,6 @@ func (s *Store) Users() persist.UserRepository { return s.users }
 
 // Personalities returns the personality repository (Postgres).
 func (s *Store) Personalities() persist.PersonalityRepository { return s.personalities }
+
+// Waitlist returns the waitlist repository (Postgres).
+func (s *Store) Waitlist() persist.WaitlistRepository { return s.waitlist }

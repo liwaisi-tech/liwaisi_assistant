@@ -81,12 +81,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.google?.accounts.id.initialize({
         client_id: clientId,
         callback: handleCredentialResponse,
-        auto_select: true,
+        auto_select: false,
       });
-
-      if (!user) {
-        window.google?.accounts.id.prompt();
-      }
     };
 
     if (window.google?.accounts) {

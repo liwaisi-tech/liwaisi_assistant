@@ -1,6 +1,6 @@
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DesktopLayout } from './features/desktop/DesktopLayout';
-import { LoginScreen } from './features/auth/LoginScreen';
+import { LandingPage } from './features/landing/LandingPage';
 
 const hasGoogleAuth = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -8,7 +8,7 @@ function AppContent() {
   const { user, isAuthenticated } = useAuth();
 
   if (hasGoogleAuth && (!isAuthenticated || !user)) {
-    return <LoginScreen />;
+    return <LandingPage />;
   }
 
   const userId = user?.email ?? 'dev-user';
