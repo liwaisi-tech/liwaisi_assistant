@@ -217,7 +217,7 @@ func (v *GoogleTokenVerifier) getKey(ctx context.Context, kid string) (*rsa.Publ
 
 // refreshKeys fetches the JWKS from Google and updates the local cache.
 func (v *GoogleTokenVerifier) refreshKeys(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

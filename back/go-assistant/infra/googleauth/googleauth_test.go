@@ -59,7 +59,7 @@ func buildJWKS(keys ...*testKeyPair) []byte {
 		E   string `json:"e"`
 	}
 
-	var jwksKeys []jwkKey
+	jwksKeys := make([]jwkKey, 0, len(keys))
 	for _, k := range keys {
 		eBytes := big.NewInt(int64(k.publicKey.E)).Bytes()
 		jwksKeys = append(jwksKeys, jwkKey{
@@ -127,7 +127,7 @@ func startJWKSServer(t *testing.T, jwksData []byte) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwksData)
+		_, _ = w.Write(jwksData)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -314,10 +314,10 @@ func TestGoogleTokenVerifier_UnknownKidTriggersRefresh(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if callCount == 1 {
 			// First call: only key-1.
-			w.Write(buildJWKS(kp1))
+			_, _ = w.Write(buildJWKS(kp1))
 		} else {
 			// Subsequent calls: both keys (simulating key rotation).
-			w.Write(buildJWKS(kp1, kp2))
+			_, _ = w.Write(buildJWKS(kp1, kp2))
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -361,7 +361,7 @@ func TestGoogleTokenVerifier_CacheExpiry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fetchCount++
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(buildJWKS(kp))
+		_, _ = w.Write(buildJWKS(kp))
 	}))
 	t.Cleanup(srv.Close)
 

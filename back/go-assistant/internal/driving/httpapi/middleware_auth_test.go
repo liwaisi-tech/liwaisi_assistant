@@ -31,7 +31,7 @@ func echoHandler() http.Handler {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"sub": user.Sub})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sub": user.Sub})
 	})
 }
 
@@ -49,7 +49,7 @@ func TestAuthMiddleware_NilVerifier_DevMode(t *testing.T) {
 	}
 
 	var body map[string]string
-	json.NewDecoder(rec.Body).Decode(&body)
+	_ = json.NewDecoder(rec.Body).Decode(&body)
 	if body["sub"] != "dev-user" {
 		t.Errorf("sub = %q; want %q", body["sub"], "dev-user")
 	}
@@ -78,7 +78,7 @@ func TestAuthMiddleware_ValidBearerToken(t *testing.T) {
 	}
 
 	var body map[string]string
-	json.NewDecoder(rec.Body).Decode(&body)
+	_ = json.NewDecoder(rec.Body).Decode(&body)
 	if body["sub"] != "google-123" {
 		t.Errorf("sub = %q; want %q", body["sub"], "google-123")
 	}
@@ -105,7 +105,7 @@ func TestAuthMiddleware_ValidQueryParamToken(t *testing.T) {
 	}
 
 	var body map[string]string
-	json.NewDecoder(rec.Body).Decode(&body)
+	_ = json.NewDecoder(rec.Body).Decode(&body)
 	if body["sub"] != "google-456" {
 		t.Errorf("sub = %q; want %q", body["sub"], "google-456")
 	}
@@ -126,7 +126,7 @@ func TestAuthMiddleware_MissingToken(t *testing.T) {
 	}
 
 	var body map[string]string
-	json.NewDecoder(rec.Body).Decode(&body)
+	_ = json.NewDecoder(rec.Body).Decode(&body)
 	if body["error"] != "unauthorized" {
 		t.Errorf("error = %q; want %q", body["error"], "unauthorized")
 	}

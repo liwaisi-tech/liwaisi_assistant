@@ -457,7 +457,7 @@ func TestAboutLiwaisi_Topics(t *testing.T) {
 	t.Run("IdentityNameMatches", func(t *testing.T) {
 		out, _ := exec(context.Background(), stringToken(`{"topic":"identity"}`))
 		var result map[string]any
-		json.Unmarshal([]byte(out.Payload.(string)), &result)
+		_ = json.Unmarshal([]byte(out.Payload.(string)), &result)
 		if result["name"] != id.Name {
 			t.Errorf("name = %v, want %v", result["name"], id.Name)
 		}
@@ -475,7 +475,7 @@ func TestAboutLiwaisi_PlainStringTopic(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal([]byte(out.Payload.(string)), &result)
+	_ = json.Unmarshal([]byte(out.Payload.(string)), &result)
 
 	// Plain string "creator" should select the creator topic.
 	if _, ok := result["creator"]; !ok {
@@ -497,7 +497,7 @@ func TestAboutLiwaisi_DefaultsToAll(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal([]byte(out.Payload.(string)), &result)
+	_ = json.Unmarshal([]byte(out.Payload.(string)), &result)
 
 	if len(result) != 12 {
 		t.Errorf("empty input should default to 'all' (12 fields), got %d", len(result))

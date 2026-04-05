@@ -196,7 +196,7 @@ func (r *MemorySessionRepository) ListByUserID(ctx context.Context, userID strin
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var items []*SessionListItem
+	items := make([]*SessionListItem, 0, len(r.sessions))
 	for _, s := range r.sessions {
 		if s.UserID != userID || s.DeletedAt != nil || s.State == SessionExpired {
 			continue
@@ -236,7 +236,7 @@ func (r *MemorySessionRepository) ListByUserID(ctx context.Context, userID strin
 	return &Page[*SessionListItem]{Items: items[:limit], HasMore: len(items) > limit}, nil
 }
 
-func (r *MemorySessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+func (r *MemorySessionRepository) UpdateTitle(ctx context.Context, sessionID, title string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func (r *MemorySessionRepository) SoftDelete(ctx context.Context, sessionID stri
 	return nil
 }
 
-func (r *MemorySessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*SessionRecord, error) {
+func (r *MemorySessionRepository) ForkSession(ctx context.Context, newSessionID, sourceSessionID string, messageIndex int, userID, channel string) (*SessionRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -284,7 +284,7 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 	return page, nil
 }
 
-func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID string, title string) error {
+func (r *SessionRepository) UpdateTitle(ctx context.Context, sessionID, title string) error {
 	tag, err := r.pool.Exec(ctx, "UPDATE sessions SET title = $2 WHERE id = $1", sessionID, title)
 	if err != nil {
 		return fmt.Errorf("postgres session updateTitle: %w", err)
@@ -309,12 +309,12 @@ func (r *SessionRepository) SoftDelete(ctx context.Context, sessionID string) er
 	return nil
 }
 
-func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID string, sourceSessionID string, messageIndex int, userID string, channel string) (*persist.SessionRecord, error) {
+func (r *SessionRepository) ForkSession(ctx context.Context, newSessionID, sourceSessionID string, messageIndex int, userID, channel string) (*persist.SessionRecord, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("postgres session fork begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback best-effort on deferred cleanup
 
 	// Get source session
 	var srcTitle string
