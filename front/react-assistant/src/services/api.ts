@@ -168,6 +168,36 @@ export async function listTools(namespace?: string): Promise<ToolListResponse> {
   return request<ToolListResponse>(`/tools${qs ? `?${qs}` : ''}`);
 }
 
+// ── Admin Config API ──────────────────────────────────────────────────
+
+import type { AdminConfigResponse, PlatformStatusResponse } from '../types/admin';
+
+export async function getAdminConfig(): Promise<AdminConfigResponse> {
+  return request<AdminConfigResponse>('/admin/config');
+}
+
+export async function setAdminConfig(key: string, value: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  });
+}
+
+export async function deleteAdminConfig(key: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getPlatformStatus(): Promise<PlatformStatusResponse> {
+  const response = await fetch(`${BASE_URL}/admin/config/status`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new ApiError(response.status, error.error || response.statusText);
+  }
+  return response.json();
+}
+
 // ── Waitlist API (public, no auth) ─────────────────────────────────────
 
 export interface WaitlistResponse {

@@ -21,6 +21,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/driving/httpapi"
 	storepostgres "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/store/postgres"
 )
@@ -31,26 +32,16 @@ func main() {
 	}))
 
 	// ── Configuration from environment ──────────────────────────────
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		logger.Warn("OPENROUTER_API_KEY not set; LLM calls will fail")
-	}
-
 	addr := envOr("LISTEN_ADDR", ":8080")
-	corsOrigins := strings.Split(envOr("CORS_ORIGINS", "*"), ",")
-	defaultModel := envOr("DEFAULT_MODEL", "anthropic/claude-sonnet-4-6")
+	adminEmail := envOr("ADMIN_EMAIL", "dev@localhost")
 
 	cfg := httpapi.ServerConfig{
 		Addr:            addr,
 		ReadTimeout:     parseDuration("READ_TIMEOUT", 10*time.Second),
 		IdleTimeout:     parseDuration("IDLE_TIMEOUT", 120*time.Second),
 		ShutdownTimeout: parseDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
-		AllowedOrigins:  corsOrigins,
+		AllowedOrigins:  strings.Split(envOr("CORS_ORIGINS", "*"), ","),
 	}
-
-	// ── Driven adapters ─────────────────────────────────────────────
-	llmClient := openrouter.NewClient(apiKey, defaultModel)
-	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
 
 	// ── Topology selection ──────────────────────────────────────────
 	var topologyFactory app.TopologyFactory
@@ -66,6 +57,7 @@ func main() {
 	// ── Persistence layer (optional) ────────────────────────────────
 	var serviceOpts []app.SessionServiceOption
 	var store *storepostgres.Store
+	var configProvider *config.Provider
 	registry := newServerFuncRegistry()
 	toolReg := tools.NewRegistry()
 
@@ -81,6 +73,26 @@ func main() {
 		}
 		logger.Info("persistence enabled", "postgres", "connected", "redis", "connected")
 
+		// ── Master key + config store ─────────────────────────────────
+		masterKeyPath := envOr("LIWAISI_MASTER_KEY_PATH", "/data/secrets/master.key")
+		masterKey, err := config.LoadOrGenerateMasterKey(masterKeyPath)
+		if err != nil {
+			logger.Error("master key initialization failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		enc, err := config.NewEncryptor(masterKey)
+		if err != nil {
+			logger.Error("encryptor initialization failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		store.InitConfigRepository(enc)
+		configProvider = config.NewProvider(store.Config())
+		if err := configProvider.Refresh(context.Background()); err != nil {
+			logger.Error("config refresh failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		logger.Info("config provider initialized")
+
 		// Register personality tools (requires persistence for personality repo).
 		persDeps := &tools.PersonalityToolDeps{
 			Repo:        store.Personalities(),
@@ -93,7 +105,52 @@ func main() {
 		toolReg.Seal()
 		toolReg.InjectIntoFuncRegistry(registry)
 		logger.Info("personality tools registered and sealed")
+	} else {
+		logger.Info("persistence disabled (LIWAISI_DB_DSN not set)")
+	}
 
+	// ── Resolve config values (env > DB > default) ──────────────────
+	resolveConfig := func(key, fallback string) string {
+		if configProvider != nil {
+			if val, _ := configProvider.Get(key); val != "" {
+				return val
+			}
+		}
+		return fallback
+	}
+
+	apiKey := resolveConfig("openrouter_api_key", os.Getenv("OPENROUTER_API_KEY"))
+	defaultModel := resolveConfig("default_model", envOr("DEFAULT_MODEL", "anthropic/claude-sonnet-4-6"))
+	if apiKey == "" {
+		logger.Warn("OPENROUTER_API_KEY not set; LLM calls will fail")
+	}
+
+	// ── Driven adapters ─────────────────────────────────────────────
+	llmClient := openrouter.NewClient(apiKey, defaultModel)
+	holder := config.NewLLMClientHolder(llmClient)
+	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
+	sharedLedger := llmClient.TokenLedger
+
+	// ── Hot-reload callbacks ────────────────────────────────────────
+	if configProvider != nil {
+		configProvider.OnChange("openrouter_api_key", func(newValue string) {
+			newModel := resolveConfig("default_model", envOr("DEFAULT_MODEL", "anthropic/claude-sonnet-4-6"))
+			newClient := openrouter.NewClient(newValue, newModel)
+			newClient.TokenLedger = sharedLedger // preserve cost tracking
+			holder.Swap(newClient)
+			logger.Info("LLM client hot-reloaded (api key changed)")
+		})
+		configProvider.OnChange("default_model", func(newValue string) {
+			currentKey := resolveConfig("openrouter_api_key", os.Getenv("OPENROUTER_API_KEY"))
+			newClient := openrouter.NewClient(currentKey, newValue)
+			newClient.TokenLedger = sharedLedger
+			holder.Swap(newClient)
+			logger.Info("LLM client hot-reloaded (model changed)", "model", newValue)
+		})
+	}
+
+	// ── Session service options ─────────────────────────────────────
+	if store != nil {
 		serviceOpts = append(serviceOpts,
 			app.WithPersistence(&app.PersistDeps{
 				Sessions:     store.Sessions(),
@@ -103,15 +160,13 @@ func main() {
 				Intelligence: store.Intelligence(),
 				FuncRegistry: registry,
 			}),
-			app.WithTokenLedger(&tokenLedgerAdapter{ledger: llmClient.TokenLedger}),
+			app.WithTokenLedger(&tokenLedgerAdapter{ledger: sharedLedger}),
 			app.WithToolRegistry(toolReg),
 		)
-	} else {
-		logger.Info("persistence disabled (LIWAISI_DB_DSN not set)")
 	}
 
 	// ── Application layer ───────────────────────────────────────────
-	appService := app.NewSessionService(llmClient, costProvider, logger, topologyFactory, serviceOpts...)
+	appService := app.NewSessionService(holder, costProvider, logger, topologyFactory, serviceOpts...)
 
 	// ── Billing adapter ────────────────────────────────────────────
 	billingClient := billing.NewClient(apiKey, "https://openrouter.ai/api/v1")
@@ -128,6 +183,14 @@ func main() {
 
 	// ── Rate limiting ──────────────────────────────────────────────
 	serverOpts = append(serverOpts, httpapi.WithRateLimiting(httpapi.DefaultRateLimitConfig()))
+
+	// ── Admin config ───────────────────────────────────────────────
+	if configProvider != nil {
+		serverOpts = append(serverOpts,
+			httpapi.WithConfigProvider(configProvider),
+			httpapi.WithAdminEmail(adminEmail),
+		)
+	}
 
 	// ── Driving adapter (HTTP server) ───────────────────────────────
 	if store != nil {

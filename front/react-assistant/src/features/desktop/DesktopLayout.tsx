@@ -22,6 +22,8 @@ import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
 import { PersonalityPanel } from '../personality/PersonalityPanel';
 import { ToolBrowser } from '../tools/ToolBrowser';
+import { AdminSecretsPanel } from '../admin/AdminSecretsPanel';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface DesktopLayoutProps {
   userId: string;
@@ -30,6 +32,7 @@ interface DesktopLayoutProps {
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
   const { t } = useTranslation(['desktop', 'common']);
   const isMobile = useIsMobile();
+  const { isAdmin } = useAuth();
 
   // Load namespaces for desktop layout
   useEffect(() => {
@@ -159,6 +162,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   const handleToolsNav = useCallback(() => {
     navigateAndClearPanel('tools');
+  }, [navigateAndClearPanel]);
+
+  const handleAdminNav = useCallback(() => {
+    navigateAndClearPanel('admin');
   }, [navigateAndClearPanel]);
 
   // ── Command Palette actions ─────────────────────────────────────────────
@@ -341,6 +348,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             onNavigate={handleRailNav}
             onSettingsClick={handleSettingsNav}
             onToolsClick={handleToolsNav}
+            onAdminClick={handleAdminNav}
+            isAdmin={isAdmin}
             sidebarContent={sidebarContent}
           />
         )}
@@ -392,6 +401,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             {activeApp === 'personality' && <PersonalityPanel />}
 
             {activeApp === 'tools' && <ToolBrowser />}
+
+            {activeApp === 'admin' && <AdminSecretsPanel />}
           </div>
 
           {/* Adaptive Right Panel -- only in chat mode, desktop only */}

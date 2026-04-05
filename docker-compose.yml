@@ -46,6 +46,10 @@ services:
     env_file: .env
     environment:
       - LISTEN_ADDR=:8080
+      - LIWAISI_MASTER_KEY_PATH=/data/secrets/master.key
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-dev@localhost}
+    volumes:
+      - secretsdata:/data/secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,6 +80,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  secretsdata:
 
 networks:
   liwaisi:

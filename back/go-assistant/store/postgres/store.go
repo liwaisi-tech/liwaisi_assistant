@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 	storeredis "github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/store/redis"
 )
 
@@ -34,6 +35,7 @@ type Store struct {
 	users         persist.UserRepository
 	personalities persist.PersonalityRepository
 	waitlist      persist.WaitlistRepository
+	configRepo    config.ConfigStore
 }
 
 // NewStore creates all persistence backends, runs migrations, and returns the facade.
@@ -147,3 +149,13 @@ func (s *Store) Personalities() persist.PersonalityRepository { return s.persona
 
 // Waitlist returns the waitlist repository (Postgres).
 func (s *Store) Waitlist() persist.WaitlistRepository { return s.waitlist }
+
+// InitConfigRepository creates and stores a ConfigRepository using the given encryptor.
+// Must be called after NewStore and before using Config().
+func (s *Store) InitConfigRepository(enc *config.Encryptor) {
+	s.configRepo = NewConfigRepository(s.pool, enc)
+}
+
+// Config returns the config repository (Postgres, encrypted).
+// Returns nil if InitConfigRepository was not called.
+func (s *Store) Config() config.ConfigStore { return s.configRepo }

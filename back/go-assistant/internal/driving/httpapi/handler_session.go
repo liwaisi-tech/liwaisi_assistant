@@ -12,6 +12,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 )
 
 // ── Multi-chat management types ───────────────────────────────────────────────
@@ -71,6 +72,8 @@ type Handlers struct {
 	ToolRegistry    *tools.Registry
 	WaitlistRepo    persist.WaitlistRepository
 	RateLimitCfg    *RateLimitConfig
+	ConfigProvider  *config.Provider
+	AdminEmail      string
 }
 
 // HandleCreateSession creates a new session.

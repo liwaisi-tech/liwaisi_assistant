@@ -11,8 +11,17 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   logout: () => void;
   getToken: () => string | null;
+}
+
+function isAdminUser(user: User | null): boolean {
+  if (!user) return false;
+  const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
+  // In dev-mode (no VITE_ADMIN_EMAIL set), all users are admin.
+  if (!adminEmail) return true;
+  return user.email === adminEmail;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -123,7 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, logout, getToken }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isAdmin: isAdminUser(user), logout, getToken }}>
       {children}
     </AuthContext.Provider>
   );

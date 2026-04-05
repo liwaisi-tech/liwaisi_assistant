@@ -12,6 +12,7 @@ import monitorEn from '../i18n/locales/en/monitor.json';
 import flowsEn from '../i18n/locales/en/flows.json';
 import personalityEn from '../i18n/locales/en/personality.json';
 import toolsEn from '../i18n/locales/en/tools.json';
+import adminEn from '../i18n/locales/en/admin.json';
 
 import commonEs from '../i18n/locales/es/common.json';
 import authEs from '../i18n/locales/es/auth.json';
@@ -22,6 +23,7 @@ import monitorEs from '../i18n/locales/es/monitor.json';
 import flowsEs from '../i18n/locales/es/flows.json';
 import personalityEs from '../i18n/locales/es/personality.json';
 import toolsEs from '../i18n/locales/es/tools.json';
+import adminEs from '../i18n/locales/es/admin.json';
 
 const testI18n = i18n.createInstance();
 
@@ -39,6 +41,7 @@ testI18n.use(initReactI18next).init({
       flows: flowsEn,
       personality: personalityEn,
       tools: toolsEn,
+      admin: adminEn,
     },
     es: {
       common: commonEs,
@@ -50,6 +53,7 @@ testI18n.use(initReactI18next).init({
       flows: flowsEs,
       personality: personalityEs,
       tools: toolsEs,
+      admin: adminEs,
     },
   },
   defaultNS: 'common',

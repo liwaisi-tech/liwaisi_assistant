@@ -76,9 +76,10 @@ func AuthMiddleware(verifier auth.TokenVerifier, logger *slog.Logger) func(http.
 
 // publicPaths lists routes that do not require authentication.
 var publicPaths = map[string]bool{
-	"/api/v1/health":   true,
-	"/api/v1/version":  true,
-	"/api/v1/waitlist": true,
+	"/api/v1/health":               true,
+	"/api/v1/version":              true,
+	"/api/v1/waitlist":             true,
+	"/api/v1/admin/config/status":  true,
 }
 
 // isPublicPath checks if the given path is exempt from authentication.

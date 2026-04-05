@@ -1,0 +1,26 @@
+{
+  "panel": {
+    "title": "Configuración de Plataforma",
+    "description": "Administra claves API y configuraciones de la plataforma. Las variables de entorno tienen prioridad sobre los valores configurados aquí.",
+    "loading": "Cargando configuración...",
+    "retry": "Reintentar",
+    "setupRequired": "Configuración requerida: faltan una o más claves de configuración obligatorias. La plataforma puede no funcionar correctamente hasta que se configuren."
+  },
+  "categories": {
+    "llm": "Proveedor LLM",
+    "auth": "Autenticación",
+    "server": "Servidor",
+    "models": "Modelos Personalizados"
+  },
+  "field": {
+    "required": "requerido",
+    "save": "Guardar",
+    "saving": "Guardando...",
+    "reset": "Restablecer",
+    "reveal": "mostrar",
+    "hide": "ocultar",
+    "placeholder": "Ingrese nuevo valor...",
+    "lockedByEnv": "Configurado via variable de entorno (solo lectura)",
+    "updatedBy": "Actualizado por {{by}} el {{at}}"
+  }
+}

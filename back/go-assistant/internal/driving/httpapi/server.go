@@ -11,6 +11,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 )
 
 // ServerConfig holds HTTP server configuration.
@@ -174,5 +175,19 @@ func WithWaitlistRepo(repo persist.WaitlistRepository) ServerOption {
 func WithRateLimiting(cfg RateLimitConfig) ServerOption {
 	return func(h *Handlers) {
 		h.RateLimitCfg = &cfg
+	}
+}
+
+// WithConfigProvider injects the config provider for admin config endpoints.
+func WithConfigProvider(p *config.Provider) ServerOption {
+	return func(h *Handlers) {
+		h.ConfigProvider = p
+	}
+}
+
+// WithAdminEmail sets the admin email for authorization checks.
+func WithAdminEmail(email string) ServerOption {
+	return func(h *Handlers) {
+		h.AdminEmail = email
 	}
 }

@@ -1,0 +1,26 @@
+{
+  "panel": {
+    "title": "Platform Configuration",
+    "description": "Manage API keys and platform settings. Environment variables take precedence over values set here.",
+    "loading": "Loading configuration...",
+    "retry": "Retry",
+    "setupRequired": "Setup required: one or more required configuration keys are missing. The platform may not function correctly until they are set."
+  },
+  "categories": {
+    "llm": "LLM Provider",
+    "auth": "Authentication",
+    "server": "Server",
+    "models": "Model Overrides"
+  },
+  "field": {
+    "required": "required",
+    "save": "Save",
+    "saving": "Saving...",
+    "reset": "Reset",
+    "reveal": "reveal",
+    "hide": "hide",
+    "placeholder": "Enter new value...",
+    "lockedByEnv": "Set via environment variable (read-only)",
+    "updatedBy": "Updated by {{by}} at {{at}}"
+  }
+}

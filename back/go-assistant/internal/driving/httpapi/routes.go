@@ -42,4 +42,13 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 
 	// Waitlist (public, no auth required)
 	mux.HandleFunc("POST /api/v1/waitlist", h.HandleWaitlist)
+
+	// Admin config (public status endpoint)
+	mux.HandleFunc("GET /api/v1/admin/config/status", h.HandleConfigStatus)
+
+	// Admin config (protected by admin middleware)
+	adminMw := AdminMiddleware(h.AdminEmail)
+	mux.Handle("GET /api/v1/admin/config", adminMw(http.HandlerFunc(h.HandleListConfig)))
+	mux.Handle("PUT /api/v1/admin/config/{key}", adminMw(http.HandlerFunc(h.HandleSetConfig)))
+	mux.Handle("DELETE /api/v1/admin/config/{key}", adminMw(http.HandlerFunc(h.HandleDeleteConfig)))
 }
