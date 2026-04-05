@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -64,6 +65,20 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rec, err := h.UserRepo.GetByID(r.Context(), user.Sub)
+	if errors.Is(err, persist.ErrUserNotFound) {
+		// User authenticated but not yet in DB (first request after sign-in).
+		// Return a synthetic profile indicating onboarding is needed.
+		writeJSON(w, http.StatusOK, UserProfileResponse{
+			ID:                  user.Sub,
+			Email:               user.Email,
+			Name:                user.Name,
+			Picture:             user.Picture,
+			Preferences:         UserPreferencesJSON{PreferredLanguage: "en", ModelOverrides: map[string]string{}},
+			OnboardingCompleted: false,
+			CreatedAt:           time.Now().Format(time.RFC3339),
+		})
+		return
+	}
 	if err != nil {
 		h.Logger.Error("get user profile", "user_id", user.Sub, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
