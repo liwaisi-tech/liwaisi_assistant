@@ -46,6 +46,8 @@ services:
     env_file: .env
     environment:
       - LISTEN_ADDR=:8080
+      - LIWAISI_DB_DSN=postgres://liwaisi:${POSTGRES_PASSWORD:-liwaisi_dev}@postgres:5432/liwaisi?sslmode=disable
+      - LIWAISI_REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:
         condition: service_healthy

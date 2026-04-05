@@ -1,6 +1,7 @@
 import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse, SessionListResponse, UpdateSessionRequest, ForkSessionRequest, ForkSessionResponse } from '../types/api';
 import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
 import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
+import type { UserProfile, UserPreferences, OnboardingCompleteRequest, ModelsResponse } from '../types/setup';
 
 const BASE_URL = '/api/v1';
 
@@ -173,6 +174,30 @@ export async function listTools(namespace?: string): Promise<ToolListResponse> {
 export interface WaitlistResponse {
   ok: boolean;
   message: string;
+}
+
+// ── User Profile & Onboarding API ──────────────────────────────────────
+
+export async function getUserProfile(): Promise<UserProfile> {
+  return request<UserProfile>('/user/profile');
+}
+
+export async function updatePreferences(prefs: UserPreferences): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/user/preferences', {
+    method: 'PUT',
+    body: JSON.stringify(prefs),
+  });
+}
+
+export async function completeOnboarding(data: OnboardingCompleteRequest): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>('/user/onboarding/complete', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  return request<ModelsResponse>('/models');
 }
 
 export async function joinWaitlist(email: string): Promise<WaitlistResponse> {

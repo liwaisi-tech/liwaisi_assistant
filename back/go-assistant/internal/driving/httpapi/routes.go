@@ -40,6 +40,14 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("GET /api/v1/tools", h.HandleListTools)
 	mux.HandleFunc("GET /api/v1/tools/{name...}", h.HandleGetTool)
 
+	// User profile & onboarding
+	mux.HandleFunc("GET /api/v1/user/profile", h.HandleGetProfile)
+	mux.HandleFunc("PUT /api/v1/user/preferences", h.HandleUpdatePreferences)
+	mux.HandleFunc("POST /api/v1/user/onboarding/complete", h.HandleCompleteOnboarding)
+
+	// Models
+	mux.HandleFunc("GET /api/v1/models", h.HandleGetModels)
+
 	// Waitlist (public, no auth required)
 	mux.HandleFunc("POST /api/v1/waitlist", h.HandleWaitlist)
 }

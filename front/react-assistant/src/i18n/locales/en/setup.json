@@ -1,0 +1,62 @@
+{
+  "progress": {
+    "step1": "Welcome",
+    "step2": "Language",
+    "step3": "Model",
+    "step4": "Personality",
+    "step5": "Ready"
+  },
+  "skip": "Skip Setup",
+  "back": "Back",
+  "next": "Next",
+  "welcome": {
+    "title": "Welcome to Liwaisi Assistant",
+    "description": "Let's set up your experience in about 1 minute.",
+    "cta": "Get Started"
+  },
+  "language": {
+    "title": "Choose Your Language",
+    "description": "Select your preferred language. You can change this anytime.",
+    "en": {
+      "name": "English",
+      "greeting": "Hello! How can I help you today?"
+    },
+    "es": {
+      "name": "Espanol",
+      "greeting": "Hola! En que puedo ayudarte hoy?"
+    }
+  },
+  "model": {
+    "title": "AI Model Preference",
+    "description": "Choose the default AI model for your conversations.",
+    "advanced": "Advanced: Per-role overrides",
+    "keepDefaults": "Keep recommended defaults"
+  },
+  "personality": {
+    "title": "Choose Your AI Style",
+    "description": "Select how your AI assistant should behave. You can customize this later.",
+    "balanced": {
+      "name": "Balanced",
+      "description": "Clear, warm, and privacy-first. The recommended default."
+    },
+    "creative": {
+      "name": "Creative",
+      "description": "Explorative, bold, and full of ideas. Great for brainstorming."
+    },
+    "precise": {
+      "name": "Precise",
+      "description": "Rigorous, structured, and methodical. Perfect for technical work."
+    },
+    "custom": "Customize later"
+  },
+  "ready": {
+    "title": "You're All Set!",
+    "description": "Your preferences have been saved. Let's start chatting.",
+    "summary": "Your choices",
+    "language_label": "Language",
+    "model_label": "Default model",
+    "personality_label": "AI style",
+    "cta": "Start Chatting",
+    "saving": "Saving your preferences..."
+  }
+}

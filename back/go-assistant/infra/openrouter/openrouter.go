@@ -19,10 +19,10 @@ var _ cpn.LLMClient = (*Client)(nil)
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
-// defaultModelRegistry holds the default model for each task role.
+// DefaultModelRegistry holds the default model for each task role.
 // Using the cheapest model that can do the job operationalizes Axiom A11.
-// Override any entry via its environment variable (see modelEnvVars).
-var defaultModelRegistry = map[string]string{
+// Override any entry via its environment variable (see ModelEnvVars).
+var DefaultModelRegistry = map[string]string{
 	"classifier":   "google/gemini-2.0-flash-001",
 	"structured":   "anthropic/claude-haiku-4-5-20251001",
 	"reasoning":    "anthropic/claude-sonnet-4-6",
@@ -31,8 +31,8 @@ var defaultModelRegistry = map[string]string{
 	"thinking":     "anthropic/claude-opus-4-6",
 }
 
-// modelEnvVars maps each registry key to the environment variable that overrides it.
-var modelEnvVars = map[string]string{
+// ModelEnvVars maps each registry key to the environment variable that overrides it.
+var ModelEnvVars = map[string]string{
 	"classifier":   "MODEL_CLASSIFIER",
 	"structured":   "MODEL_STRUCTURED",
 	"reasoning":    "MODEL_REASONING",
@@ -45,9 +45,9 @@ var modelEnvVars = map[string]string{
 // with fallback to defaults. The getEnv parameter enables testing without
 // manipulating real environment variables.
 func buildModelRegistry(getEnv func(string) string) map[string]string {
-	registry := make(map[string]string, len(defaultModelRegistry))
-	for key, defaultModel := range defaultModelRegistry {
-		if envVar, ok := modelEnvVars[key]; ok {
+	registry := make(map[string]string, len(DefaultModelRegistry))
+	for key, defaultModel := range DefaultModelRegistry {
+		if envVar, ok := ModelEnvVars[key]; ok {
 			if v := getEnv(envVar); v != "" {
 				registry[key] = v
 				continue

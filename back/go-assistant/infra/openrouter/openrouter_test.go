@@ -1861,7 +1861,7 @@ func TestBuildModelRegistry_Defaults(t *testing.T) {
 	noEnv := func(string) string { return "" }
 	registry := buildModelRegistry(noEnv)
 
-	for key, want := range defaultModelRegistry {
+	for key, want := range DefaultModelRegistry {
 		if got := registry[key]; got != want {
 			t.Errorf("registry[%q] = %q, want %q", key, got, want)
 		}
@@ -1876,8 +1876,8 @@ func TestBuildModelRegistry_EnvOverride(t *testing.T) {
 		t.Errorf("classifier = %q, want %q", got, "custom/my-classifier")
 	}
 	// Other keys must remain at their defaults.
-	if got := registry["reasoning"]; got != defaultModelRegistry["reasoning"] {
-		t.Errorf("reasoning = %q, want default %q", got, defaultModelRegistry["reasoning"])
+	if got := registry["reasoning"]; got != DefaultModelRegistry["reasoning"] {
+		t.Errorf("reasoning = %q, want default %q", got, DefaultModelRegistry["reasoning"])
 	}
 }
 
