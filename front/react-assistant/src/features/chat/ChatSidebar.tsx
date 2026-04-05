@@ -1,30 +1,33 @@
 import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import type { SessionListItem } from '../../types/api';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: TFunction): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
   const diffMs = now - then;
   const diffSec = Math.floor(diffMs / 1000);
 
-  if (diffSec < 60) return 'just now';
+  if (diffSec < 60) return t('common:timeAgo.justNow');
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t('common:timeAgo.minutesAgo', { count: diffMin });
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return t('common:timeAgo.hoursAgo', { count: diffHr });
   const diffDay = Math.floor(diffHr / 24);
-  if (diffDay === 1) return 'Yesterday';
-  if (diffDay < 7) return `${diffDay}d ago`;
+  if (diffDay === 1) return t('common:timeAgo.yesterday');
+  if (diffDay < 7) return t('common:timeAgo.daysAgo', { count: diffDay });
   const diffWeek = Math.floor(diffDay / 7);
-  if (diffWeek < 5) return `${diffWeek}w ago`;
+  if (diffWeek < 5) return t('common:timeAgo.weeksAgo', { count: diffWeek });
   const diffMonth = Math.floor(diffDay / 30);
-  if (diffMonth < 12) return `${diffMonth}mo ago`;
-  return `${Math.floor(diffMonth / 12)}y ago`;
+  if (diffMonth < 12) return t('common:timeAgo.monthsAgo', { count: diffMonth });
+  return t('common:timeAgo.yearsAgo', { count: Math.floor(diffMonth / 12) });
 }
 
-function formatCost(usd: number): string {
-  if (usd === 0) return '$0.00';
-  if (usd < 0.01) return '<$0.01';
+function formatCost(usd: number, t: TFunction): string {
+  if (usd === 0) return t('common:costFormat.zero');
+  if (usd < 0.01) return t('common:costFormat.lessThanCent');
   return `$${usd.toFixed(2)}`;
 }
 
@@ -40,6 +43,7 @@ interface ChatListItemProps {
 }
 
 const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRename, onDelete, onFork }: ChatListItemProps) {
+  const { t } = useTranslation(['chat', 'common']);
   const [showMenu, setShowMenu] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(chat.title);
@@ -122,7 +126,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
               fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
             }}
           >
-            {chat.title || 'New Chat'}
+            {chat.title || t('chat:sidebar.defaultTitle')}
           </span>
         )}
 
@@ -136,7 +140,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
               fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
             }}
           >
-            {formatCost(chat.total_cost_usd)}
+            {formatCost(chat.total_cost_usd, t)}
           </span>
         )}
 
@@ -148,7 +152,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
             setConfirmDelete(false);
           }}
           className="flex-none opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/5"
-          aria-label="Chat actions"
+          aria-label={t('chat:sidebar.chatActions')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-muted)">
             <circle cx="12" cy="5" r="2" />
@@ -164,13 +168,13 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
           className="flex-1 min-w-0 truncate text-[11px]"
           style={{ color: 'var(--text-muted)' }}
         >
-          {chat.last_message_preview || 'No messages yet'}
+          {chat.last_message_preview || t('chat:sidebar.noMessagesYet')}
         </span>
         <span
           className="flex-none text-[10px]"
           style={{ color: 'var(--text-muted)' }}
         >
-          {timeAgo(chat.last_activity_at || chat.created_at)}
+          {timeAgo(chat.last_activity_at || chat.created_at, t)}
         </span>
       </div>
 
@@ -189,13 +193,13 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
           <button
             onClick={() => {
               setIsRenaming(true);
-              setRenameValue(chat.title || 'New Chat');
+              setRenameValue(chat.title || t('chat:sidebar.defaultTitle'));
               setShowMenu(false);
             }}
             className="w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-white/5"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Rename
+            {t('chat:sidebar.rename')}
           </button>
           <button
             onClick={() => {
@@ -205,7 +209,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
             className="w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-white/5"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Fork
+            {t('chat:sidebar.fork')}
           </button>
           {confirmDelete ? (
             <button
@@ -217,7 +221,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
               className="w-full text-left px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-red-500/10"
               style={{ color: '#ef4444' }}
             >
-              Confirm Delete
+              {t('chat:sidebar.confirmDelete')}
             </button>
           ) : (
             <button
@@ -225,7 +229,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
               className="w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-red-500/10"
               style={{ color: '#ef4444' }}
             >
-              Delete
+              {t('chat:sidebar.delete')}
             </button>
           )}
         </div>
@@ -264,6 +268,7 @@ function ChatSidebarContent({
   onFork,
   onLoadMore,
 }: Omit<ChatSidebarProps, 'embedded'>) {
+  const { t } = useTranslation(['chat', 'common']);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Use IntersectionObserver instead of scroll handler for infinite loading
@@ -298,19 +303,19 @@ function ChatSidebarContent({
             fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
           }}
         >
-          Chats
+          {t('chat:sidebar.title')}
         </h2>
         <button
           onClick={onCreate}
           className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors hover:bg-white/5"
           style={{ color: 'var(--accent)' }}
-          aria-label="New chat"
+          aria-label={t('chat:sidebar.newChat')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          New
+          {t('chat:sidebar.newButton')}
         </button>
       </div>
 
@@ -321,7 +326,7 @@ function ChatSidebarContent({
         {chats.length === 0 && !isLoading && (
           <div className="px-4 py-8 text-center">
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              No conversations yet
+              {t('chat:sidebar.noConversations')}
             </p>
           </div>
         )}
@@ -354,8 +359,11 @@ function ChatSidebarContent({
 }
 
 export function ChatSidebar(props: ChatSidebarProps) {
+  const { t } = useTranslation(['chat', 'common']);
   const { embedded = false, ...contentProps } = props;
   const [isOpen, setIsOpen] = useState(true);
+
+  useEffect(() => { loadNamespace('chat'); loadNamespace('common'); }, []);
 
   // Embedded mode: just render content, no outer shell
   if (embedded) {
@@ -375,7 +383,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
           borderBottom: '1px solid var(--border-dim)',
           left: isOpen ? '280px' : '0px',
         }}
-        aria-label={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-label={isOpen ? t('chat:sidebar.collapseSidebar') : t('chat:sidebar.expandSidebar')}
       >
         <svg
           width="12"

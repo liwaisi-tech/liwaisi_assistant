@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useTooltip } from '../../hooks/useTooltip';
 
 type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
@@ -13,14 +14,14 @@ interface NavigationRailProps {
 
 interface NavItem {
   id: ActiveApp;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
 }
 
 const navItems: NavItem[] = [
   {
     id: 'chat',
-    label: 'Chat',
+    labelKey: 'navigationRail.chat',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
@@ -29,7 +30,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'flows',
-    label: 'Flows',
+    labelKey: 'navigationRail.flows',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="5" r="2" />
@@ -41,7 +42,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'monitor',
-    label: 'Monitor',
+    labelKey: 'navigationRail.monitor',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
@@ -74,7 +75,9 @@ function NavButton({
   isExpanded: boolean;
   onClick: () => void;
 }) {
+  const { t } = useTranslation('desktop');
   const tooltip = useTooltip(200);
+  const label = t(item.labelKey);
 
   return (
     <div className="relative">
@@ -89,7 +92,7 @@ function NavButton({
           backgroundColor: isActive ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
           borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
         }}
-        aria-label={item.label}
+        aria-label={label}
         aria-current={isActive ? 'page' : undefined}
       >
         <div className="shrink-0 w-5 h-5 flex items-center justify-center">
@@ -103,7 +106,7 @@ function NavButton({
               color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
             }}
           >
-            {item.label}
+            {label}
           </span>
         )}
       </button>
@@ -120,7 +123,7 @@ function NavButton({
             boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
           }}
         >
-          {item.label}
+          {label}
           <div
             className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
             style={{
@@ -144,6 +147,7 @@ export function NavigationRail({
   onToolsClick,
   sidebarContent,
 }: NavigationRailProps) {
+  const { t } = useTranslation('desktop');
   const settingsTooltip = useTooltip(200);
   const toolsTooltip = useTooltip(200);
 
@@ -194,7 +198,7 @@ export function NavigationRail({
             backgroundColor: activeApp === 'tools' ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
             borderLeft: activeApp === 'tools' ? '2px solid var(--accent)' : '2px solid transparent',
           }}
-          aria-label="Tools"
+          aria-label={t('navigationRail.tools')}
         >
           <div className="shrink-0 w-5 h-5 flex items-center justify-center">
             {toolsIcon}
@@ -207,7 +211,7 @@ export function NavigationRail({
                 color: activeApp === 'tools' ? 'var(--accent)' : 'var(--text-secondary)',
               }}
             >
-              Tools
+              {t('navigationRail.tools')}
             </span>
           )}
         </button>
@@ -224,7 +228,7 @@ export function NavigationRail({
               boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
             }}
           >
-            Tools
+            {t('navigationRail.tools')}
             <div
               className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
               style={{
@@ -251,7 +255,7 @@ export function NavigationRail({
             backgroundColor: activeApp === 'personality' ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
             borderLeft: activeApp === 'personality' ? '2px solid var(--accent)' : '2px solid transparent',
           }}
-          aria-label="Settings"
+          aria-label={t('navigationRail.settings')}
         >
           <div className="shrink-0 w-5 h-5 flex items-center justify-center">
             {settingsIcon}
@@ -264,7 +268,7 @@ export function NavigationRail({
                 color: activeApp === 'personality' ? 'var(--accent)' : 'var(--text-secondary)',
               }}
             >
-              Identity
+              {t('navigationRail.identity')}
             </span>
           )}
         </button>
@@ -281,7 +285,7 @@ export function NavigationRail({
               boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
             }}
           >
-            Identity
+            {t('navigationRail.identity')}
             <div
               className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
               style={{

@@ -1,12 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 import { listTools } from '../../services/api';
 import type { ToolSummary } from '../../types/personality';
 
 export function ToolBrowser() {
+  const { t } = useTranslation('tools');
   const [tools, setTools] = useState<ToolSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+
+  useEffect(() => { loadNamespace('tools'); }, []);
 
   const loadTools = useCallback(async () => {
     setLoading(true);
@@ -15,11 +20,11 @@ export function ToolBrowser() {
       const response = await listTools();
       setTools(response.tools);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tools');
+      setError(err instanceof Error ? err.message : t('browser.failedToLoad'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     loadTools();
@@ -60,7 +65,7 @@ export function ToolBrowser() {
             className="text-xs"
             style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
           >
-            Loading tools...
+            {t('browser.loading')}
           </span>
         </div>
       </div>
@@ -102,14 +107,14 @@ export function ToolBrowser() {
             className="text-base font-semibold mb-3"
             style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
           >
-            Tool Browser
+            {t('browser.title')}
           </h2>
 
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search tools..."
+            placeholder={t('browser.searchPlaceholder')}
             className="w-full px-3 py-2 rounded-lg text-sm outline-none transition-colors mb-4"
             style={{
               backgroundColor: 'var(--bg-input)',
@@ -121,7 +126,7 @@ export function ToolBrowser() {
           />
 
           <span className="text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-            {filtered.length} tool{filtered.length !== 1 ? 's' : ''} found
+            {t('browser.toolsFound', { count: filtered.length })}
           </span>
         </div>
       </div>
@@ -131,7 +136,7 @@ export function ToolBrowser() {
         <div className="max-w-2xl mx-auto w-full space-y-5">
           {grouped.length === 0 && (
             <p className="text-sm text-center py-8" style={{ color: 'var(--text-muted)' }}>
-              No tools found
+              {t('browser.noToolsFound')}
             </p>
           )}
 
@@ -202,7 +207,7 @@ export function ToolBrowser() {
                                 fontFamily: "'JetBrains Mono', monospace",
                               }}
                             >
-                              HITL
+                              {t('browser.hitlBadge')}
                             </span>
                           )}
 
@@ -225,7 +230,7 @@ export function ToolBrowser() {
                         <span
                           className="w-2.5 h-2.5 rounded-full"
                           style={{ backgroundColor: tool.input_color }}
-                          title={`Input: ${tool.input_color}`}
+                          title={t('browser.inputColorTitle', { color: tool.input_color })}
                         />
                         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
                           <polyline points="9 18 15 12 9 6" />
@@ -233,7 +238,7 @@ export function ToolBrowser() {
                         <span
                           className="w-2.5 h-2.5 rounded-full"
                           style={{ backgroundColor: tool.output_color }}
-                          title={`Output: ${tool.output_color}`}
+                          title={t('browser.outputColorTitle', { color: tool.output_color })}
                         />
                       </div>
                     </div>

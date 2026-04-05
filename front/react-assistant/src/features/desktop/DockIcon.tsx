@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface DockIconProps {
   label: string;
@@ -8,6 +9,7 @@ interface DockIconProps {
 }
 
 export function DockIcon({ label, icon, isActive = false, onClick }: DockIconProps) {
+  const { t } = useTranslation('desktop');
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -41,7 +43,7 @@ export function DockIcon({ label, icon, isActive = false, onClick }: DockIconPro
             boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
           }}
         >
-          Coming Soon
+          {t('dock.comingSoon')}
           <div
             className="absolute left-1/2 -translate-x-1/2 -bottom-1 w-2 h-2 rotate-45"
             style={{ backgroundColor: 'var(--bg-surface)', borderRight: '1px solid var(--border-dim)', borderBottom: '1px solid var(--border-dim)' }}

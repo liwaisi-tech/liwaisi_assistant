@@ -1,5 +1,8 @@
 import type { SessionState } from '../../types/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
+import { useEffect } from 'react';
+import { loadNamespace } from '../../i18n/loadNamespace';
 
 interface ChatHeaderProps {
   sessionState: SessionState;
@@ -17,8 +20,11 @@ const stateConfig: Record<SessionState, { label: string; className: string }> = 
 };
 
 export function ChatHeader({ sessionState, isConnected, onClearConversation, clearDisabled }: ChatHeaderProps) {
+  const { t } = useTranslation('chat');
   const state = stateConfig[sessionState];
   const { user, logout } = useAuth();
+
+  useEffect(() => { loadNamespace('chat'); }, []);
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b"
@@ -26,7 +32,7 @@ export function ChatHeader({ sessionState, isConnected, onClearConversation, cle
       <div className="flex items-center gap-3">
         <h1 className="text-base font-semibold tracking-tight"
             style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-          Liwaisi Assistant
+          {t('header.title')}
         </h1>
       </div>
 
@@ -38,8 +44,8 @@ export function ChatHeader({ sessionState, isConnected, onClearConversation, cle
           style={{ color: 'var(--text-muted)' }}
           onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.color = 'var(--accent)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-          aria-label="New conversation"
-          title="New conversation"
+          aria-label={t('header.newConversation')}
+          title={t('header.newConversation')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 5v14M5 12h14" />
@@ -63,9 +69,9 @@ export function ChatHeader({ sessionState, isConnected, onClearConversation, cle
               style={{ color: 'var(--text-muted)' }}
               onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
               onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-              aria-label="Sign out"
+              aria-label={t('header.signOut')}
             >
-              Sign out
+              {t('header.signOut')}
             </button>
           </div>
         )}

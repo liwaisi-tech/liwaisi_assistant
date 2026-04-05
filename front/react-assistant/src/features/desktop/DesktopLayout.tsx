@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 import { useChat } from '../../hooks/useChat';
 import { useSessionManager } from '../../hooks/useSessionManager';
 import { useMonitorManager } from '../../hooks/useMonitorManager';
@@ -26,7 +28,14 @@ interface DesktopLayoutProps {
 }
 
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
+  const { t } = useTranslation(['desktop', 'common']);
   const isMobile = useIsMobile();
+
+  // Load namespaces for desktop layout
+  useEffect(() => {
+    loadNamespace('desktop');
+    loadNamespace('chat');
+  }, []);
 
   // ── Session + navigation state ──────────────────────────────────────────
   const session = useSessionManager(userId);
@@ -157,8 +166,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
   const paletteActions: PaletteAction[] = useMemo(() => [
     {
       id: 'nav-chat',
-      label: 'Go to Chat',
-      category: 'Navigation',
+      label: t('desktop:commandPalette.actions.goToChat'),
+      category: t('desktop:commandPalette.categories.navigation'),
       shortcut: '\u2318 1',
       keywords: ['conversation', 'message'],
       icon: (
@@ -170,8 +179,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     },
     {
       id: 'nav-flows',
-      label: 'Go to Flows',
-      category: 'Navigation',
+      label: t('desktop:commandPalette.actions.goToFlows'),
+      category: t('desktop:commandPalette.categories.navigation'),
       shortcut: '\u2318 2',
       keywords: ['topology', 'cpn', 'petri'],
       icon: (
@@ -184,8 +193,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     },
     {
       id: 'nav-monitor',
-      label: 'Go to Monitor',
-      category: 'Navigation',
+      label: t('desktop:commandPalette.actions.goToMonitor'),
+      category: t('desktop:commandPalette.categories.navigation'),
       shortcut: '\u2318 3',
       keywords: ['execution', 'trace', 'debug'],
       icon: (
@@ -197,8 +206,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     },
     {
       id: 'nav-personality',
-      label: 'Agent Identity',
-      category: 'Navigation',
+      label: t('desktop:commandPalette.actions.agentIdentity'),
+      category: t('desktop:commandPalette.categories.navigation'),
       shortcut: '\u2318 4',
       keywords: ['personality', 'principles', 'identity', 'settings'],
       icon: (
@@ -211,8 +220,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     },
     {
       id: 'nav-tools',
-      label: 'Tool Browser',
-      category: 'Navigation',
+      label: t('desktop:commandPalette.actions.toolBrowser'),
+      category: t('desktop:commandPalette.categories.navigation'),
       shortcut: '\u2318 5',
       keywords: ['tools', 'registry', 'wrench', 'browser'],
       icon: (
@@ -224,37 +233,37 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     },
     {
       id: 'chat-new',
-      label: 'New Chat',
-      category: 'Chat',
+      label: t('desktop:commandPalette.actions.newChat'),
+      category: t('desktop:commandPalette.categories.chat'),
       shortcut: '\u2318 N',
       keywords: ['create', 'start', 'conversation'],
       handler: () => { chatList.createChat(); setActiveApp('chat'); panel.closePanel(); },
     },
     {
       id: 'view-sidebar',
-      label: 'Toggle Chat Sidebar',
-      category: 'View',
+      label: t('desktop:commandPalette.actions.toggleChatSidebar'),
+      category: t('desktop:commandPalette.categories.view'),
       shortcut: '\u2318 B',
       keywords: ['sessions', 'history', 'list'],
       handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); },
     },
     {
       id: 'view-flows-panel',
-      label: 'Open Flows Panel',
-      category: 'View',
+      label: t('desktop:commandPalette.actions.openFlowsPanel'),
+      category: t('desktop:commandPalette.categories.view'),
       shortcut: '\u2318\u21E7F',
       keywords: ['split', 'dual', 'side'],
       handler: toggleFlowsPanel,
     },
     {
       id: 'view-monitor-panel',
-      label: 'Open Monitor Panel',
-      category: 'View',
+      label: t('desktop:commandPalette.actions.openMonitorPanel'),
+      category: t('desktop:commandPalette.categories.view'),
       shortcut: '\u2318\u21E7M',
       keywords: ['split', 'dual', 'execution'],
       handler: toggleMonitorPanel,
     },
-  ], [activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel]);
+  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
@@ -294,7 +303,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   // ── Panel content ───────────────────────────────────────────────────────
 
-  const panelTitle = panel.panelContent === 'flows' ? 'Flows' : panel.panelContent === 'monitor' ? 'Monitor' : '';
+  const panelTitle = panel.panelContent === 'flows' ? t('desktop:navigationRail.flows') : panel.panelContent === 'monitor' ? t('desktop:navigationRail.monitor') : '';
 
   const renderPanelContent = () => {
     if (panel.panelContent === 'flows') {

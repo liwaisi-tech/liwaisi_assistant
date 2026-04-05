@@ -1,0 +1,66 @@
+{
+  "navigationRail": {
+    "chat": "Chat",
+    "flows": "Flows",
+    "monitor": "Monitor",
+    "tools": "Tools",
+    "identity": "Identity",
+    "settings": "Settings"
+  },
+  "commandPalette": {
+    "ariaLabel": "Command palette",
+    "searchPlaceholder": "Type a command or search...",
+    "searchAriaLabel": "Search commands",
+    "resultsAriaLabel": "Command results",
+    "noResults": "No results found",
+    "categories": {
+      "navigation": "Navigation",
+      "chat": "Chat",
+      "view": "View"
+    },
+    "actions": {
+      "goToChat": "Go to Chat",
+      "goToFlows": "Go to Flows",
+      "goToMonitor": "Go to Monitor",
+      "agentIdentity": "Agent Identity",
+      "toolBrowser": "Tool Browser",
+      "newChat": "New Chat",
+      "toggleChatSidebar": "Toggle Chat Sidebar",
+      "openFlowsPanel": "Open Flows Panel",
+      "openMonitorPanel": "Open Monitor Panel"
+    }
+  },
+  "statusBar": {
+    "title": "Liwaisi",
+    "titleSuffix": "OS",
+    "appLabels": {
+      "chat": "Chat",
+      "flows": "Flows",
+      "monitor": "Monitor",
+      "personality": "Identity",
+      "tools": "Tools"
+    },
+    "signOut": "Sign out"
+  },
+  "mobileTabBar": {
+    "chat": "Chat",
+    "flows": "Flows",
+    "monitor": "Monitor"
+  },
+  "adaptivePanel": {
+    "popOutAriaLabel": "Pop out {{title}}",
+    "closeAriaLabel": "Close {{title}}",
+    "panelAriaLabel": "{{title}} panel"
+  },
+  "dock": {
+    "chat": "Chat",
+    "flows": "Flows",
+    "monitor": "Monitor",
+    "audio": "Audio",
+    "code": "Code",
+    "calendar": "Calendar",
+    "notes": "Notes",
+    "settings": "Settings",
+    "comingSoon": "Coming Soon"
+  }
+}

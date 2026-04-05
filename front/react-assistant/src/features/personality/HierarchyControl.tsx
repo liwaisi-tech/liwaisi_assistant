@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface HierarchyControlProps {
   hierarchy: string[];
@@ -6,7 +7,7 @@ interface HierarchyControlProps {
   saving: boolean;
 }
 
-const positionLabels = ['Highest priority', 'Secondary', 'Foundation'];
+const POSITION_KEYS = ['hierarchyControl.positionLabels.highest', 'hierarchyControl.positionLabels.secondary', 'hierarchyControl.positionLabels.foundation'] as const;
 
 const kindColors: Record<string, string> = {
   nucleo: '#38bdf8',
@@ -23,6 +24,7 @@ const getColor = (name: string) => {
 };
 
 export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControlProps) {
+  const { t } = useTranslation('personality');
   const [items, setItems] = useState<string[]>(hierarchy);
   const [warning, setWarning] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -38,7 +40,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
       // Check if etica is at position 3 (foundation / last position)
       const eticaItem = next.find((item) => item.toLowerCase().includes('etica'));
       if (eticaItem && next.indexOf(eticaItem) === next.length - 1) {
-        setWarning('Etica as Foundation means ethical rules have lowest override priority. Consider carefully.');
+        setWarning(t('hierarchyControl.eticaWarning'));
       } else {
         setWarning(null);
       }
@@ -46,7 +48,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
       setHasChanges(true);
       return next;
     });
-  }, []);
+  }, [t]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -76,7 +78,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
         className="text-[10px] font-semibold uppercase tracking-wider block mb-3"
         style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
       >
-        Priority Hierarchy
+        {t('hierarchyControl.title')}
       </span>
 
       <div className="space-y-2">
@@ -112,7 +114,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
                   {item}
                 </span>
                 <span className="text-[9px] ml-2" style={{ color: 'var(--text-muted)' }}>
-                  {positionLabels[index]}
+                  {t(POSITION_KEYS[index])}
                 </span>
               </div>
 
@@ -128,7 +130,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
                   }}
                   onMouseEnter={(e) => { if (index !== 0) e.currentTarget.style.color = 'var(--text-primary)'; }}
                   onMouseLeave={(e) => { if (index !== 0) e.currentTarget.style.color = 'var(--text-muted)'; }}
-                  aria-label={`Move ${item} up`}
+                  aria-label={t('hierarchyControl.moveUpAriaLabel', { item })}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="18 15 12 9 6 15" />
@@ -144,7 +146,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
                   }}
                   onMouseEnter={(e) => { if (index !== items.length - 1) e.currentTarget.style.color = 'var(--text-primary)'; }}
                   onMouseLeave={(e) => { if (index !== items.length - 1) e.currentTarget.style.color = 'var(--text-muted)'; }}
-                  aria-label={`Move ${item} down`}
+                  aria-label={t('hierarchyControl.moveDownAriaLabel', { item })}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="6 9 12 15 18 9" />
@@ -186,7 +188,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
             onMouseEnter={(e) => { if (!saving) e.currentTarget.style.boxShadow = '0 0 12px -2px var(--accent-glow)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
           >
-            {saving ? 'Saving...' : 'Save Order'}
+            {saving ? t('hierarchyControl.saving') : t('hierarchyControl.saveOrder')}
           </button>
           <button
             onClick={handleReset}
@@ -196,7 +198,7 @@ export function HierarchyControl({ hierarchy, onSave, saving }: HierarchyControl
               color: 'var(--text-muted)',
             }}
           >
-            Reset
+            {t('hierarchyControl.reset')}
           </button>
         </div>
       )}

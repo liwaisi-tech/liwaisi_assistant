@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Handle, Position } from '@xyflow/react';
 import type { PlaceTopology } from '../../../types/flow';
 
@@ -14,12 +15,6 @@ const COLOR_MAP: Record<string, string> = {
   ERROR: '#dc2626',
 };
 
-const SPACE_LABEL: Record<string, string> = {
-  surface: 'SRF',
-  computation: 'CMP',
-  observation: 'OBS',
-};
-
 interface PlaceNodeData {
   place: PlaceTopology;
   fired?: boolean;
@@ -27,9 +22,12 @@ interface PlaceNodeData {
 }
 
 export const PlaceNode = memo(function PlaceNode({ data }: { data: PlaceNodeData }) {
+  const { t } = useTranslation('flows');
   const { place, fired, direction = 'LR' } = data;
   const color = COLOR_MAP[place.color] || '#64748b';
   const isHorizontal = direction === 'LR';
+
+  const spaceLabel = t(`placeNode.spaceLabels.${place.space}`, { defaultValue: place.space });
 
   return (
     <>
@@ -63,7 +61,7 @@ export const PlaceNode = memo(function PlaceNode({ data }: { data: PlaceNodeData
             {place.color}
           </div>
           <div className="text-[7px] opacity-50" style={{ color: 'var(--text-muted)' }}>
-            {SPACE_LABEL[place.space] || place.space}
+            {spaceLabel}
           </div>
         </div>
       </div>

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 
 export interface PaletteAction {
   id: string;
   label: string;
-  category: 'Navigation' | 'Chat' | 'View';
+  category: string;
   shortcut?: string;
   icon?: React.ReactNode;
   keywords?: string[];
@@ -17,9 +18,8 @@ interface CommandPaletteProps {
   actions: PaletteAction[];
 }
 
-const CATEGORY_ORDER: PaletteAction['category'][] = ['Navigation', 'Chat', 'View'];
-
 export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps) {
+  const { t } = useTranslation('desktop');
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [animState, setAnimState] = useState<'entering' | 'visible' | 'exiting' | 'hidden'>('hidden');
@@ -41,7 +41,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
     });
   }, [actions, query]);
 
-  // Group filtered actions by category in stable order
+  // Group filtered actions by category in stable order (preserving insertion order)
   const grouped = useMemo(() => {
     const map = new Map<string, PaletteAction[]>();
     for (const action of filtered) {
@@ -50,9 +50,8 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
       map.set(action.category, list);
     }
     const result: { category: string; items: PaletteAction[] }[] = [];
-    for (const cat of CATEGORY_ORDER) {
-      const items = map.get(cat);
-      if (items && items.length > 0) result.push({ category: cat, items });
+    for (const [cat, items] of map) {
+      if (items.length > 0) result.push({ category: cat, items });
     }
     return result;
   }, [filtered]);
@@ -189,7 +188,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      aria-label={t('commandPalette.ariaLabel')}
     >
       <div
         ref={dialogRef}
@@ -218,7 +217,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Type a command or search..."
+            placeholder={t('commandPalette.searchPlaceholder')}
             className="w-full px-3 py-2 rounded-lg text-sm outline-none transition-colors"
             style={{
               backgroundColor: 'var(--bg-input)',
@@ -228,7 +227,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
             }}
             onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--border-glow)')}
             onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border-dim)')}
-            aria-label="Search commands"
+            aria-label={t('commandPalette.searchAriaLabel')}
             aria-controls="command-palette-list"
             aria-activedescendant={selectedAction ? `palette-item-${selectedAction.id}` : undefined}
           />
@@ -240,7 +239,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
           className="flex-1 overflow-y-auto chat-scroll py-2"
           role="listbox"
           id="command-palette-list"
-          aria-label="Command results"
+          aria-label={t('commandPalette.resultsAriaLabel')}
         >
           {flatItems.length === 0 ? (
             <p
@@ -250,7 +249,7 @@ export function CommandPalette({ isOpen, onClose, actions }: CommandPaletteProps
                 fontFamily: "'DM Sans', system-ui, sans-serif",
               }}
             >
-              No results found
+              {t('commandPalette.noResults')}
             </p>
           ) : (
             grouped.map((group) => (

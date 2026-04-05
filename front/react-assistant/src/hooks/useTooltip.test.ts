@@ -78,7 +78,7 @@ describe('useTooltip', () => {
   });
 
   it('should clean up timer on unmount', () => {
-    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
     const { result, unmount } = renderHook(() => useTooltip(600));
 
     act(() => {

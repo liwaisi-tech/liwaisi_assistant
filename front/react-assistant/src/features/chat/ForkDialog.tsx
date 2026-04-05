@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ChatMessage } from '../../types/chat';
 
 interface ForkDialogProps {
@@ -8,6 +9,7 @@ interface ForkDialogProps {
 }
 
 export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
+  const { t } = useTranslation(['chat', 'common']);
   const maxIndex = messages.length - 1;
   const [forkIndex, setForkIndex] = useState(maxIndex);
 
@@ -50,10 +52,10 @@ export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
               fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
             }}
           >
-            Fork Conversation
+            {t('chat:forkDialog.title')}
           </h3>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-            Select the fork point. Messages up to this point will be copied.
+            {t('chat:forkDialog.description')}
           </p>
         </div>
 
@@ -82,7 +84,7 @@ export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
                     fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
                   }}
                 >
-                  {msg.role === 'user' ? 'You' : 'AI'}
+                  {msg.role === 'user' ? t('chat:forkDialog.roleYou') : t('chat:forkDialog.roleAi')}
                 </span>
                 {/* Content preview */}
                 <span
@@ -115,19 +117,18 @@ export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
             value={forkIndex}
             onChange={(e) => setForkIndex(Number(e.target.value))}
             className="w-full accent-[var(--accent)]"
-            aria-label="Fork point selector"
+            aria-label={t('chat:forkDialog.forkPointAriaLabel')}
           />
           <p className="text-xs mt-2 text-center" style={{ color: 'var(--text-secondary)' }}>
-            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{copiedCount}</span>
-            {' '}message{copiedCount !== 1 ? 's' : ''} will be copied.
-            {' '}Cost resets to{' '}
+            {t('chat:forkDialog.messagesCopied', { count: copiedCount })}
+            {' '}{t('chat:forkDialog.costResets')}{' '}
             <span
               style={{
                 color: 'var(--accent)',
                 fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
               }}
             >
-              $0.00
+              {t('chat:forkDialog.costZero')}
             </span>
           </p>
         </div>
@@ -142,7 +143,7 @@ export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
             className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/5"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Cancel
+            {t('common:buttons.cancel')}
           </button>
           <button
             onClick={handleConfirm}
@@ -152,7 +153,7 @@ export function ForkDialog({ messages, onFork, onClose }: ForkDialogProps) {
               color: '#fff',
             }}
           >
-            Fork
+            {t('common:buttons.fork')}
           </button>
         </div>
       </div>

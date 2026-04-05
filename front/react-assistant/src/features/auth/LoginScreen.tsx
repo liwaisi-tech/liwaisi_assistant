@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { loadNamespace } from '../../i18n/loadNamespace';
 
 export function LoginScreen() {
+  const { t } = useTranslation('auth');
   const buttonRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { loadNamespace('auth'); }, []);
 
   useEffect(() => {
     const renderButton = () => {
@@ -41,10 +46,10 @@ export function LoginScreen() {
             color: 'var(--text-primary)',
           }}
         >
-          Liwaisi Assistant
+          {t('login.title')}
         </h1>
         <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-          AI-powered assistant
+          {t('login.subtitle')}
         </p>
       </div>
 

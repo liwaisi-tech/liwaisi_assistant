@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { CPNHierarchyNode } from '../../hooks/useExecutionMonitor';
 
 interface CPNBreadcrumbProps {
@@ -7,7 +8,10 @@ interface CPNBreadcrumbProps {
   onNavigate: (cpnId: string) => void;
 }
 
-export function CPNBreadcrumb({ hierarchy, activeCPNId, rootLabel = 'Root CPN', onNavigate }: CPNBreadcrumbProps) {
+export function CPNBreadcrumb({ hierarchy, activeCPNId, rootLabel, onNavigate }: CPNBreadcrumbProps) {
+  const { t } = useTranslation('monitor');
+  const effectiveRootLabel = rootLabel ?? t('cpnBreadcrumb.rootLabel');
+
   // Build breadcrumb path from root to active CPN
   const path: { id: string; label: string }[] = [];
 
@@ -15,14 +19,14 @@ export function CPNBreadcrumb({ hierarchy, activeCPNId, rootLabel = 'Root CPN', 
     return (
       <div className="flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
         <span className="text-[10px] font-semibold" style={{ color: 'var(--accent)' }}>
-          {rootLabel}
+          {effectiveRootLabel}
         </span>
       </div>
     );
   }
 
   // Add root
-  path.push({ id: 'root', label: rootLabel });
+  path.push({ id: 'root', label: effectiveRootLabel });
 
   // Add hierarchy nodes leading to activeCPNId
   for (const node of hierarchy) {

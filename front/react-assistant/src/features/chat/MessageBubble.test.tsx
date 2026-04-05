@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import { I18nTestWrapper } from '../../test/i18n-test-utils';
 import { MessageBubble } from './MessageBubble';
 
 // Mock MarkdownContent since it's an internal dependency with its own rendering concerns
@@ -8,6 +9,8 @@ vi.mock('./MarkdownContent.tsx', () => ({
     <div data-testid="markdown-content">{content}</div>
   ),
 }));
+
+const wrapper = I18nTestWrapper;
 
 describe('MessageBubble', () => {
   const baseProps = {
@@ -21,6 +24,7 @@ describe('MessageBubble', () => {
         role="user"
         content="Hello, world!"
       />,
+      { wrapper },
     );
 
     expect(screen.getByText('Hello, world!')).toBeInTheDocument();
@@ -33,6 +37,7 @@ describe('MessageBubble', () => {
         role="assistant"
         content="I can help with that."
       />,
+      { wrapper },
     );
 
     expect(screen.getByTestId('markdown-content')).toHaveTextContent('I can help with that.');
@@ -45,6 +50,7 @@ describe('MessageBubble', () => {
         role="user"
         content="User message"
       />,
+      { wrapper },
     );
 
     const outerDiv = container.firstElementChild as HTMLElement;
@@ -58,6 +64,7 @@ describe('MessageBubble', () => {
         role="assistant"
         content="Assistant message"
       />,
+      { wrapper },
     );
 
     const outerDiv = container.firstElementChild as HTMLElement;
@@ -71,6 +78,7 @@ describe('MessageBubble', () => {
         role="user"
         content="Test"
       />,
+      { wrapper },
     );
 
     const timeEl = screen.getByRole('time');
@@ -86,6 +94,7 @@ describe('MessageBubble', () => {
         content="Response"
         cpnRole="orchestrator"
       />,
+      { wrapper },
     );
 
     expect(screen.getByText('orchestrator')).toBeInTheDocument();
@@ -99,6 +108,7 @@ describe('MessageBubble', () => {
         content="Question"
         cpnRole="orchestrator"
       />,
+      { wrapper },
     );
 
     expect(screen.queryByText('orchestrator')).not.toBeInTheDocument();
@@ -114,6 +124,7 @@ describe('MessageBubble', () => {
         hitlActions={['approve', 'reject']}
         onHITLAction={vi.fn()}
       />,
+      { wrapper },
     );
 
     expect(screen.getByText('Looks good')).toBeInTheDocument();
@@ -130,6 +141,7 @@ describe('MessageBubble', () => {
         hitlActions={['approve', 'reject']}
         hitlResolved="approve"
       />,
+      { wrapper },
     );
 
     expect(screen.getByText('You approved this')).toBeInTheDocument();

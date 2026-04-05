@@ -1,0 +1,14 @@
+{
+  "browser": {
+    "title": "Tool Browser",
+    "loading": "Loading tools...",
+    "searchPlaceholder": "Search tools...",
+    "toolsFound_one": "{{count}} tool found",
+    "toolsFound_other": "{{count}} tools found",
+    "noToolsFound": "No tools found",
+    "failedToLoad": "Failed to load tools",
+    "inputColorTitle": "Input: {{color}}",
+    "outputColorTitle": "Output: {{color}}",
+    "hitlBadge": "HITL"
+  }
+}

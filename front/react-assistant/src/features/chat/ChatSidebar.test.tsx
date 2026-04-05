@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { I18nTestWrapper } from '../../test/i18n-test-utils';
 import { ChatSidebar } from './ChatSidebar';
 import type { SessionListItem } from '../../types/api';
 
@@ -33,7 +34,7 @@ function createChat(overrides: Partial<SessionListItem> = {}): SessionListItem {
   return {
     id: 'chat-1',
     title: 'Test Chat',
-    state: 'active',
+    state: 'idle',
     last_message_preview: 'Hello there',
     last_activity_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
@@ -58,15 +59,17 @@ const defaultProps = {
   embedded: true, // Use embedded mode to avoid toggle button complexity
 };
 
+const wrapper = I18nTestWrapper;
+
 describe('ChatSidebar', () => {
   it('should render chat items', () => {
-    render(<ChatSidebar {...defaultProps} />);
+    render(<ChatSidebar {...defaultProps} />, { wrapper });
 
     expect(screen.getByText('Test Chat')).toBeInTheDocument();
   });
 
   it('should call onLoadMore when sentinel becomes visible', () => {
-    render(<ChatSidebar {...defaultProps} />);
+    render(<ChatSidebar {...defaultProps} />, { wrapper });
 
     // Simulate the sentinel becoming visible
     intersectionCallback(
@@ -79,7 +82,7 @@ describe('ChatSidebar', () => {
 
   it('should not call onLoadMore when sentinel is not visible', () => {
     const onLoadMore = vi.fn();
-    render(<ChatSidebar {...defaultProps} onLoadMore={onLoadMore} />);
+    render(<ChatSidebar {...defaultProps} onLoadMore={onLoadMore} />, { wrapper });
 
     // Simulate the sentinel NOT being visible
     intersectionCallback(
@@ -92,7 +95,7 @@ describe('ChatSidebar', () => {
 
   it('should not call onLoadMore when isLoading is true', () => {
     const onLoadMore = vi.fn();
-    render(<ChatSidebar {...defaultProps} isLoading={true} onLoadMore={onLoadMore} />);
+    render(<ChatSidebar {...defaultProps} isLoading={true} onLoadMore={onLoadMore} />, { wrapper });
 
     intersectionCallback(
       [{ isIntersecting: true } as IntersectionObserverEntry],
@@ -104,7 +107,7 @@ describe('ChatSidebar', () => {
 
   it('should not call onLoadMore when hasMore is false', () => {
     const onLoadMore = vi.fn();
-    render(<ChatSidebar {...defaultProps} hasMore={false} onLoadMore={onLoadMore} />);
+    render(<ChatSidebar {...defaultProps} hasMore={false} onLoadMore={onLoadMore} />, { wrapper });
 
     intersectionCallback(
       [{ isIntersecting: true } as IntersectionObserverEntry],
@@ -115,19 +118,19 @@ describe('ChatSidebar', () => {
   });
 
   it('should display empty state when no chats', () => {
-    render(<ChatSidebar {...defaultProps} chats={[]} />);
+    render(<ChatSidebar {...defaultProps} chats={[]} />, { wrapper });
 
     expect(screen.getByText('No conversations yet')).toBeInTheDocument();
   });
 
   it('should show loading indicator when isLoading', () => {
-    render(<ChatSidebar {...defaultProps} isLoading={true} />);
+    render(<ChatSidebar {...defaultProps} isLoading={true} />, { wrapper });
 
     expect(screen.getByText('Loading...')).toBeInTheDocument();
   });
 
   it('should disconnect observer on unmount', () => {
-    const { unmount } = render(<ChatSidebar {...defaultProps} />);
+    const { unmount } = render(<ChatSidebar {...defaultProps} />, { wrapper });
 
     unmount();
 

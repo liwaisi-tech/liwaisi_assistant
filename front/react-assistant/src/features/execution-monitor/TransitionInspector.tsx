@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { TransitionStartedPayload, TransitionCompletedPayload, TokenSnapshotData } from '../../types/sse';
 import type { CPNTopology } from '../../types/flow';
 
@@ -25,6 +26,7 @@ export function TransitionInspector({
   completedPayload,
   onClose,
 }: TransitionInspectorProps) {
+  const { t } = useTranslation('monitor');
   const transition = topology.transitions[transitionId];
   if (!transition) return null;
 
@@ -59,7 +61,7 @@ export function TransitionInspector({
           onClick={onClose}
           className="text-[14px] w-6 h-6 flex items-center justify-center rounded transition-colors"
           style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}
-          aria-label="Close inspector"
+          aria-label={t('transitionInspector.closeAriaLabel')}
         >
           {'\u2715'}
         </button>
@@ -69,13 +71,13 @@ export function TransitionInspector({
       {isFiring && (
         <div className="px-3 py-2 flex items-center gap-2" style={{ backgroundColor: `${color}08` }}>
           <div className="w-2 h-2 rounded-full status-pulse" style={{ backgroundColor: color }} />
-          <span className="text-[10px] font-semibold" style={{ color }}>Firing...</span>
+          <span className="text-[10px] font-semibold" style={{ color }}>{t('transitionInspector.firing')}</span>
         </div>
       )}
 
       {hasError && (
         <div className="px-3 py-2" style={{ backgroundColor: '#ef444410', borderBottom: '1px solid #ef444430' }}>
-          <div className="text-[9px] font-bold mb-1" style={{ color: '#ef4444' }}>ERROR</div>
+          <div className="text-[9px] font-bold mb-1" style={{ color: '#ef4444' }}>{t('transitionInspector.error')}</div>
           <div className="text-[10px] leading-relaxed" style={{ color: '#fca5a5' }}>
             {completedPayload.error}
           </div>
@@ -86,13 +88,13 @@ export function TransitionInspector({
       {completedPayload && (
         <div className="px-3 py-2.5 flex gap-4" style={{ borderBottom: '1px solid var(--border-dim)' }}>
           <div>
-            <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>Cost</div>
+            <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>{t('transitionInspector.cost')}</div>
             <div className="text-sm font-bold" style={{ color: 'var(--accent)' }}>
               ${completedPayload.cost_usd.toFixed(4)}
             </div>
           </div>
           <div>
-            <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>Duration</div>
+            <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>{t('transitionInspector.duration')}</div>
             <div className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
               {completedPayload.duration_ms}ms
             </div>
@@ -102,7 +104,7 @@ export function TransitionInspector({
 
       {/* Input Tokens */}
       {startedPayload && startedPayload.input_tokens.length > 0 && (
-        <Section title="Input Tokens" color={color}>
+        <Section title={t('transitionInspector.inputTokens')} color={color}>
           {startedPayload.input_tokens.map((tok, i) => (
             <TokenCard key={i} token={tok} />
           ))}
@@ -111,7 +113,7 @@ export function TransitionInspector({
 
       {/* Output Tokens */}
       {completedPayload && completedPayload.output_tokens.length > 0 && (
-        <Section title="Output Tokens" color="#10b981">
+        <Section title={t('transitionInspector.outputTokens')} color="#10b981">
           {completedPayload.output_tokens.map((tok, i) => (
             <TokenCard key={i} token={tok} />
           ))}
@@ -120,18 +122,18 @@ export function TransitionInspector({
 
       {/* Config */}
       {transition.llmConfig && (
-        <Section title="LLM Config" color="var(--text-muted)">
-          <ConfigRow label="Model" value={transition.llmConfig.model || 'default'} />
-          {transition.llmConfig.maxTokens && <ConfigRow label="Max Tokens" value={String(transition.llmConfig.maxTokens)} />}
-          {transition.llmConfig.temperature != null && <ConfigRow label="Temperature" value={String(transition.llmConfig.temperature)} />}
-          {transition.llmConfig.streamOutput && <ConfigRow label="Stream" value="true" />}
-          {transition.llmConfig.requireJSON && <ConfigRow label="JSON Mode" value="true" />}
+        <Section title={t('transitionInspector.llmConfig')} color="var(--text-muted)">
+          <ConfigRow label={t('transitionInspector.model')} value={transition.llmConfig.model || t('transitionInspector.defaultModel')} />
+          {transition.llmConfig.maxTokens && <ConfigRow label={t('transitionInspector.maxTokens')} value={String(transition.llmConfig.maxTokens)} />}
+          {transition.llmConfig.temperature != null && <ConfigRow label={t('transitionInspector.temperature')} value={String(transition.llmConfig.temperature)} />}
+          {transition.llmConfig.streamOutput && <ConfigRow label={t('transitionInspector.stream')} value="true" />}
+          {transition.llmConfig.requireJSON && <ConfigRow label={t('transitionInspector.jsonMode')} value="true" />}
         </Section>
       )}
 
       {/* System Prompt */}
       {transition.systemPrompt && (
-        <Section title="System Prompt" color="var(--text-muted)">
+        <Section title={t('transitionInspector.systemPrompt')} color="var(--text-muted)">
           <div
             className="text-[10px] leading-relaxed max-h-32 overflow-y-auto monitor-scroll"
             style={{ color: 'var(--text-secondary)' }}

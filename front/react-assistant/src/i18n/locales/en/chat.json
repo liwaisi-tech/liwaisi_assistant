@@ -1,0 +1,67 @@
+{
+  "header": {
+    "title": "Liwaisi Assistant",
+    "newConversation": "New conversation",
+    "signOut": "Sign out"
+  },
+  "sidebar": {
+    "title": "Chats",
+    "newChat": "New chat",
+    "newButton": "New",
+    "noConversations": "No conversations yet",
+    "noMessagesYet": "No messages yet",
+    "defaultTitle": "New Chat",
+    "chatActions": "Chat actions",
+    "rename": "Rename",
+    "fork": "Fork",
+    "delete": "Delete",
+    "confirmDelete": "Confirm Delete",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+  "messageBubble": {
+    "openCpnMonitor": "Open CPN execution monitor",
+    "cpnButton": "CPN",
+    "looksGood": "Looks good",
+    "cancel": "Cancel",
+    "youApproved": "You approved this",
+    "youCancelled": "You cancelled this"
+  },
+  "messageInput": {
+    "placeholder": "Type a message...",
+    "placeholderWaiting": "Review the plan above...",
+    "placeholderDisabled": "Waiting for response...",
+    "sendAriaLabel": "Send message",
+    "inputAriaLabel": "Message input",
+    "hint": "Press Enter to send, Shift+Enter for newline"
+  },
+  "messageList": {
+    "welcomeTitle": "Liwaisi",
+    "welcomeSubtitle": "Your AI-powered workspace",
+    "suggestions": {
+      "explainCpn": "Explain CPN architecture",
+      "helpGoCode": "Help me write Go code",
+      "analyzeData": "Analyze my data",
+      "summarizeDoc": "Summarize a document"
+    },
+    "suggestionAriaLabel": "Send: {{suggestion}}"
+  },
+  "confirmClear": {
+    "title": "Start new conversation?",
+    "description": "This will clear the current conversation. This action cannot be undone."
+  },
+  "forkDialog": {
+    "title": "Fork Conversation",
+    "description": "Select the fork point. Messages up to this point will be copied.",
+    "roleYou": "You",
+    "roleAi": "AI",
+    "forkPointAriaLabel": "Fork point selector",
+    "messagesCopied_one": "{{count}} message will be copied.",
+    "messagesCopied_other": "{{count}} messages will be copied.",
+    "costResets": "Cost resets to",
+    "costZero": "$0.00"
+  },
+  "streaming": {
+    "thinking": "Assistant is thinking"
+  }
+}

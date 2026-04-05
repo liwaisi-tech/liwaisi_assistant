@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface ConfirmClearDialogProps {
   onConfirm: () => void;
@@ -6,6 +7,7 @@ interface ConfirmClearDialogProps {
 }
 
 export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogProps) {
+  const { t } = useTranslation(['chat', 'common']);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -68,7 +70,7 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
             color: 'var(--text-primary)',
           }}
         >
-          Start new conversation?
+          {t('chat:confirmClear.title')}
         </h3>
 
         <p
@@ -78,7 +80,7 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
             fontFamily: "'DM Sans', system-ui, sans-serif",
           }}
         >
-          This will clear the current conversation. This action cannot be undone.
+          {t('chat:confirmClear.description')}
         </p>
 
         <div className="flex justify-end gap-3">
@@ -94,7 +96,7 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
             onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
             onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
           >
-            Cancel
+            {t('common:buttons.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -106,7 +108,7 @@ export function ConfirmClearDialog({ onConfirm, onCancel }: ConfirmClearDialogPr
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
           >
-            Clear
+            {t('common:buttons.clear')}
           </button>
         </div>
       </div>

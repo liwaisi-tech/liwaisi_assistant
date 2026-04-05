@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { WaitlistForm } from './WaitlistForm';
 
 interface SignInModalProps {
@@ -7,6 +8,7 @@ interface SignInModalProps {
 }
 
 export function SignInModal({ open, onClose }: SignInModalProps) {
+  const { t } = useTranslation('landing');
   const panelRef = useRef<HTMLDivElement>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
@@ -101,7 +103,7 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
-      aria-label="Sign in to Liwaisi Assistant"
+      aria-label={t('signInModal.ariaLabel')}
     >
       <div
         ref={panelRef}
@@ -128,7 +130,7 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
             e.currentTarget.style.backgroundColor = 'transparent';
             e.currentTarget.style.color = 'var(--text-muted)';
           }}
-          aria-label="Close sign-in dialog"
+          aria-label={t('signInModal.closeAriaLabel')}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -165,10 +167,10 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
                   color: 'var(--text-primary)',
                 }}
               >
-                Welcome to Liwaisi
+                {t('signInModal.title')}
               </h2>
               <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                Sign in to access your AI command center
+                {t('signInModal.subtitle')}
               </p>
             </div>
           </div>
@@ -178,7 +180,7 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
             <div ref={googleBtnRef} className="flex justify-center" />
 
             <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              We only request basic profile info. Your data stays yours.
+              {t('signInModal.dataPrivacy')}
             </p>
           </div>
 
@@ -189,7 +191,7 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
               className="text-[10px] uppercase tracking-widest"
               style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
             >
-              or join waitlist
+              {t('signInModal.divider')}
             </span>
             <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border-dim)' }} />
           </div>
@@ -198,7 +200,7 @@ export function SignInModal({ open, onClose }: SignInModalProps) {
           <div className="w-full">
             <WaitlistForm variant="footer" />
             <p className="text-[10px] mt-2 text-center" style={{ color: 'var(--text-muted)' }}>
-              No account needed. We'll contact you for B2B access.
+              {t('signInModal.noAccountNeeded')}
             </p>
           </div>
         </div>

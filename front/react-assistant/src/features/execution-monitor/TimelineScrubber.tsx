@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MonitorEvent } from '../../hooks/useExecutionMonitor';
 
 interface TimelineScrubberProps {
@@ -17,6 +18,8 @@ const EVENT_COLORS: Record<string, string> = {
 };
 
 export function TimelineScrubber({ events }: TimelineScrubberProps) {
+  const { t } = useTranslation('monitor');
+
   const { positions, timeRange } = useMemo(() => {
     if (events.length === 0) return { positions: [], timeRange: '' };
 
@@ -41,7 +44,7 @@ export function TimelineScrubber({ events }: TimelineScrubberProps) {
         className="h-full flex items-center justify-center text-[9px]"
         style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
       >
-        Waiting for execution events...
+        {t('timelineScrubber.waiting')}
       </div>
     );
   }
@@ -52,7 +55,7 @@ export function TimelineScrubber({ events }: TimelineScrubberProps) {
         className="text-[8px] uppercase tracking-wider shrink-0"
         style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
       >
-        Timeline
+        {t('timelineScrubber.label')}
       </span>
 
       <div className="relative flex-1 h-2 rounded-full" style={{ backgroundColor: 'var(--bg-input)' }}>

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { joinWaitlist, ApiError } from '../../services/api';
 
 type FormState = 'idle' | 'loading' | 'success' | 'error';
@@ -11,6 +12,7 @@ interface WaitlistFormProps {
 }
 
 export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
+  const { t } = useTranslation('landing');
   const [email, setEmail] = useState('');
   const [state, setState] = useState<FormState>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -21,7 +23,7 @@ export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
     const trimmed = email.trim().toLowerCase();
     if (!EMAIL_RE.test(trimmed)) {
       setState('error');
-      setErrorMsg('Please enter a valid email address');
+      setErrorMsg(t('waitlist.errorInvalidEmail'));
       return;
     }
 
@@ -32,9 +34,9 @@ export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
     } catch (err) {
       setState('error');
       if (err instanceof ApiError && err.status === 429) {
-        setErrorMsg('Too many requests. Please try again in a moment.');
+        setErrorMsg(t('waitlist.errorTooManyRequests'));
       } else {
-        setErrorMsg('Something went wrong. Please try again.');
+        setErrorMsg(t('waitlist.errorGeneric'));
       }
     }
   }
@@ -47,7 +49,7 @@ export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
           <path d="M8 12.5l2.5 2.5 5.5-5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="check-animate" />
         </svg>
         <p className="text-sm" style={{ color: '#10b981' }}>
-          You're on the list! We'll reach out soon.
+          {t('waitlist.success')}
         </p>
       </div>
     );
@@ -59,12 +61,12 @@ export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
     <form onSubmit={handleSubmit} className={`flex flex-col gap-2 ${className}`} noValidate>
       <div className={`flex ${isHero ? 'flex-col sm:flex-row' : 'flex-row'} gap-2`}>
         <label htmlFor={`waitlist-email-${variant}`} className="sr-only">
-          Email address
+          {t('waitlist.emailLabel')}
         </label>
         <input
           id={`waitlist-email-${variant}`}
           type="email"
-          placeholder="your@email.com"
+          placeholder={t('waitlist.emailPlaceholder')}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
@@ -120,10 +122,10 @@ export function WaitlistForm({ variant, className = '' }: WaitlistFormProps) {
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
                 <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
-              Joining...
+              {t('waitlist.submitting')}
             </span>
           ) : (
-            'Request Early Access'
+            t('waitlist.submit')
           )}
         </button>
       </div>

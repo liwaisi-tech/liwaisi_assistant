@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { ExecutionRun } from '../../hooks/useExecutionMonitor';
 
 interface ExecutionListProps {
@@ -6,22 +7,30 @@ interface ExecutionListProps {
   onSelect: (index: number) => void;
 }
 
-const ROUTE_LABELS: Record<string, { label: string; color: string }> = {
-  't-direct': { label: 'DIRECT', color: '#0ea5e9' },
-  't-plan': { label: 'PLAN', color: '#a855f7' },
-  't-execute': { label: 'EXECUTE', color: '#10b981' },
+const ROUTE_COLORS: Record<string, string> = {
+  't-direct': '#0ea5e9',
+  't-plan': '#a855f7',
+  't-execute': '#10b981',
+};
+
+const ROUTE_KEYS: Record<string, string> = {
+  't-direct': 'routeLabels.direct',
+  't-plan': 'routeLabels.plan',
+  't-execute': 'routeLabels.execute',
 };
 
 export function ExecutionList({ runs, selectedIndex, onSelect }: ExecutionListProps) {
+  const { t } = useTranslation('monitor');
+
   if (runs.length === 0) {
     return (
       <div className="h-full flex items-center justify-center px-4">
         <div className="text-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
           <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            No executions yet
+            {t('executionList.noExecutions')}
           </div>
           <div className="text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>
-            Send a message to start
+            {t('executionList.sendToStart')}
           </div>
         </div>
       </div>
@@ -31,13 +40,13 @@ export function ExecutionList({ runs, selectedIndex, onSelect }: ExecutionListPr
   return (
     <div className="h-full overflow-y-auto monitor-scroll" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
       <div className="px-2 py-2 text-[8px] uppercase tracking-widest font-bold" style={{ color: 'var(--text-muted)' }}>
-        Executions ({runs.length})
+        {t('executionList.title', { count: runs.length })}
       </div>
       <div className="space-y-0.5 px-1 pb-2">
         {runs.map((run, i) => {
           const isSelected = i === selectedIndex;
-          const route = detectRoute(run);
-          const duration = computeDuration(run);
+          const route = detectRoute(run, t);
+          const duration = computeDuration(run, t);
 
           return (
             <button
@@ -73,7 +82,7 @@ export function ExecutionList({ runs, selectedIndex, onSelect }: ExecutionListPr
                 className="text-[10px] leading-tight mb-1 line-clamp-2"
                 style={{ color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}
               >
-                {run.inputMessage || 'Loading...'}
+                {run.inputMessage || t('executionList.loadingInput')}
               </div>
 
               {/* Stats row */}
@@ -91,16 +100,17 @@ export function ExecutionList({ runs, selectedIndex, onSelect }: ExecutionListPr
   );
 }
 
-function detectRoute(run: ExecutionRun): { label: string; color: string } | null {
-  // Find the last meaningful transition that completed (not t-classify)
+function detectRoute(run: ExecutionRun, t: (key: string) => string): { label: string; color: string } | null {
   for (const [id] of run.completedTransitions) {
-    if (ROUTE_LABELS[id]) return ROUTE_LABELS[id];
+    if (ROUTE_KEYS[id]) {
+      return { label: t(ROUTE_KEYS[id]), color: ROUTE_COLORS[id] };
+    }
   }
   return null;
 }
 
-function computeDuration(run: ExecutionRun): string | null {
-  if (!run.endTime) return run.isRunning ? 'running...' : null;
+function computeDuration(run: ExecutionRun, t: (key: string) => string): string | null {
+  if (!run.endTime) return run.isRunning ? t('executionList.runningDuration') : null;
   const ms = new Date(run.endTime).getTime() - new Date(run.startTime).getTime();
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;

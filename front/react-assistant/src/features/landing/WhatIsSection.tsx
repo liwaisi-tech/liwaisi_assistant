@@ -1,7 +1,21 @@
+import { useTranslation } from 'react-i18next';
 import { useInView } from './useInView';
+
+function renderAccentText(raw: string) {
+  const match = raw.match(/^(.*)<accent>(.*)<\/accent>(.*)$/);
+  if (!match) return <>{raw}</>;
+  return (
+    <>
+      {match[1]}
+      <span className="gradient-text">{match[2]}</span>
+      {match[3]}
+    </>
+  );
+}
 
 export function WhatIsSection() {
   const { ref, inView } = useInView();
+  const { t } = useTranslation('landing');
 
   return (
     <section
@@ -15,7 +29,7 @@ export function WhatIsSection() {
           className="text-xs uppercase tracking-[0.2em] mb-4"
           style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
         >
-          What is Liwaisi Assistant?
+          {t('whatIs.eyebrow')}
         </p>
 
         <h2
@@ -25,18 +39,14 @@ export function WhatIsSection() {
             color: 'var(--text-primary)',
           }}
         >
-          An AI operating system where{' '}
-          <span className="gradient-text">every decision is visible</span>
+          {renderAccentText(t('whatIs.title'))}
         </h2>
 
         <p
           className="text-base sm:text-lg leading-relaxed max-w-3xl mx-auto mb-12"
           style={{ color: 'var(--text-secondary)' }}
         >
-          Unlike black-box AI, Liwaisi Assistant uses a Coloured Petri Net engine
-          to orchestrate AI workflows with mathematical precision. Every token of data,
-          every transition, every decision — visible and auditable in real time.
-          Your team stays in control at every step.
+          {t('whatIs.description')}
         </p>
 
         {/* Three pillars */}
@@ -52,10 +62,10 @@ export function WhatIsSection() {
               </svg>
             </div>
             <h3 className="font-semibold text-sm mb-2" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-              Transparent
+              {t('whatIs.pillars.transparent.title')}
             </h3>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              See every step of every workflow. No hidden prompts, no mystery reasoning.
+              {t('whatIs.pillars.transparent.description')}
             </p>
           </div>
 
@@ -70,10 +80,10 @@ export function WhatIsSection() {
               </svg>
             </div>
             <h3 className="font-semibold text-sm mb-2" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-              Auditable
+              {t('whatIs.pillars.auditable.title')}
             </h3>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              Every execution is recorded. Full cost tracking, token usage, and decision history.
+              {t('whatIs.pillars.auditable.description')}
             </p>
           </div>
 
@@ -89,10 +99,10 @@ export function WhatIsSection() {
               </svg>
             </div>
             <h3 className="font-semibold text-sm mb-2" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-              Human-First
+              {t('whatIs.pillars.humanFirst.title')}
             </h3>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              AI proposes, you decide. Approve, reject, or revise at any critical point.
+              {t('whatIs.pillars.humanFirst.description')}
             </p>
           </div>
         </div>

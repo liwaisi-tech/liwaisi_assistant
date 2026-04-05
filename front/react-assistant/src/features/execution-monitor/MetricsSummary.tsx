@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 interface MetricsSummaryProps {
   transitionsFired: number;
   llmCalls: number;
@@ -6,12 +8,14 @@ interface MetricsSummaryProps {
 }
 
 export function MetricsSummary({ transitionsFired, llmCalls, totalCostUSD, eventCount }: MetricsSummaryProps) {
+  const { t } = useTranslation('monitor');
+
   return (
     <div className="flex items-center gap-4" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-      <Metric label="FIRED" value={transitionsFired} />
-      <Metric label="LLM" value={llmCalls} />
-      <Metric label="COST" value={`$${totalCostUSD.toFixed(4)}`} accent />
-      <Metric label="EVENTS" value={eventCount} />
+      <Metric label={t('metricsSummary.fired')} value={transitionsFired} />
+      <Metric label={t('metricsSummary.llm')} value={llmCalls} />
+      <Metric label={t('metricsSummary.cost')} value={`$${totalCostUSD.toFixed(4)}`} accent />
+      <Metric label={t('metricsSummary.events')} value={eventCount} />
     </div>
   );
 }
