@@ -63,5 +63,9 @@
   },
   "streaming": {
     "thinking": "Assistant is thinking"
+  },
+  "a2ui": {
+    "unknownComponent": "Unsupported component: {{type}}",
+    "loading": "Loading interactive content..."
   }
 }

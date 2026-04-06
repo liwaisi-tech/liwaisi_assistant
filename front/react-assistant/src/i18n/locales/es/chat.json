@@ -63,5 +63,9 @@
   },
   "streaming": {
     "thinking": "El asistente esta pensando"
+  },
+  "a2ui": {
+    "unknownComponent": "Componente no soportado: {{type}}",
+    "loading": "Cargando contenido interactivo..."
   }
 }

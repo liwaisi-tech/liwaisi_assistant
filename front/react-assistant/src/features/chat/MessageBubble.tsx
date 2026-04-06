@@ -1,6 +1,9 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from './MarkdownContent.tsx';
+import { useA2UIAdapter } from '../../hooks/useA2UIAdapter.ts';
+import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
+import type { A2UIAction } from './a2ui/types.ts';
 import type { HITLAction } from '../../types/chat';
 
 interface MessageBubbleProps {
@@ -14,15 +17,26 @@ interface MessageBubbleProps {
   hitlActions?: HITLAction[];
   hitlResolved?: HITLAction;
   onHITLAction?: (transitionId: string, action: HITLAction) => void;
+  onA2UIAction?: (action: A2UIAction) => void;
   onOpenMonitor?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
-  hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onOpenMonitor,
+  hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onA2UIAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
+  const { detect, parse } = useA2UIAdapter();
+  const a2uiPayload = !isUser ? parse(content) : null;
+  const isA2UI = !isUser && detect(content) && a2uiPayload !== null;
+
+  const handleA2UIAction = useCallback(
+    (action: A2UIAction) => {
+      onA2UIAction?.(action);
+    },
+    [onA2UIAction],
+  );
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -66,6 +80,12 @@ export const MessageBubble = memo(function MessageBubble({
              style={{ color: 'var(--text-primary)', margin: 0 }}>
             {content}
           </p>
+        ) : isA2UI && a2uiPayload ? (
+          <A2UIProviderWrapper
+            payload={a2uiPayload}
+            isStreaming={isStreaming ?? false}
+            onAction={handleA2UIAction}
+          />
         ) : (
           <MarkdownContent content={content} isStreaming={isStreaming ?? false} />
         )}
