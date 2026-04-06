@@ -54,13 +54,16 @@ type ResolveHITLRequest struct {
 // Validate checks that required fields are present.
 func (r *ResolveHITLRequest) Validate() error {
 	switch r.Action {
-	case "approve", "reject", "revise":
+	case "approve", "reject", "revise", "submit":
 		// valid
 	default:
-		return fmt.Errorf("action must be one of: approve, reject, revise")
+		return fmt.Errorf("action must be one of: approve, reject, revise, submit")
 	}
 	if r.Action == "revise" && r.Content == "" {
 		return fmt.Errorf("content is required when action is revise")
+	}
+	if r.Action == "submit" && r.Content == "" {
+		return fmt.Errorf("content is required when action is submit")
 	}
 	return nil
 }

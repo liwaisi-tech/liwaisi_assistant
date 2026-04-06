@@ -95,14 +95,14 @@ func TestHITLTopology_SpaceAssignment(t *testing.T) {
 func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
 
-	expectedPlaces := []string{"p-input", "p-classified", "p-plan", "p-reviewed", "p-output"}
+	expectedPlaces := []string{"p-input", "p-classified", "p-questions", "p-clarified", "p-plan", "p-reviewed", "p-output"}
 	for _, id := range expectedPlaces {
 		if _, ok := c.Places[id]; !ok {
 			t.Errorf("missing place %q", id)
 		}
 	}
 
-	expectedTransitions := []string{"t-classify", "t-direct", "t-plan", "t-review", "t-execute"}
+	expectedTransitions := []string{"t-classify", "t-direct", "t-ask", "t-clarify", "t-plan-direct", "t-plan-clarified", "t-review", "t-execute"}
 	for _, id := range expectedTransitions {
 		if _, ok := c.Transitions[id]; !ok {
 			t.Errorf("missing transition %q", id)
@@ -152,28 +152,28 @@ func TestUnifiedTopology_DirectGuardMatchesConversation(t *testing.T) {
 	}
 }
 
-func TestUnifiedTopology_PlanGuardMatchesTask(t *testing.T) {
+func TestUnifiedTopology_PlanDirectGuardMatchesFullySpecifiedTask(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
-	tPlan := c.Transitions["t-plan"]
+	tPlan := c.Transitions["t-plan-direct"]
 	if tPlan.Guard == nil {
-		t.Fatal("t-plan guard is nil")
+		t.Fatal("t-plan-direct guard is nil")
 	}
 
 	task := &cpn.Token{Payload: `{"intent":"task"}`}
 	conv := &cpn.Token{Payload: `{"intent":"conversation"}`}
 
 	if !tPlan.Guard([]*cpn.Token{task}) {
-		t.Error("t-plan guard should match task intent")
+		t.Error("t-plan-direct guard should match task intent")
 	}
 	if tPlan.Guard([]*cpn.Token{conv}) {
-		t.Error("t-plan guard should NOT match conversation intent")
+		t.Error("t-plan-direct guard should NOT match conversation intent")
 	}
 }
 
 func TestUnifiedTopology_GuardsDefaultToDirectOnAmbiguity(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
 	tDirect := c.Transitions["t-direct"]
-	tPlan := c.Transitions["t-plan"]
+	tPlan := c.Transitions["t-plan-direct"]
 
 	// Non-string payload — ambiguous: should default to direct (safe).
 	ambiguous := &cpn.Token{Payload: 42}
@@ -181,7 +181,7 @@ func TestUnifiedTopology_GuardsDefaultToDirectOnAmbiguity(t *testing.T) {
 		t.Error("t-direct guard should default to true on ambiguous input")
 	}
 	if tPlan.Guard([]*cpn.Token{ambiguous}) {
-		t.Error("t-plan guard should default to false on ambiguous input")
+		t.Error("t-plan-direct guard should default to false on ambiguous input")
 	}
 
 	// Classifier returns a synonym like "greeting" — should route to direct.
@@ -190,7 +190,93 @@ func TestUnifiedTopology_GuardsDefaultToDirectOnAmbiguity(t *testing.T) {
 		t.Error("t-direct guard should match non-task intents like greeting")
 	}
 	if tPlan.Guard([]*cpn.Token{greeting}) {
-		t.Error("t-plan guard should NOT match non-task intents like greeting")
+		t.Error("t-plan-direct guard should NOT match non-task intents like greeting")
+	}
+}
+
+// ── Clarification routing ──────────────────────────────────────────────────
+
+func TestUnifiedTopology_ClarificationGuardMatrix(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	tAsk := c.Transitions["t-ask"]
+	tPlanDirect := c.Transitions["t-plan-direct"]
+	tPlanClarified := c.Transitions["t-plan-clarified"]
+
+	if tAsk == nil || tPlanDirect == nil || tPlanClarified == nil {
+		t.Fatal("expected t-ask, t-plan-direct, t-plan-clarified transitions")
+	}
+
+	cases := []struct {
+		name           string
+		payload        string
+		wantAsk        bool
+		wantPlanDirect bool
+	}{
+		{
+			name:           "fully_specified_task_bypasses_clarification",
+			payload:        `{"intent":"task","needs_clarification":false,"missing":[]}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+		{
+			name:           "missing_info_routes_through_t_ask",
+			payload:        `{"intent":"task","needs_clarification":true,"missing":["audience","language"]}`,
+			wantAsk:        true,
+			wantPlanDirect: false,
+		},
+		{
+			name:           "needs_clarification_true_but_empty_missing_bypasses",
+			payload:        `{"intent":"task","needs_clarification":true,"missing":[]}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+		{
+			name:           "conversation_skips_both",
+			payload:        `{"intent":"conversation","needs_clarification":false,"missing":[]}`,
+			wantAsk:        false,
+			wantPlanDirect: false,
+		},
+		{
+			name:           "legacy_classifier_without_new_fields_still_plans_direct",
+			payload:        `{"intent":"task"}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := &cpn.Token{Payload: tc.payload}
+			if got := tAsk.Guard([]*cpn.Token{tok}); got != tc.wantAsk {
+				t.Errorf("t-ask guard = %v, want %v", got, tc.wantAsk)
+			}
+			if got := tPlanDirect.Guard([]*cpn.Token{tok}); got != tc.wantPlanDirect {
+				t.Errorf("t-plan-direct guard = %v, want %v", got, tc.wantPlanDirect)
+			}
+		})
+	}
+
+	// t-plan-clarified is unconditional — once a token reaches p-clarified
+	// the user has already submitted answers and the planner should fire.
+	if !tPlanClarified.Guard([]*cpn.Token{{Payload: "any"}}) {
+		t.Error("t-plan-clarified guard should always allow firing")
+	}
+}
+
+func TestUnifiedTopology_ClarifyHasA2UIBuilder(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	tClarify, ok := c.Transitions["t-clarify"]
+	if !ok {
+		t.Fatal("missing t-clarify transition")
+	}
+	if tClarify.HITLConfig == nil {
+		t.Fatal("t-clarify HITLConfig is nil")
+	}
+	if tClarify.HITLConfig.A2UIPayloadBuilder == nil {
+		t.Error("t-clarify HITLConfig.A2UIPayloadBuilder must be set")
+	}
+	if tClarify.HITLConfig.OutputBuilder == nil {
+		t.Error("t-clarify HITLConfig.OutputBuilder must be set")
 	}
 }
 

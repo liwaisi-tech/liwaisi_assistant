@@ -90,6 +90,12 @@ const (
 
 	// HITLRevise indicates the human provided revised input.
 	HITLRevise HITLAction = "revise"
+
+	// HITLSubmit indicates the human submitted a structured payload
+	// (e.g. questionnaire answers). The payload is carried as a JSON
+	// string in HITLResponse.Content and is interpreted by the
+	// transition's OutputBuilder.
+	HITLSubmit HITLAction = "submit"
 )
 
 // HITLResponse carries the human's response to a HITL request.

@@ -1,4 +1,4 @@
-export type HITLAction = 'approve' | 'reject' | 'revise';
+export type HITLAction = 'approve' | 'reject' | 'revise' | 'submit';
 
 export interface ChatMessage {
   id: string;

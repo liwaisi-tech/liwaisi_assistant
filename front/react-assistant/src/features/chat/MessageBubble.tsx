@@ -64,6 +64,11 @@ export const MessageBubble = memo(function MessageBubble({
         setReviseMode(true);
         return;
       }
+      if (action.type === 'hitl:submit' && action.componentId) {
+        const answers = (action.payload as { answers?: Record<string, string> } | null)?.answers ?? {};
+        onHITLAction?.(action.componentId, 'submit', JSON.stringify(answers));
+        return;
+      }
       if (action.type.startsWith('hitl:') && action.componentId) {
         const hitlAction = action.type.replace('hitl:', '') as HITLAction;
         onHITLAction?.(action.componentId, hitlAction);

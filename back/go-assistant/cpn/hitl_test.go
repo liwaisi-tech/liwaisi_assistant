@@ -2,6 +2,7 @@ package cpn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"runtime"
 	"strings"
@@ -450,6 +451,113 @@ func TestValidate_HITLValid(t *testing.T) {
 	err := Validate(places, transitions)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+// ── Structured submit (OutputBuilder + A2UIPayloadBuilder) ──────────────────
+
+func TestFireHITL_StructuredSubmitWithOutputBuilder(t *testing.T) {
+	ch := make(chan Token, 1)
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorJSON, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorString, SpaceSurface),
+	}
+	// Seed the input place with a "questionnaire" JSON token (simulating the
+	// upstream t-ask LLM output).
+	_ = places["P:IN"].Deposit(&Token{
+		Color:   ColorJSON,
+		Space:   SpaceSurface,
+		Payload: `{"questions":[{"id":"q1","prompt":"Audience?","options":[{"id":"opt-a","label":"Beginners"},{"id":"opt-b","label":"Experts"}]}]}`,
+	})
+
+	var (
+		gotConsumedQuestions int
+		gotAnswers           map[string]string
+		gotResponseAction    HITLAction
+	)
+
+	transitions := map[string]*Transition{
+		"T:HITL": {
+			ID: "T:HITL", Kind: NodeKindHITL,
+			InputPlaces: []string{"P:IN"}, OutputPlaces: []string{"P:OUT"},
+			HITLConfig: &HITLConfig{
+				Channel: ch,
+				Prompt:  "Answer please",
+				A2UIPayloadBuilder: func(consumed []Token) (any, error) {
+					if len(consumed) != 1 {
+						t.Errorf("A2UIPayloadBuilder consumed len = %d, want 1", len(consumed))
+					}
+					return map[string]any{"components": []any{"q1"}}, nil
+				},
+				OutputBuilder: func(consumed []Token, resp HITLResponse) (Token, error) {
+					gotResponseAction = resp.Action
+					if len(consumed) == 1 {
+						if s, ok := consumed[0].Payload.(string); ok && strings.Contains(s, "Audience") {
+							gotConsumedQuestions = 1
+						}
+					}
+					_ = json.Unmarshal([]byte(resp.Content), &gotAnswers)
+					return Token{
+						Color:   ColorString,
+						Payload: "Clarification answers:\n- Audience?: Beginners\n",
+					}, nil
+				},
+			},
+		},
+	}
+	c := NewCPN("test-cpn", "worker", 0, ModeMAS, "sess-1", places, transitions)
+
+	// Capture emitted events to confirm the A2UI stream chunk fired.
+	ec := &eventCollector{}
+	c.EventSink = ec.sink
+
+	// Submit the structured response.
+	ch <- Token{
+		Color: ColorHuman,
+		Space: SpaceSurface,
+		Payload: HITLResponse{
+			Action:  HITLSubmit,
+			Content: `{"q1":"opt-a"}`,
+		},
+	}
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if gotResponseAction != HITLSubmit {
+		t.Errorf("OutputBuilder action = %q, want submit", gotResponseAction)
+	}
+	if gotConsumedQuestions != 1 {
+		t.Error("OutputBuilder did not receive the consumed questionnaire token")
+	}
+	if gotAnswers["q1"] != "opt-a" {
+		t.Errorf("answers[q1] = %q, want opt-a", gotAnswers["q1"])
+	}
+
+	// Output token must be present, ColorString, with merged content.
+	tokens, ok := c.Places["P:OUT"].Peek()
+	if !ok || len(tokens) != 1 {
+		t.Fatalf("expected 1 token in P:OUT, got %d", len(tokens))
+	}
+	if tokens[0].Color != ColorString {
+		t.Errorf("output color = %s, want ColorString", tokens[0].Color)
+	}
+	if s, ok := tokens[0].Payload.(string); !ok || !strings.Contains(s, "Clarification answers") {
+		t.Errorf("unexpected output payload: %v", tokens[0].Payload)
+	}
+
+	// Verify an A2UI stream chunk was emitted before the HITL request.
+	var sawA2UI bool
+	for _, e := range ec.getEvents() {
+		if e.Type == EventStreamChunk {
+			if chunk, ok := e.Payload.(StreamChunk); ok && strings.HasPrefix(chunk.Content, "$$a2ui:") {
+				sawA2UI = true
+			}
+		}
+	}
+	if !sawA2UI {
+		t.Error("expected an EventStreamChunk with $$a2ui: prefix")
 	}
 }
 

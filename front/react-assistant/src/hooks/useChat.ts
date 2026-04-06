@@ -300,7 +300,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
       try {
         await apiResolveHITL(sessionId, transitionId, {
           action,
-          ...(action === 'revise' && content ? { content } : {}),
+          ...((action === 'revise' || action === 'submit') && content ? { content } : {}),
         });
       } catch (err) {
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });

@@ -1,7 +1,14 @@
-import { useDeferredValue, useCallback, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
-import type { A2UIPayload, A2UIComponent, A2UIAction, AlertSeverity, FormField } from './types.ts';
+import type {
+  A2UIPayload,
+  A2UIComponent,
+  A2UIAction,
+  AlertSeverity,
+  FormField,
+  ChoiceOption,
+} from './types.ts';
 
 // ── Component Catalog ──────────────────────────────────────────────────────
 
@@ -296,6 +303,196 @@ function BadgeComponent({ component }: ComponentProps) {
   );
 }
 
+// ── choice ──────────────────────────────────────────────────────────────────
+// Standalone radio group. Inside a questionnaire it is rendered by
+// QuestionnaireComponent (which owns answer state); when used outside one it
+// still renders as a read-only group so it never silently disappears.
+
+interface ChoiceFieldProps {
+  questionId: string;
+  label: string;
+  options: ChoiceOption[];
+  recommended?: string;
+  selected?: string;
+  onSelect?: (optionId: string) => void;
+  groupName: string;
+}
+
+function ChoiceField({
+  questionId,
+  label,
+  options,
+  recommended,
+  selected,
+  onSelect,
+  groupName,
+}: ChoiceFieldProps) {
+  const { t } = useTranslation('chat');
+  const recommendedLabel = t('a2ui.recommended', 'Recommended');
+  return (
+    <fieldset
+      className="my-2 p-3 rounded-lg"
+      style={{
+        border: '1px solid var(--border-dim)',
+        backgroundColor: 'var(--bg-input)',
+      }}
+    >
+      <legend
+        className="px-1 text-xs font-medium"
+        style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {label}
+      </legend>
+      <div className="flex flex-col gap-1.5 mt-1">
+        {options.map((opt) => {
+          const isRecommended = recommended === opt.id;
+          const inputId = `${groupName}-${opt.id}`;
+          return (
+            <label
+              key={opt.id}
+              htmlFor={inputId}
+              className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <input
+                id={inputId}
+                type="radio"
+                name={groupName}
+                value={opt.id}
+                checked={selected === opt.id}
+                onChange={() => onSelect?.(opt.id)}
+                aria-describedby={isRecommended ? `${inputId}-rec` : undefined}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              <span className="flex-1">{opt.label}</span>
+              {isRecommended && (
+                <span
+                  id={`${inputId}-rec`}
+                  className="inline-block text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full"
+                  style={{
+                    color: 'var(--accent)',
+                    border: '1px solid var(--accent)',
+                    background: 'rgba(14, 165, 233, 0.08)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {recommendedLabel}
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+      <input type="hidden" name={questionId} value={selected ?? ''} />
+    </fieldset>
+  );
+}
+
+function ChoiceComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = (component.props.label as string) ?? '';
+  const options = (component.props.options as ChoiceOption[]) ?? [];
+  const recommended = component.props.recommended as string | undefined;
+  return (
+    <ChoiceField
+      questionId={id}
+      label={label}
+      options={options}
+      recommended={recommended}
+      groupName={id}
+    />
+  );
+}
+
+// ── questionnaire ───────────────────────────────────────────────────────────
+
+interface QuestionDescriptor {
+  id: string;
+  label: string;
+  options: ChoiceOption[];
+  recommended?: string;
+}
+
+function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescriptor[] {
+  if (!children) return [];
+  const out: QuestionDescriptor[] = [];
+  for (const child of children) {
+    if (child.type !== 'choice') continue;
+    const id = (child.props.id as string) ?? '';
+    if (!id) continue;
+    out.push({
+      id,
+      label: (child.props.label as string) ?? '',
+      options: (child.props.options as ChoiceOption[]) ?? [],
+      recommended: child.props.recommended as string | undefined,
+    });
+  }
+  return out;
+}
+
+function QuestionnaireComponent({ component, onAction }: ComponentProps) {
+  const { t } = useTranslation('chat');
+  const componentId = (component.props.id as string) ?? '';
+  const submitLabel = (component.props.submitLabel as string) ?? t('a2ui.submit', 'Submit');
+  const questions = useMemo(() => extractQuestions(component.children), [component.children]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  const allAnswered = questions.length > 0 && questions.every((q) => Boolean(answers[q.id]));
+
+  const handleSelect = useCallback((questionId: string, optionId: string) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
+  }, []);
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      if (!allAnswered) return;
+      onAction({
+        type: 'hitl:submit',
+        componentId,
+        payload: { answers },
+      });
+    },
+    [allAnswered, answers, componentId, onAction],
+  );
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
+      className="flex flex-col gap-2 my-2"
+    >
+      {questions.map((q) => (
+        <ChoiceField
+          key={q.id}
+          questionId={q.id}
+          label={q.label}
+          options={q.options}
+          recommended={q.recommended}
+          selected={answers[q.id]}
+          onSelect={(optionId) => handleSelect(q.id, optionId)}
+          groupName={`${componentId}-${q.id}`}
+        />
+      ))}
+      <button
+        type="submit"
+        disabled={!allAnswered}
+        className="self-start px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+        style={{
+          backgroundColor: 'rgba(14, 165, 233, 0.15)',
+          color: 'var(--accent)',
+          border: '1px solid rgba(14, 165, 233, 0.3)',
+          boxShadow: allAnswered ? '0 0 8px -2px var(--accent-glow)' : 'none',
+          opacity: allAnswered ? 1 : 0.5,
+          cursor: allAnswered ? 'pointer' : 'not-allowed',
+        }}
+      >
+        {submitLabel}
+      </button>
+    </form>
+  );
+}
+
 // ── Unknown / placeholder ──────────────────────────────────────────────────
 
 function UnknownComponent({ component }: { component: A2UIComponent }) {
@@ -328,6 +525,8 @@ const componentCatalog: Record<string, React.FC<ComponentProps>> = {
   divider: DividerComponent,
   alert: AlertComponent,
   badge: BadgeComponent,
+  choice: ChoiceComponent,
+  questionnaire: QuestionnaireComponent,
 };
 
 function A2UIComponentRenderer({ component, onAction }: ComponentProps) {

@@ -2,6 +2,7 @@ package cpn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -31,6 +32,24 @@ type HITLConfig struct {
 	// MaxRevisions caps revision rounds (Block 15). Default: 5.
 	// Ignored in Block 14.
 	MaxRevisions int
+
+	// A2UIPayloadBuilder, when non-nil, is invoked by fireHITL just before
+	// emitting EventHITLRequested. Its return value is JSON-encoded and
+	// published as a StreamChunk with body "$$a2ui:"+json via the same
+	// EventStreamChunk path used by streaming LLM transitions. The frontend
+	// detects the prefix and renders an interactive surface (e.g. a
+	// questionnaire). A nil return or error is non-fatal — the HITL request
+	// still proceeds without an A2UI surface.
+	A2UIPayloadBuilder func(consumed []Token) (any, error)
+
+	// OutputBuilder, when non-nil, lets a HITL transition synthesize a
+	// typed output token from (consumed, response) instead of depositing
+	// the raw human token. Used for structured HITL flows like t-clarify
+	// where answers must be merged into an upstream JSON payload before
+	// flowing downstream. The returned token's Color must match every
+	// output place's Color. Only consulted on HITLApprove or HITLSubmit;
+	// HITLReject still short-circuits with ErrHITLRejected.
+	OutputBuilder func(consumed []Token, resp HITLResponse) (Token, error)
 }
 
 // fireHITL executes a single-turn HITL transition.
@@ -44,10 +63,35 @@ type HITLConfig struct {
 //  6. Set StateRunning, notify group, emit EventHITLResolved
 //  7. Deposit token into OutputPlaces (space bridging)
 //  8. Check Centaurian mode switch
-func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) ([]TokenSnapshot, float64, error) {
+func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	cfg := t.HITLConfig
 	if cfg == nil || cfg.Channel == nil {
 		return nil, 0, fmt.Errorf("%w: transition %s", ErrHITLMisconfigured, t.ID)
+	}
+
+	// Optional A2UI surface emission. When configured, the transition
+	// publishes an interactive component spec via the standard streaming
+	// channel BEFORE blocking on human input. The frontend matches the
+	// "$$a2ui:" prefix and renders an interactive surface that ultimately
+	// resolves the HITL request via the regular HTTP endpoint.
+	if cfg.A2UIPayloadBuilder != nil {
+		if payload, err := cfg.A2UIPayloadBuilder(consumed); err == nil && payload != nil {
+			if encoded, mErr := json.Marshal(payload); mErr == nil {
+				c.StreamedOutput = true
+				c.emit(&Event{
+					Type:           EventStreamChunk,
+					TransitionID:   t.ID,
+					TransitionKind: NodeKindHITL,
+					Payload: StreamChunk{
+						SessionID: c.SessionID,
+						CPNID:     c.ID,
+						CPNRole:   c.Role,
+						Content:   "$$a2ui:" + string(encoded),
+						Done:      false,
+					},
+				})
+			}
+		}
 	}
 
 	// REQ-002: Emit EventHITLRequested with the prompt before blocking.
@@ -93,6 +137,65 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, _ []Token) ([]TokenSna
 	// REQ-007: If token payload is HITLResponse{Action: HITLReject}, return ErrHITLRejected.
 	if resp, ok := tok.Payload.(HITLResponse); ok && resp.Action == HITLReject {
 		return nil, 0, ErrHITLRejected
+	}
+
+	// Structured-output path: when OutputBuilder is configured, the transition
+	// synthesizes a typed output token from (consumed, response) instead of
+	// depositing the raw human token. This is how t-clarify merges
+	// questionnaire answers into the upstream classifier JSON before flowing
+	// to t-plan-clarified.
+	if cfg.OutputBuilder != nil {
+		resp, ok := tok.Payload.(HITLResponse)
+		if !ok {
+			return nil, 0, fmt.Errorf("transition %s: OutputBuilder requires HITLResponse payload, got %T", t.ID, tok.Payload)
+		}
+		built, err := cfg.OutputBuilder(consumed, resp)
+		if err != nil {
+			return nil, 0, fmt.Errorf("transition %s: OutputBuilder: %w", t.ID, err)
+		}
+
+		c.setState(StateRunning)
+		if c.GroupNotifier != nil {
+			c.GroupNotifier.SwitchCMP(c.ID)
+		}
+		c.emit(&Event{
+			Type:           EventHITLResolved,
+			TransitionID:   t.ID,
+			TransitionKind: NodeKindHITL,
+			Token:          &tok,
+		})
+
+		built.OriginID = c.ID
+		built.OriginDepth = c.Depth
+		built.OriginKind = NodeKindHITL
+		built.SessionID = c.SessionID
+		built.Timestamp = time.Now()
+		outputSnaps := []TokenSnapshot{built.Snapshot()}
+
+		needCentaurian := false
+		for _, pid := range t.OutputPlaces {
+			p, ok := c.Places[pid]
+			if !ok {
+				return nil, 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+			}
+			deposit := built
+			deposit.Space = p.Space
+			deposit.OriginID = c.ID
+			deposit.OriginDepth = c.Depth
+			deposit.OriginKind = NodeKindHITL
+			deposit.SessionID = c.SessionID
+			deposit.Timestamp = time.Now()
+			if err := p.Deposit(&deposit); err != nil {
+				return nil, 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+			}
+			if p.Space == SpaceComputation {
+				needCentaurian = true
+			}
+		}
+		if needCentaurian {
+			c.switchModeToCentaurian()
+		}
+		return outputSnaps, 0, nil
 	}
 
 	// REQ-008: Set StateRunning, emit EventHITLResolved.

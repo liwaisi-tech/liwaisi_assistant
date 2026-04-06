@@ -43,3 +43,28 @@ export interface FormField {
   required?: boolean;
   defaultValue?: string;
 }
+
+/** Choice option descriptor for the choice component. */
+export interface ChoiceOption {
+  id: string;
+  label: string;
+}
+
+/** Props for the choice component (a single radio question). */
+export interface ChoiceProps {
+  id: string;
+  label: string;
+  recommended?: string;
+  options: ChoiceOption[];
+}
+
+/** Props for the questionnaire component (a group of choice children + submit). */
+export interface QuestionnaireProps {
+  id: string;
+  submitLabel?: string;
+}
+
+/** Payload dispatched by the questionnaire submit action. */
+export interface QuestionnaireSubmitPayload {
+  answers: Record<string, string>;
+}

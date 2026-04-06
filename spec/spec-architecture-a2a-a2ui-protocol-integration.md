@@ -750,3 +750,265 @@ If a component type is not in the catalog, the `A2UIRenderer` MUST render a fall
 - [A2UI Protocol](https://a2ui.org)
 - [A2UI React SDK](https://github.com/google/A2UI)
 - [@a2ui-sdk/react npm](https://www.npmjs.com/package/@a2ui-sdk/react)
+
+## 12. Questionnaire & Choice components
+
+This section specifies the `questionnaire` / `choice` A2UI component types and the
+clarification CPN node (`t-ask` → `t-clarify`) that drives them. The clarification node
+sits between `p-classified` and `t-plan` on the plan-task branch of the unified topology
+and is skipped when the classifier is confident.
+
+### 12.1 A2UI component schemas
+
+Both component types extend the existing A2UI `Component` envelope (`{type, props,
+children?}`) declared in §6 of this spec. The catalog adds two entries; no other
+component shape is changed.
+
+#### 12.1.1 `questionnaire`
+
+A container that groups one or more `choice` children, holds local answer state, and
+dispatches a single `hitl:submit` action when the user clicks the submit button.
+
+```json
+{
+  "type": "questionnaire",
+  "props": {
+    "id": "string (required) — MUST equal the HITL transition id (e.g. \"t-clarify\")",
+    "submitLabel": "string (optional) — button label, default \"Submit\""
+  },
+  "children": "Choice[] (required, length >= 1) — only `choice` components are valid children"
+}
+```
+
+Validation rules:
+- `props.id` MUST be a non-empty string. The frontend uses it as the `componentId` of
+  the dispatched action and as the `{transitionId}` path segment of the HITL POST.
+- `children` MUST contain only objects whose `type === "choice"`. Renderers MUST drop
+  any other child type and log a warning (consistent with §9 "Unknown A2UI Component
+  Type").
+- The submit button MUST remain disabled until every child `choice.props.id` has an
+  entry in the local answer state.
+
+#### 12.1.2 `choice`
+
+A single multiple-choice question with an optional recommended option.
+
+```json
+{
+  "type": "choice",
+  "props": {
+    "id": "string (required) — question id, unique within the parent questionnaire",
+    "label": "string (required) — question prompt shown to the user",
+    "recommended": "string (optional) — id of the option to highlight with a \"Recommended\" badge",
+    "options": [
+      {
+        "id": "string (required) — option id, unique within this choice",
+        "label": "string (required) — option label shown to the user"
+      }
+    ]
+  }
+}
+```
+
+Validation rules:
+- `props.options` MUST contain at least two entries.
+- If `props.recommended` is present, it MUST match an `options[].id`. If it does not,
+  renderers MUST ignore the field (no badge) rather than fail.
+- `choice` is a leaf component — it MUST NOT declare `children`.
+
+### 12.2 HITL resolve contract — `action: "submit"`
+
+The clarification flow reuses the existing HITL POST endpoint
+(`POST /api/v1/sessions/{sessionId}/hitl/{transitionId}`) and the existing
+`ResolveHITLRequest{Action, Content}` wire shape declared in §6. No new endpoint, no
+new request fields.
+
+A new `Action` value `"submit"` is introduced alongside the existing `approve`,
+`reject`, and `revise` values. Backward compatibility is preserved: handlers that do
+not recognise `submit` MUST return HTTP 400 (the existing default branch).
+
+`Content` semantics for `Action: "submit"`:
+
+- MUST be a JSON-stringified object of shape `{[questionId: string]: optionId: string}`.
+- The map MUST contain exactly one entry per `choice.props.id` that appeared in the
+  questionnaire payload emitted by `t-clarify`. Missing keys cause the transition to
+  reject the resolve with `ErrInvalidHITLContent`.
+- Unknown keys (not present in the original questionnaire) MUST cause the same
+  rejection — the backend treats the answer map as a closed set.
+- Option ids MUST match one of the `options[].id` values declared for that question.
+
+On successful resolve, `t-clarify` deposits a `ColorJSON` token into `p-clarified`
+whose payload is the original classified JSON merged with:
+
+```json
+{ "clarification_answers": { "<questionId>": "<optionId>", "...": "..." } }
+```
+
+The merge is shallow and additive — existing classifier fields (`intent`,
+`needs_clarification`, `missing`, etc.) are preserved verbatim so downstream
+transitions can still inspect them.
+
+#### 12.2.1 Verbatim HTTP example
+
+Assume `sessionId = "sess-9f3a"`, the questionnaire emitted by `t-clarify` contained
+two questions (`audience` and `deadline`), and the user selected
+`audience = "engineers"` and `deadline = "this-week"`.
+
+```http
+POST /api/v1/sessions/sess-9f3a/hitl/t-clarify HTTP/1.1
+Host: brae.liwaisi.tech
+Authorization: Bearer <google-oauth-id-token>
+Content-Type: application/json
+
+{
+  "action": "submit",
+  "content": "{\"audience\":\"engineers\",\"deadline\":\"this-week\"}"
+}
+```
+
+Successful response (HTTP 200):
+
+```json
+{
+  "session_id": "sess-9f3a",
+  "transition_id": "t-clarify",
+  "resolved": true
+}
+```
+
+Note that `content` is a **string** (JSON-stringified by the frontend), not a nested
+JSON object. This matches the existing wire contract for the `revise` action and keeps
+`ResolveHITLRequest` schema-stable.
+
+### 12.3 CPN wiring — split `t-plan` (single-Guard pattern)
+
+The clarification node introduces two new places and three new transitions on the
+plan-task branch:
+
+| Node            | Kind            | Color    | Space        | Purpose                                                          |
+|-----------------|-----------------|----------|--------------|------------------------------------------------------------------|
+| `p-questions`  | Place           | JSON     | Surface      | Carries the LLM-generated questionnaire spec                      |
+| `p-clarified`  | Place           | JSON     | Surface      | Carries classified payload merged with `clarification_answers`    |
+| `t-ask`        | Transition LLM  | —        | —            | Generates `{questions:[...]}` JSON from `missing[]` hints         |
+| `t-clarify`    | Transition HITL | —        | —            | Streams A2UI questionnaire chunk, blocks for `submit`             |
+| `t-plan-direct`| Transition LLM  | —        | —            | High-confidence path: consumes `p-classified`, deposits `p-plan` |
+| `t-plan-clarified` | Transition LLM | —     | —            | Clarified path: consumes `p-clarified`, deposits `p-plan`        |
+
+#### 12.3.1 Why two parallel `t-plan` transitions instead of a join
+
+The Coloured Petri Net runtime in `cpn/transition.go` declares `Guard` as a single
+function on the `Transition` struct (one transition, one boolean predicate). There is
+no native support for either:
+
+- a guard expression that can switch on **which input place** supplied the consumed
+  token, or
+- a non-trivial join that fires when *any* of N input places contains a token (the
+  default Petri-Net firing rule requires *all* input places to be marked).
+
+A naive single `t-plan` with both `p-classified` and `p-clarified` as inputs would
+therefore wait until **both** places held tokens — which never happens, since the
+classifier deposits into exactly one branch per request. Adding multi-input "OR-join"
+semantics to the engine is out of scope for this change and would touch every
+transition.
+
+The chosen pattern instead duplicates the planner transition into two siblings that
+share the same executor behaviour but differ only in their input place and guard:
+
+- `t-plan-direct`: input `p-classified`, guard
+  `intent == "plan-task" && needs_clarification == false`, output `p-plan`.
+- `t-plan-clarified`: input `p-clarified`, guard `true` (the token has already been
+  through clarification), output `p-plan`.
+
+Both transitions deposit into the **same** `p-plan` place, so downstream
+(`t-review` → `t-execute`) is unchanged. The two siblings are mutually exclusive by
+construction: a token can only exist in one of `p-classified` or `p-clarified` for a
+given request, so exactly one sibling fires. This keeps the change additive — no edits
+to `cpn/transition.go`, no new core primitives — at the cost of one duplicated
+transition definition in `cmd/server/topologies.go`.
+
+### 12.4 Classifier contract — additive guard fields
+
+The `t-classify` system prompt is extended so its JSON output includes two new
+fields. Both are **optional and additive**: existing classifier outputs that omit them
+remain valid, and `guardNeedsClarification` treats absent fields as `false`.
+
+```json
+{
+  "intent": "plan-task | direct-conversation",
+  "needs_clarification": "bool (optional, default false)",
+  "missing": "string[] (optional, default []) — names of underspecified parameters"
+}
+```
+
+Guard predicates:
+
+- `guardNeedsClarification(token) := intent == \"plan-task\" && needs_clarification == true && len(missing) > 0`
+- `guardPlanTaskDirect(token)     := intent == \"plan-task\" && needs_clarification == false`
+- `guardPlanTaskClarified(token)  := true` (input is `p-clarified`, already filtered)
+
+Backward compatibility note: existing topology tests that assert
+`intent == "plan-task"` flows directly to `t-plan` continue to pass because such
+fixtures emit no `needs_clarification` field, which the guard reads as `false`,
+selecting `t-plan-direct`.
+
+### 12.5 End-to-end sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User (React)
+    participant API as HTTP API<br/>(driving adapter)
+    participant SS as SessionService
+    participant CPN as CPN Engine
+    participant LLM as LLM Provider
+    participant SSE as SSEBroker
+
+    U->>API: POST /sessions/{id}/messages<br/>{"text":"plan something ambiguous"}
+    API->>SS: SendMessage(sessionId, text)
+    SS->>CPN: Fire t-classify
+    CPN->>LLM: classify prompt
+    LLM-->>CPN: {intent:"plan-task",needs_clarification:true,missing:["audience","deadline"]}
+    CPN->>CPN: deposit token → p-classified
+
+    alt needs_clarification == true
+        CPN->>CPN: guardNeedsClarification → fire t-ask
+        CPN->>LLM: ask prompt (RequireJSON=true)
+        LLM-->>CPN: {questions:[{id,prompt,recommended,options[]}, ...]}
+        CPN->>CPN: deposit token → p-questions
+        CPN->>CPN: fire t-clarify (HITL)
+        CPN->>SSE: StreamChunk "$$a2ui:{components:[{type:questionnaire,...}]}"
+        SSE-->>U: SSE stream_chunk (A2UI payload)
+        CPN-->>SSE: EventHITLRequested(t-clarify)
+        SSE-->>U: hitl_requested
+        Note over U: A2UIRenderer renders questionnaire,<br/>user picks options, clicks Submit
+        U->>API: POST /sessions/{id}/hitl/t-clarify<br/>{action:"submit",content:"{\"audience\":\"engineers\",...}"}
+        API->>SS: ResolveHITL(sessionId, "t-clarify", submit, content)
+        SS->>CPN: unblock t-clarify, parse Content
+        CPN->>CPN: merge answers → deposit token → p-clarified
+        CPN->>CPN: guardPlanTaskClarified → fire t-plan-clarified
+    else needs_clarification == false
+        CPN->>CPN: guardPlanTaskDirect → fire t-plan-direct
+    end
+
+    CPN->>LLM: planner prompt (with clarification_answers if present)
+    LLM-->>CPN: plan
+    CPN->>CPN: deposit token → p-plan
+    CPN->>CPN: fire t-review
+    CPN-->>SSE: EventHITLRequested(t-review)
+    SSE-->>U: hitl_requested (review gate)
+```
+
+The diagram makes the conditional branch on `needs_clarification` explicit: the
+`alt`/`else` block contains the entire `t-ask` → `t-clarify` → `t-plan-clarified`
+sub-sequence, while the `else` arm collapses directly to `t-plan-direct`. Both arms
+re-converge at `p-plan` and continue through the existing `t-review` → `t-execute`
+tail of the unified topology.
+
+### 12.6 Open items (TBD during implementation)
+
+- **A2UI buffering threshold for streamed `$$a2ui:` chunks** — §9 mandates buffering
+  partial payloads, but the maximum buffer size before fallback to markdown is not
+  fixed. To be tuned during implementation against real `t-clarify` payloads.
+- **Recommended-badge accessibility token** — exact ARIA labelling for the
+  "Recommended" highlight is delegated to the `/frontend-design` skill pass.
+

@@ -11,34 +11,81 @@ import (
 
 // ── Named guard functions (registered in FuncRegistry for topology serialization) ──
 
-// guardDirectConversation fires t-direct when the classifier output does NOT contain "task".
-func guardDirectConversation(tokens []*cpn.Token) bool {
+// classifierResult is the structured payload emitted by the t-classify LLM.
+// All fields are optional except Intent; absence of needs_clarification or
+// missing is treated as needs_clarification == false (backward compatible
+// with classifiers that haven't been updated to emit the new fields).
+type classifierResult struct {
+	Intent             string   `json:"intent"`
+	NeedsClarification bool     `json:"needs_clarification,omitempty"`
+	Missing            []string `json:"missing,omitempty"`
+}
+
+// parseClassified extracts the classifier JSON from the first string-payload
+// token. Returns the parsed result and true on success.
+func parseClassified(tokens []*cpn.Token) (classifierResult, bool) {
 	for _, tok := range tokens {
 		if s, ok := tok.Payload.(string); ok {
-			var result struct {
-				Intent string `json:"intent"`
-			}
-			if err := json.Unmarshal([]byte(s), &result); err == nil {
-				return !strings.EqualFold(result.Intent, "task")
+			var r classifierResult
+			if err := json.Unmarshal([]byte(s), &r); err == nil {
+				return r, true
 			}
 		}
 	}
-	return true // default to conversation on parse failure
+	return classifierResult{}, false
+}
+
+// guardDirectConversation fires t-direct when the classifier output does NOT contain "task".
+func guardDirectConversation(tokens []*cpn.Token) bool {
+	r, ok := parseClassified(tokens)
+	if !ok {
+		return true // default to conversation on parse failure
+	}
+	return !strings.EqualFold(r.Intent, "task")
 }
 
 // guardPlanTask fires t-plan when the classifier output contains "task".
+// Retained for backward compatibility / serialization. The unified topology
+// now uses guardPlanTaskDirect and guardPlanTaskClarified instead.
 func guardPlanTask(tokens []*cpn.Token) bool {
-	for _, tok := range tokens {
-		if s, ok := tok.Payload.(string); ok {
-			var result struct {
-				Intent string `json:"intent"`
-			}
-			if err := json.Unmarshal([]byte(s), &result); err == nil {
-				return strings.EqualFold(result.Intent, "task")
-			}
-		}
+	r, ok := parseClassified(tokens)
+	if !ok {
+		return false
 	}
-	return false // default to not-task on parse failure
+	return strings.EqualFold(r.Intent, "task")
+}
+
+// guardNeedsClarification fires t-ask when the classifier flagged a task that
+// is missing information. Both needs_clarification == true and a non-empty
+// missing[] list are required so well-specified tasks bypass clarification.
+func guardNeedsClarification(tokens []*cpn.Token) bool {
+	r, ok := parseClassified(tokens)
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(r.Intent, "task") && r.NeedsClarification && len(r.Missing) > 0
+}
+
+// guardPlanTaskDirect fires t-plan-direct when the classifier returned a task
+// intent that is fully-specified (no clarification needed).
+func guardPlanTaskDirect(tokens []*cpn.Token) bool {
+	r, ok := parseClassified(tokens)
+	if !ok {
+		return false
+	}
+	if !strings.EqualFold(r.Intent, "task") {
+		return false
+	}
+	return !(r.NeedsClarification && len(r.Missing) > 0)
+}
+
+// guardPlanTaskClarified fires t-plan-clarified once the user has answered
+// the t-clarify questionnaire. The token in p-clarified is already vetted
+// by t-clarify (only fires after a successful submit), so this guard is
+// unconditional — it exists so the transition can be persisted/loaded
+// through the FuncRegistry.
+func guardPlanTaskClarified(_ []*cpn.Token) bool {
+	return true
 }
 
 // newServerFuncRegistry creates a FuncRegistry with all topology functions registered.
@@ -46,6 +93,9 @@ func newServerFuncRegistry() *persist.FuncRegistry {
 	r := persist.NewFuncRegistry()
 	r.RegisterGuard("guard-direct-conversation", guardDirectConversation)
 	r.RegisterGuard("guard-plan-task", guardPlanTask)
+	r.RegisterGuard("guard-needs-clarification", guardNeedsClarification)
+	r.RegisterGuard("guard-plan-task-direct", guardPlanTaskDirect)
+	r.RegisterGuard("guard-plan-task-clarified", guardPlanTaskClarified)
 	return r
 }
 
@@ -152,6 +202,8 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 	places := map[string]*cpn.Place{
 		"p-input":      cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
 		"p-classified": cpn.NewPlace("p-classified", cpn.ColorJSON, cpn.SpaceSurface),
+		"p-questions":  cpn.NewPlace("p-questions", cpn.ColorJSON, cpn.SpaceSurface),
+		"p-clarified":  cpn.NewPlace("p-clarified", cpn.ColorString, cpn.SpaceSurface),
 		"p-plan":       cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
 		"p-reviewed":   cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
 		"p-output":     cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
@@ -160,30 +212,30 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 	// t-classify: fast intent classifier using lightweight model.
 	tClassify := cpn.NewTransition("t-classify", cpn.NodeKindLLM,
 		[]string{"p-input"}, []string{"p-classified"})
-	tClassify.SystemPrompt = envOr("PROMPT_CLASSIFIER", `You are an intent classifier. Classify the user's message into exactly one category.
+	tClassify.SystemPrompt = envOr("PROMPT_CLASSIFIER", `You are an intent classifier. Classify the user's message into exactly one category and, for tasks, decide whether key information is missing.
 Respond with JSON only, no explanation.
 
-Categories:
+Schema:
+{"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...]}
+
+Rules for "intent":
 - "conversation": greetings, casual chat, simple one-sentence factual answers, clarifications, thank you messages
 - "task": requests that need a plan, multi-step work, guided learning, tutorials, code generation, document creation, analysis, implementation, design, architecture, or any request where the user asks you to BUILD, CREATE, DESIGN, PLAN, IMPLEMENT, HELP WITH A PROJECT, or TEACH step-by-step
-
-Rules:
-- If the user asks for a structured learning plan, guided tutorial, or step-by-step help → "task"
-- If the user asks you to create, build, design, or implement something → "task"
-- If the user just wants a quick answer or is chatting → "conversation"
 - When in doubt, classify as "task"
 
+Rules for "needs_clarification" / "missing" (only relevant when intent == "task"):
+- Set needs_clarification == true ONLY when the request omits load-bearing details that materially change the plan (e.g. target audience, programming language, deadline, stack, scope, success criteria).
+- "missing" lists short field names of the gaps (e.g. ["audience","language","deadline"]). Maximum 4 items. Use [] if needs_clarification is false.
+- For "conversation", always emit "needs_clarification": false and "missing": [].
+
 Examples:
-User: "Hola, ¿cómo estás?" → {"intent":"conversation"}
-User: "What is a Petri net?" → {"intent":"conversation"}
-User: "Thanks!" → {"intent":"conversation"}
-User: "Create a plan to implement a CNN in R" → {"intent":"task"}
-User: "Refactor the authentication module" → {"intent":"task"}
-User: "Help me learn about Coloured Petri Nets" → {"intent":"task"}
-User: "Quiero aprendizaje guiado sobre redes neuronales" → {"intent":"task"}
-User: "Design a microservices architecture" → {"intent":"task"}
-User: "Build a REST API with authentication" → {"intent":"task"}
-User: "Teach me Go concurrency step by step" → {"intent":"task"}
+User: "Hola, ¿cómo estás?" → {"intent":"conversation","needs_clarification":false,"missing":[]}
+User: "What is a Petri net?" → {"intent":"conversation","needs_clarification":false,"missing":[]}
+User: "Thanks!" → {"intent":"conversation","needs_clarification":false,"missing":[]}
+User: "Create a plan to implement a CNN in R for image classification on CIFAR-10 by next Friday" → {"intent":"task","needs_clarification":false,"missing":[]}
+User: "Help me learn about Coloured Petri Nets" → {"intent":"task","needs_clarification":true,"missing":["background","goal","time_budget"]}
+User: "Build a REST API" → {"intent":"task","needs_clarification":true,"missing":["language","auth","persistence"]}
+User: "Refactor the authentication module" → {"intent":"task","needs_clarification":true,"missing":["pain_point","scope"]}
 
 Respond ONLY with the JSON object.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
@@ -206,17 +258,74 @@ Respond ONLY with the JSON object.`)
 	}
 	tDirect.Guard = guardDirectConversation
 
-	// t-plan: fires ONLY for explicit task intent — presents a plan for review.
-	tPlan := cpn.NewTransition("t-plan", cpn.NodeKindLLM,
-		[]string{"p-classified"}, []string{"p-plan"})
-	tPlan.SystemPrompt = envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
+	planSystemPrompt := envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
 		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\"")
-	tPlan.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
-		Temperature:  0.7,
-		StreamOutput: true,
+	planLLMConfig := func() *cpn.LLMConfig {
+		return &cpn.LLMConfig{
+			MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
+			Temperature:  0.7,
+			StreamOutput: true,
+		}
 	}
-	tPlan.Guard = guardPlanTask
+
+	// t-plan-direct: fires when a task is fully-specified (no clarification needed).
+	tPlanDirect := cpn.NewTransition("t-plan-direct", cpn.NodeKindLLM,
+		[]string{"p-classified"}, []string{"p-plan"})
+	tPlanDirect.SystemPrompt = planSystemPrompt
+	tPlanDirect.LLMConfig = planLLMConfig()
+	tPlanDirect.Guard = guardPlanTaskDirect
+
+	// t-plan-clarified: fires after the user has answered the clarification
+	// questionnaire. Reads the merged classifier+answers payload from p-clarified.
+	tPlanClarified := cpn.NewTransition("t-plan-clarified", cpn.NodeKindLLM,
+		[]string{"p-clarified"}, []string{"p-plan"})
+	tPlanClarified.SystemPrompt = planSystemPrompt
+	tPlanClarified.LLMConfig = planLLMConfig()
+	tPlanClarified.Guard = guardPlanTaskClarified
+
+	// t-ask: when classifier flags missing info, generate a small JSON questionnaire
+	// using the missing[] list as hints. Output is consumed by t-clarify (HITL).
+	tAsk := cpn.NewTransition("t-ask", cpn.NodeKindLLM,
+		[]string{"p-classified"}, []string{"p-questions"})
+	tAsk.SystemPrompt = envOr("PROMPT_ASK", `You generate a short multiple-choice questionnaire to clarify a task request before planning.
+
+Input: a JSON object with the user's classified intent and a "missing" array of field names that need clarification.
+
+Output: JSON only, matching this exact schema:
+{"questions":[{"id":"q1","prompt":"...","recommended":"opt-a","options":[{"id":"opt-a","label":"..."},{"id":"opt-b","label":"..."}]}]}
+
+Rules:
+- One question per item in "missing" (max 4).
+- Each question MUST have 2-4 options. Each option has a short id (opt-a, opt-b, ...) and a human label.
+- "recommended" is the option id you would pick by default given the user's request. Always set it.
+- Keep prompts concise (under 80 characters).
+- Do not include any keys other than "questions".`)
+	tAsk.LLMConfig = &cpn.LLMConfig{
+		Model:        "classifier",
+		MaxTokens:    envInt("MAX_TOKENS_ASK", 512),
+		Temperature:  0.2,
+		RequireJSON:  true,
+		StreamOutput: false,
+		SkipHistory:  true,
+	}
+	tAsk.Guard = guardNeedsClarification
+
+	// t-clarify: HITL transition that publishes the questionnaire as an A2UI
+	// surface and waits for the user's structured "submit" response. On
+	// resolve it merges the answers into the classifier JSON and deposits a
+	// ColorJSON token into p-clarified.
+	tClarify := cpn.NewTransition("t-clarify", cpn.NodeKindHITL,
+		[]string{"p-questions"}, []string{"p-clarified"})
+	tClarify.HITLConfig = &cpn.HITLConfig{
+		Prompt:       "Answer the questionnaire to clarify your request.",
+		RevisionLoop: false,
+		A2UIPayloadBuilder: func(consumed []cpn.Token) (any, error) {
+			return buildClarifyA2UIPayload(consumed)
+		},
+		OutputBuilder: func(consumed []cpn.Token, resp cpn.HITLResponse) (cpn.Token, error) {
+			return buildClarifiedToken(consumed, resp)
+		},
+	}
 
 	// t-review: HITL gate — waits for user approval.
 	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
@@ -237,11 +346,14 @@ Respond ONLY with the JSON object.`)
 	}
 
 	transitions := map[string]*cpn.Transition{
-		"t-classify": tClassify,
-		"t-direct":   tDirect,
-		"t-plan":     tPlan,
-		"t-review":   tReview,
-		"t-execute":  tExecute,
+		"t-classify":       tClassify,
+		"t-direct":         tDirect,
+		"t-ask":            tAsk,
+		"t-clarify":        tClarify,
+		"t-plan-direct":    tPlanDirect,
+		"t-plan-clarified": tPlanClarified,
+		"t-review":         tReview,
+		"t-execute":        tExecute,
 	}
 
 	c := cpn.NewCPN(
@@ -255,4 +367,124 @@ Respond ONLY with the JSON object.`)
 	)
 	c.ContextWindowSize = 10
 	return c
+}
+
+// ── Clarification helpers ───────────────────────────────────────────────────
+
+// questionnaireSpec mirrors the JSON shape produced by t-ask. Only the fields
+// we need for A2UI rendering and answer-merging are decoded.
+type questionnaireSpec struct {
+	Questions []questionnaireQuestion `json:"questions"`
+}
+
+type questionnaireQuestion struct {
+	ID          string                `json:"id"`
+	Prompt      string                `json:"prompt"`
+	Recommended string                `json:"recommended,omitempty"`
+	Options     []questionnaireOption `json:"options"`
+}
+
+type questionnaireOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// firstQuestionnaireFromTokens decodes the first ColorJSON / string-payload
+// token in consumed as a questionnaireSpec.
+func firstQuestionnaireFromTokens(consumed []cpn.Token) (questionnaireSpec, error) {
+	for _, tok := range consumed {
+		s, ok := tok.Payload.(string)
+		if !ok {
+			continue
+		}
+		var spec questionnaireSpec
+		if err := json.Unmarshal([]byte(s), &spec); err != nil {
+			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: %w", err)
+		}
+		return spec, nil
+	}
+	return questionnaireSpec{}, fmt.Errorf("no questionnaire token found")
+}
+
+// buildClarifyA2UIPayload converts the t-ask questionnaire JSON into the A2UI
+// component payload that the React renderer understands.
+func buildClarifyA2UIPayload(consumed []cpn.Token) (any, error) {
+	spec, err := firstQuestionnaireFromTokens(consumed)
+	if err != nil {
+		return nil, err
+	}
+
+	children := make([]map[string]any, 0, len(spec.Questions))
+	for _, q := range spec.Questions {
+		opts := make([]map[string]any, 0, len(q.Options))
+		for _, o := range q.Options {
+			opts = append(opts, map[string]any{"id": o.ID, "label": o.Label})
+		}
+		children = append(children, map[string]any{
+			"type": "choice",
+			"props": map[string]any{
+				"id":          q.ID,
+				"label":       q.Prompt,
+				"recommended": q.Recommended,
+				"options":     opts,
+			},
+		})
+	}
+
+	return map[string]any{
+		"components": []map[string]any{{
+			"type": "questionnaire",
+			"props": map[string]any{
+				"id":          "t-clarify",
+				"submitLabel": "Send answers",
+			},
+			"children": children,
+		}},
+	}, nil
+}
+
+// buildClarifiedToken parses the user's structured submit response, merges it
+// with the questionnaire spec, and returns a ColorString token that the
+// downstream planner LLM consumes as a user message.
+func buildClarifiedToken(consumed []cpn.Token, resp cpn.HITLResponse) (cpn.Token, error) {
+	if resp.Action != cpn.HITLSubmit && resp.Action != cpn.HITLApprove {
+		return cpn.Token{}, fmt.Errorf("unexpected HITL action %q for t-clarify", resp.Action)
+	}
+
+	spec, err := firstQuestionnaireFromTokens(consumed)
+	if err != nil {
+		return cpn.Token{}, err
+	}
+
+	answers := map[string]string{}
+	if strings.TrimSpace(resp.Content) != "" {
+		if err := json.Unmarshal([]byte(resp.Content), &answers); err != nil {
+			return cpn.Token{}, fmt.Errorf("parse clarification answers: %w", err)
+		}
+	}
+
+	// Render a deterministic, LLM-friendly summary of the answers, resolving
+	// option ids back to their labels so the planner sees human text rather
+	// than opaque ids.
+	var b strings.Builder
+	b.WriteString("Clarification answers:\n")
+	for _, q := range spec.Questions {
+		choiceID := answers[q.ID]
+		label := choiceID
+		for _, o := range q.Options {
+			if o.ID == choiceID {
+				label = o.Label
+				break
+			}
+		}
+		if label == "" {
+			label = "(no answer)"
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", q.Prompt, label)
+	}
+
+	return cpn.Token{
+		Color:   cpn.ColorString,
+		Payload: b.String(),
+	}, nil
 }

@@ -125,12 +125,22 @@ func TestResolveHITLRequest_Validate(t *testing.T) {
 		{
 			name:    "invalid action",
 			req:     ResolveHITLRequest{Action: "cancel"},
-			wantErr: "action must be one of: approve, reject, revise",
+			wantErr: "action must be one of: approve, reject, revise, submit",
 		},
 		{
 			name:    "revise without content",
 			req:     ResolveHITLRequest{Action: "revise"},
 			wantErr: "content is required when action is revise",
+		},
+		{
+			name:    "submit with content",
+			req:     ResolveHITLRequest{Action: "submit", Content: `{"q1":"opt-a"}`},
+			wantErr: "",
+		},
+		{
+			name:    "submit without content",
+			req:     ResolveHITLRequest{Action: "submit"},
+			wantErr: "content is required when action is submit",
 		},
 	}
 	for _, tt := range tests {
