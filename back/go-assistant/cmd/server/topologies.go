@@ -357,8 +357,28 @@ Respond ONLY with the JSON object.`)
 	}
 	tDirect.Guard = guardDirectConversation
 
-	planSystemPrompt := envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
-		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\"")
+	planDirectSystemPrompt := envOr("PROMPT_PLAN_DIRECT", `You are a helpful assistant producing an actionable plan.
+
+The user's request (in conversation history) has already been judged fully specified by an upstream classifier. Your job is to deliver the plan, not to gather more information.
+
+Hard rules:
+- DO NOT ask clarifying questions. Do not end with a question that requests more input from the user.
+- If something is genuinely unspecified, make ONE reasonable assumption and state it explicitly at the top under "Assumptions:" (max 3 bullet points). Then proceed.
+- Format the body of the plan as a numbered list of concrete steps.
+- Mirror the user's language (respond in Spanish if they wrote Spanish, etc.).
+- End with exactly: "Would you like me to proceed?"`)
+
+	planClarifiedSystemPrompt := envOr("PROMPT_PLAN_CLARIFIED", `You are a helpful assistant producing an actionable plan.
+
+The user's original request is in the conversation history. The CURRENT user message contains their answers to a clarification questionnaire you previously asked. You now have enough information — your job is to deliver the plan, not to gather more.
+
+Hard rules:
+- DO NOT ask any further clarifying questions under any circumstance. Do not end with a question that requests more input.
+- Use the clarification answers literally. If something is still unspecified after the answers, make ONE reasonable assumption per gap and state them explicitly at the top under "Assumptions:" (max 3 bullet points). Then proceed.
+- Format the body of the plan as a numbered list of concrete, executable steps.
+- Mirror the user's language (respond in Spanish if they wrote Spanish, etc.).
+- End with exactly: "Would you like me to proceed?"`)
+
 	planLLMConfig := func() *cpn.LLMConfig {
 		return &cpn.LLMConfig{
 			MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
@@ -370,7 +390,7 @@ Respond ONLY with the JSON object.`)
 	// t-plan-direct: fires when a task is fully-specified (no clarification needed).
 	tPlanDirect := cpn.NewTransition("t-plan-direct", cpn.NodeKindLLM,
 		[]string{"p-classified"}, []string{"p-plan"})
-	tPlanDirect.SystemPrompt = planSystemPrompt
+	tPlanDirect.SystemPrompt = planDirectSystemPrompt
 	tPlanDirect.LLMConfig = planLLMConfig()
 	tPlanDirect.Guard = guardPlanTaskDirect
 
@@ -378,7 +398,7 @@ Respond ONLY with the JSON object.`)
 	// questionnaire. Reads the merged classifier+answers payload from p-clarified.
 	tPlanClarified := cpn.NewTransition("t-plan-clarified", cpn.NodeKindLLM,
 		[]string{"p-clarified"}, []string{"p-plan"})
-	tPlanClarified.SystemPrompt = planSystemPrompt
+	tPlanClarified.SystemPrompt = planClarifiedSystemPrompt
 	tPlanClarified.LLMConfig = planLLMConfig()
 	tPlanClarified.Guard = guardPlanTaskClarified
 
@@ -597,8 +617,10 @@ func buildClarifiedToken(consumed []cpn.Token, resp cpn.HITLResponse) (cpn.Token
 
 	// Render a deterministic, LLM-friendly summary of the answers, resolving
 	// option ids back to their labels so the planner sees human text rather
-	// than opaque ids.
+	// than opaque ids. The leading directive reinforces the system prompt so
+	// the planner cannot loop back into another clarification round.
 	var b strings.Builder
+	b.WriteString("I have answered your clarification questions. Produce the plan now — do not ask any further questions. If anything is still unspecified, state a reasonable assumption under \"Assumptions:\" and proceed.\n\n")
 	b.WriteString("Clarification answers:\n")
 	for _, q := range spec.Questions {
 		choiceID := answers[q.ID]
