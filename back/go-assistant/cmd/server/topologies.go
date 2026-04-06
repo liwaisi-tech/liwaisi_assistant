@@ -230,8 +230,16 @@ Rules for "intent":
 - When in doubt, classify as "task"
 
 Rules for "needs_clarification" / "missing" (only relevant when intent == "task"):
-- Set needs_clarification == true ONLY when the request omits load-bearing details that materially change the plan (e.g. target audience, programming language, deadline, stack, scope, success criteria).
-- For backend / API / service requests, load-bearing dimensions include: persistence, framework, auth_strategy, deployment_target, scale, testing_expectations.
+- Default bias: if the request does not name the concrete details needed to produce an actionable, opinionated plan, set needs_clarification = true. Prefer asking over guessing.
+- Set needs_clarification == true whenever the request omits load-bearing details that would materially change the plan. Load-bearing dimensions depend on the task domain:
+  * Backend / API / service: persistence, framework, auth_strategy, deployment_target, scale, testing_expectations.
+  * Frontend / UI: framework, design_system, target_devices, accessibility, state_management.
+  * Product launch / marketing / release / event: audience, channels, timing, goals, success_metrics, invitation_mechanism, budget.
+  * Content / writing / documentation: audience, tone, length, format, purpose.
+  * Research / analysis / report: scope, sources, depth, output_format, deadline.
+  * Learning / tutorial / teaching: background, goal, time_budget, preferred_format.
+  * Data / ML: dataset, task_type, metrics, constraints, deployment.
+- Generic fallbacks that apply to any domain: audience, scope, success_criteria, deadline, constraints, stack.
 - If needs_clarification == true, "missing" MUST contain between 1 and 4 short field names. If you cannot name at least one missing field, you MUST set needs_clarification = false and "missing": [].
 - If needs_clarification == false, "missing" MUST be [].
 - For "conversation", always emit "needs_clarification": false and "missing": [].
@@ -245,11 +253,13 @@ User: "Help me learn about Coloured Petri Nets" → {"intent":"task","needs_clar
 User: "Build a REST API" → {"intent":"task","needs_clarification":true,"missing":["language","auth_strategy","persistence"]}
 User: "Refactor the authentication module" → {"intent":"task","needs_clarification":true,"missing":["pain_point","scope"]}
 User: "crea un plan detallado para construir un API en golang con JWT" → {"intent":"task","needs_clarification":true,"missing":["persistence","framework","auth_strategy","deployment_target"]}
+User: "Quiero hacer un lanzamiento de producto en versión preview, solo pocas personas invitadas. ¿Me ayudas con el plan?" → {"intent":"task","needs_clarification":true,"missing":["audience","channels","goals","invitation_mechanism"]}
+User: "Escríbeme un blog post sobre IA" → {"intent":"task","needs_clarification":true,"missing":["audience","tone","length","angle"]}
 
 Respond ONLY with the JSON object.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
 		Model:        "classifier",
-		MaxTokens:    64,
+		MaxTokens:    128,
 		Temperature:  0.0,
 		RequireJSON:  true,
 		StreamOutput: false,

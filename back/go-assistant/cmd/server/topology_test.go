@@ -129,8 +129,8 @@ func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	if tc.LLMConfig.StreamOutput {
 		t.Error("t-classify should have StreamOutput=false")
 	}
-	if tc.LLMConfig.MaxTokens != 64 {
-		t.Errorf("t-classify MaxTokens = %d, want 64", tc.LLMConfig.MaxTokens)
+	if tc.LLMConfig.MaxTokens != 128 {
+		t.Errorf("t-classify MaxTokens = %d, want 128", tc.LLMConfig.MaxTokens)
 	}
 }
 
