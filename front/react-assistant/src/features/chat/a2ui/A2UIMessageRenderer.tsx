@@ -499,15 +499,27 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
+  const [stepIndex, setStepIndex] = useState(0);
 
-  const allAnswered =
-    questions.length > 0 &&
-    questions.every((q) => {
+  const totalSteps = questions.length;
+  const safeStepIndex = totalSteps === 0 ? 0 : Math.min(stepIndex, totalSteps - 1);
+  const isSingleQuestion = totalSteps === 1;
+  const isFinalStep = safeStepIndex === totalSteps - 1;
+  const currentQuestion = totalSteps > 0 ? questions[safeStepIndex] : undefined;
+
+  const isQuestionAnswered = useCallback(
+    (q: QuestionDescriptor) => {
       if (freeTextMode[q.id]) {
         return Boolean(freeTextValues[q.id]?.trim());
       }
       return Boolean(answers[q.id]);
-    });
+    },
+    [answers, freeTextMode, freeTextValues],
+  );
+
+  const allAnswered =
+    totalSteps > 0 && questions.every((q) => isQuestionAnswered(q));
+  const currentAnswered = currentQuestion ? isQuestionAnswered(currentQuestion) : false;
 
   const handleSelect = useCallback((questionId: string, optionId: string) => {
     setFreeTextMode((prev) => ({ ...prev, [questionId]: false }));
@@ -546,45 +558,145 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
     [allAnswered, answers, componentId, freeTextMode, freeTextValues, onAction, questions],
   );
 
+  const goPrevious = useCallback(() => {
+    setStepIndex((i) => Math.max(0, i - 1));
+  }, []);
+
+  const goNext = useCallback(() => {
+    setStepIndex((i) => Math.min(totalSteps - 1, i + 1));
+  }, [totalSteps]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLFormElement>) => {
+      if (e.key !== 'Enter') return;
+      const target = e.target as HTMLElement | null;
+      // Allow native submit when focus is already on the submit button.
+      if (target && target.tagName === 'BUTTON') return;
+      // Allow newlines in textareas (none today, but defensive).
+      if (target && target.tagName === 'TEXTAREA') return;
+      if (!currentAnswered) return;
+      if (isFinalStep) {
+        // Let the form submit naturally.
+        return;
+      }
+      e.preventDefault();
+      goNext();
+    },
+    [currentAnswered, goNext, isFinalStep],
+  );
+
+  if (totalSteps === 0 || !currentQuestion) {
+    return null;
+  }
+
+  const previousLabel = t('a2ui.previous', 'Previous');
+  const nextLabel = t('a2ui.next', 'Next');
+  const stepOfLabel = t('a2ui.stepOf', {
+    defaultValue: 'Question {{current}} of {{total}}',
+    current: safeStepIndex + 1,
+    total: totalSteps,
+  });
+
+  const primaryDisabled = isFinalStep ? !allAnswered : !currentAnswered;
+  const primaryLabel = isFinalStep ? submitLabel : nextLabel;
+  const primaryAriaLabel = isFinalStep
+    ? submitLabel
+    : `${nextLabel} (${safeStepIndex + 1}/${totalSteps})`;
+  const previousAriaLabel = `${previousLabel} (${safeStepIndex + 1}/${totalSteps})`;
+
   return (
     <form
       onSubmit={handleSubmit}
+      onKeyDown={handleKeyDown}
       aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
-      className="flex flex-col gap-2 my-2"
+      className="flex flex-col gap-3 my-2"
     >
-      {questions.map((q) => (
-        <ChoiceField
-          key={q.id}
-          questionId={q.id}
-          label={q.label}
-          options={q.options}
-          recommended={q.recommended}
-          selected={answers[q.id]}
-          onSelect={(optionId) => handleSelect(q.id, optionId)}
-          groupName={`${componentId}-${q.id}`}
-          allowFreeText={q.allowFreeText}
-          freeTextPlaceholder={q.freeTextPlaceholder}
-          isFreeText={Boolean(freeTextMode[q.id])}
-          freeTextValue={freeTextValues[q.id] ?? ''}
-          onFreeTextChange={(value) => handleFreeTextChange(q.id, value)}
-          onFreeTextSelect={() => handleFreeTextSelect(q.id)}
-        />
-      ))}
-      <button
-        type="submit"
-        disabled={!allAnswered}
-        className="self-start px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
-        style={{
-          backgroundColor: 'rgba(14, 165, 233, 0.15)',
-          color: 'var(--accent)',
-          border: '1px solid rgba(14, 165, 233, 0.3)',
-          boxShadow: allAnswered ? '0 0 8px -2px var(--accent-glow)' : 'none',
-          opacity: allAnswered ? 1 : 0.5,
-          cursor: allAnswered ? 'pointer' : 'not-allowed',
-        }}
-      >
-        {submitLabel}
-      </button>
+      {!isSingleQuestion && (
+        <div className="flex flex-col gap-1.5">
+          <div
+            aria-live="polite"
+            className="text-[11px] uppercase tracking-widest"
+            style={{
+              color: 'var(--text-muted)',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            {stepOfLabel}
+          </div>
+          <div
+            role="progressbar"
+            aria-valuemin={1}
+            aria-valuemax={totalSteps}
+            aria-valuenow={safeStepIndex + 1}
+            className="h-1 w-full rounded-full overflow-hidden"
+            style={{ backgroundColor: 'var(--border-dim)' }}
+          >
+            <div
+              className="h-full transition-all duration-200 ease-out"
+              style={{
+                width: `${((safeStepIndex + 1) / totalSteps) * 100}%`,
+                backgroundColor: 'var(--accent)',
+                boxShadow: '0 0 8px -2px var(--accent-glow)',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      <ChoiceField
+        key={currentQuestion.id}
+        questionId={currentQuestion.id}
+        label={currentQuestion.label}
+        options={currentQuestion.options}
+        recommended={currentQuestion.recommended}
+        selected={answers[currentQuestion.id]}
+        onSelect={(optionId) => handleSelect(currentQuestion.id, optionId)}
+        groupName={`${componentId}-${currentQuestion.id}`}
+        allowFreeText={currentQuestion.allowFreeText}
+        freeTextPlaceholder={currentQuestion.freeTextPlaceholder}
+        isFreeText={Boolean(freeTextMode[currentQuestion.id])}
+        freeTextValue={freeTextValues[currentQuestion.id] ?? ''}
+        onFreeTextChange={(value) => handleFreeTextChange(currentQuestion.id, value)}
+        onFreeTextSelect={() => handleFreeTextSelect(currentQuestion.id)}
+      />
+
+      <div className="flex items-center gap-2">
+        {!isSingleQuestion && (
+          <button
+            type="button"
+            onClick={goPrevious}
+            disabled={safeStepIndex === 0}
+            aria-label={previousAriaLabel}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            style={{
+              backgroundColor: 'transparent',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-dim)',
+              opacity: safeStepIndex === 0 ? 0.4 : 1,
+              cursor: safeStepIndex === 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {previousLabel}
+          </button>
+        )}
+        <button
+          type={isFinalStep ? 'submit' : 'button'}
+          onClick={isFinalStep ? undefined : goNext}
+          disabled={primaryDisabled}
+          aria-label={primaryAriaLabel}
+          className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+          style={{
+            backgroundColor: 'rgba(14, 165, 233, 0.15)',
+            color: 'var(--accent)',
+            border: '1px solid rgba(14, 165, 233, 0.3)',
+            boxShadow: !primaryDisabled ? '0 0 8px -2px var(--accent-glow)' : 'none',
+            opacity: primaryDisabled ? 0.5 : 1,
+            cursor: primaryDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {primaryLabel}
+        </button>
+      </div>
     </form>
   );
 }

@@ -393,21 +393,48 @@ Input: a JSON object with the user's classified intent and a "missing" array of 
 Output: JSON only, matching this exact schema:
 {"questions":[{"id":"q1","prompt":"...","recommended":"opt-a","options":[{"id":"opt-a","label":"..."},{"id":"opt-b","label":"..."}]}]}
 
+CORE PRINCIPLE: each question asks for ONE decision. The "options" are concrete,
+mutually-exclusive candidate ANSWERS the user can literally pick — never
+rephrasings of the question, never meta-questions, never placeholders.
+
+Each option "label":
+- Is a short noun-phrase or sentence the user could say as an answer.
+- Is NOT a question and does NOT end with "?".
+- Is at most ~60 characters.
+- Is distinct from the other options (they partition the reasonable answer space).
+
+Correct vs WRONG illustration (neutral domain — writing a tutorial):
+  Question prompt: "Who is the primary reader of the tutorial?"
+  Correct options: ["Complete beginners", "Intermediate developers", "Experienced engineers", "Technical decision-makers"]
+  WRONG options:   ["Who will read it?", "What skill level?", "Target audience?"]
+The wrong set just rewords the question; the correct set gives pickable answers.
+
 Rules:
-- One question per item in "missing" (max 4).
-- Each question MUST have 2-4 options. Each option has a short id (opt-a, opt-b, ...) and a human label.
-- "recommended" is the option id you would pick by default given the user's request. Always set it.
-- Keep prompts concise (under 80 characters).
+- One question per item in "missing" (max 4 questions total).
+- Each question MUST have 2-4 option objects. Use ids opt-a, opt-b, opt-c, opt-d.
+- Options must cover the likely answer space with 2-4 plausible, distinct buckets.
+  They need not be exhaustive — the UI offers a free-text "Other" fallback — but
+  every listed option must be a real candidate answer.
+- "recommended" is the option id that is the most sensible default GIVEN THE
+  USER'S ORIGINAL REQUEST. Pick the one that best fits the context; never leave
+  it as a placeholder, never pick at random. Always set it.
+- Keep each "prompt" concise (under 80 characters) and phrased as a real question.
 - Do not include any keys other than "questions".
 
-Fallback: if "missing" is absent or empty (the upstream classifier was unsure
-but did not enumerate fields), generate 2-4 generic clarifying questions based
-on the load-bearing dimensions any plan depends on: audience, success criterion,
-scope boundary, stack/medium/format, and timeline. Pick the dimensions that are
-most ambiguous for this specific request. The schema and rules above still apply.`)
+Language: produce every "prompt" and every option "label" in the SAME LANGUAGE
+as the user's original request. If the user wrote in Spanish, answer in Spanish;
+if in English, English; if in another language, mirror that language. Do not
+translate, do not mix languages within a question.
+
+Fallback (empty or missing "missing" array): the upstream classifier was unsure
+but did not enumerate fields. Derive 2-4 load-bearing dimensions from the user's
+original request — choose from: audience, success criterion, scope boundary,
+stack/medium/format, timeline — and emit one question per dimension. Each
+question must still follow every rule above: concrete pickable answer options,
+no meta-questions, sensible "recommended", user's language.`)
 	tAsk.LLMConfig = &cpn.LLMConfig{
 		Model:        "classifier",
-		MaxTokens:    envInt("MAX_TOKENS_ASK", 512),
+		MaxTokens:    envInt("MAX_TOKENS_ASK", 1024),
 		Temperature:  0.2,
 		RequireJSON:  true,
 		StreamOutput: false,
