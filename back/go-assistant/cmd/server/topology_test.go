@@ -225,10 +225,14 @@ func TestUnifiedTopology_ClarificationGuardMatrix(t *testing.T) {
 			wantPlanDirect: false,
 		},
 		{
-			name:           "needs_clarification_true_but_empty_missing_bypasses",
+			// Defensive: an invalid classifier shape (needs_clarification=true
+			// with empty missing[]) MUST NOT silently fall through to the
+			// direct-plan path. The clarification guard fires; the planner
+			// stays closed. See spec REQ-002 / AC-003.
+			name:           "needs_clarification_true_with_empty_missing_does_not_bypass",
 			payload:        `{"intent":"task","needs_clarification":true,"missing":[]}`,
-			wantAsk:        false,
-			wantPlanDirect: true,
+			wantAsk:        true,
+			wantPlanDirect: false,
 		},
 		{
 			name:           "conversation_skips_both",
@@ -260,6 +264,41 @@ func TestUnifiedTopology_ClarificationGuardMatrix(t *testing.T) {
 	// the user has already submitted answers and the planner should fire.
 	if !tPlanClarified.Guard([]*cpn.Token{{Payload: "any"}}) {
 		t.Error("t-plan-clarified guard should always allow firing")
+	}
+}
+
+// TestUnifiedTopology_RegressionSpanishJWTAPIPrompt encodes the exact failing
+// prompt from spec-process-bugfix-classifier-clarify-bypass.md (REQ-007 /
+// AC-004). Given a realistic classifier output for the Spanish JWT-API
+// request, the topology MUST route through the clarification questionnaire
+// rather than producing a plan directly.
+func TestUnifiedTopology_RegressionSpanishJWTAPIPrompt(t *testing.T) {
+	const userPrompt = "crea un plan detallado para construir un API en golang con JWT"
+	_ = userPrompt // documentation: the prompt the classifier was given
+
+	c := unifiedTopologyFactory("test-session")
+	tAsk := c.Transitions["t-ask"]
+	tPlanDirect := c.Transitions["t-plan-direct"]
+	if tAsk == nil || tPlanDirect == nil {
+		t.Fatal("expected t-ask and t-plan-direct transitions")
+	}
+
+	// Realistic classifier output for the prompt above, matching the worked
+	// example added to PROMPT_CLASSIFIER per REQ-004.
+	classifierJSON := `{"intent":"task","needs_clarification":true,"missing":["persistence","framework","auth_strategy","deployment_target"]}`
+	tok := &cpn.Token{Payload: classifierJSON}
+
+	if got := guardNeedsClarification([]*cpn.Token{tok}); !got {
+		t.Errorf("guardNeedsClarification = false, want true for ambiguous JWT-API prompt")
+	}
+	if got := guardPlanTaskDirect([]*cpn.Token{tok}); got {
+		t.Errorf("guardPlanTaskDirect = true, want false for ambiguous JWT-API prompt")
+	}
+	if got := tAsk.Guard([]*cpn.Token{tok}); !got {
+		t.Errorf("t-ask guard = false, want true")
+	}
+	if got := tPlanDirect.Guard([]*cpn.Token{tok}); got {
+		t.Errorf("t-plan-direct guard = true, want false")
 	}
 }
 

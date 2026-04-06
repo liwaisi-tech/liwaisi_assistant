@@ -316,7 +316,15 @@ interface ChoiceFieldProps {
   selected?: string;
   onSelect?: (optionId: string) => void;
   groupName: string;
+  allowFreeText?: boolean;
+  freeTextPlaceholder?: string;
+  isFreeText?: boolean;
+  freeTextValue?: string;
+  onFreeTextChange?: (value: string) => void;
+  onFreeTextSelect?: () => void;
 }
+
+const OTHER_OPTION_ID = '__other__';
 
 function ChoiceField({
   questionId,
@@ -326,9 +334,19 @@ function ChoiceField({
   selected,
   onSelect,
   groupName,
+  allowFreeText = true,
+  freeTextPlaceholder,
+  isFreeText = false,
+  freeTextValue = '',
+  onFreeTextChange,
+  onFreeTextSelect,
 }: ChoiceFieldProps) {
   const { t } = useTranslation('chat');
   const recommendedLabel = t('a2ui.recommended', 'Recommended');
+  const otherLabel = t('a2ui.other', 'Other');
+  const defaultFreeTextPlaceholder = t('a2ui.freeTextPlaceholder', 'Type your answer');
+  const otherInputId = `${groupName}-${OTHER_OPTION_ID}`;
+  const otherTextInputId = `${groupName}-${OTHER_OPTION_ID}-text`;
   return (
     <fieldset
       className="my-2 p-3 rounded-lg"
@@ -382,8 +400,43 @@ function ChoiceField({
             </label>
           );
         })}
+        {allowFreeText && (
+          <label
+            htmlFor={otherInputId}
+            className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <input
+              id={otherInputId}
+              type="radio"
+              name={groupName}
+              value={OTHER_OPTION_ID}
+              checked={isFreeText}
+              onChange={() => onFreeTextSelect?.()}
+              style={{ accentColor: 'var(--accent)' }}
+            />
+            <span className="flex-1">{otherLabel}</span>
+          </label>
+        )}
+        {allowFreeText && isFreeText && (
+          <input
+            id={otherTextInputId}
+            type="text"
+            aria-label={`${label} — ${otherLabel}`}
+            placeholder={freeTextPlaceholder ?? defaultFreeTextPlaceholder}
+            value={freeTextValue}
+            onChange={(e) => onFreeTextChange?.(e.target.value)}
+            className="ml-6 mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+            style={{
+              backgroundColor: 'var(--bg-deep)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-dim)',
+              fontFamily: "'DM Sans', system-ui, sans-serif",
+            }}
+          />
+        )}
       </div>
-      <input type="hidden" name={questionId} value={selected ?? ''} />
+      <input type="hidden" name={questionId} value={isFreeText ? freeTextValue : (selected ?? '')} />
     </fieldset>
   );
 }
@@ -393,6 +446,8 @@ function ChoiceComponent({ component }: ComponentProps) {
   const label = (component.props.label as string) ?? '';
   const options = (component.props.options as ChoiceOption[]) ?? [];
   const recommended = component.props.recommended as string | undefined;
+  const allowFreeText = component.props.allowFreeText !== false;
+  const freeTextPlaceholder = component.props.freeTextPlaceholder as string | undefined;
   return (
     <ChoiceField
       questionId={id}
@@ -400,6 +455,8 @@ function ChoiceComponent({ component }: ComponentProps) {
       options={options}
       recommended={recommended}
       groupName={id}
+      allowFreeText={allowFreeText}
+      freeTextPlaceholder={freeTextPlaceholder}
     />
   );
 }
@@ -411,6 +468,8 @@ interface QuestionDescriptor {
   label: string;
   options: ChoiceOption[];
   recommended?: string;
+  allowFreeText?: boolean;
+  freeTextPlaceholder?: string;
 }
 
 function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescriptor[] {
@@ -425,6 +484,8 @@ function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescri
       label: (child.props.label as string) ?? '',
       options: (child.props.options as ChoiceOption[]) ?? [],
       recommended: child.props.recommended as string | undefined,
+      allowFreeText: child.props.allowFreeText !== false,
+      freeTextPlaceholder: child.props.freeTextPlaceholder as string | undefined,
     });
   }
   return out;
@@ -436,24 +497,53 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const submitLabel = (component.props.submitLabel as string) ?? t('a2ui.submit', 'Submit');
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
+  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
 
-  const allAnswered = questions.length > 0 && questions.every((q) => Boolean(answers[q.id]));
+  const allAnswered =
+    questions.length > 0 &&
+    questions.every((q) => {
+      if (freeTextMode[q.id]) {
+        return Boolean(freeTextValues[q.id]?.trim());
+      }
+      return Boolean(answers[q.id]);
+    });
 
   const handleSelect = useCallback((questionId: string, optionId: string) => {
+    setFreeTextMode((prev) => ({ ...prev, [questionId]: false }));
     setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
+  }, []);
+
+  const handleFreeTextSelect = useCallback((questionId: string) => {
+    setFreeTextMode((prev) => ({ ...prev, [questionId]: true }));
+    setAnswers((prev) => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+  }, []);
+
+  const handleFreeTextChange = useCallback((questionId: string, value: string) => {
+    setFreeTextValues((prev) => ({ ...prev, [questionId]: value }));
   }, []);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       if (!allAnswered) return;
+      const consolidated: Record<string, string> = {};
+      for (const q of questions) {
+        consolidated[q.id] = freeTextMode[q.id]
+          ? (freeTextValues[q.id] ?? '').trim()
+          : (answers[q.id] ?? '');
+      }
       onAction({
         type: 'hitl:submit',
         componentId,
-        payload: { answers },
+        payload: { answers: consolidated },
       });
     },
-    [allAnswered, answers, componentId, onAction],
+    [allAnswered, answers, componentId, freeTextMode, freeTextValues, onAction, questions],
   );
 
   return (
@@ -472,6 +562,12 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
           selected={answers[q.id]}
           onSelect={(optionId) => handleSelect(q.id, optionId)}
           groupName={`${componentId}-${q.id}`}
+          allowFreeText={q.allowFreeText}
+          freeTextPlaceholder={q.freeTextPlaceholder}
+          isFreeText={Boolean(freeTextMode[q.id])}
+          freeTextValue={freeTextValues[q.id] ?? ''}
+          onFreeTextChange={(value) => handleFreeTextChange(q.id, value)}
+          onFreeTextSelect={() => handleFreeTextSelect(q.id)}
         />
       ))}
       <button

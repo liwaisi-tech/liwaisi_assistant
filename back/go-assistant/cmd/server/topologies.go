@@ -56,18 +56,24 @@ func guardPlanTask(tokens []*cpn.Token) bool {
 }
 
 // guardNeedsClarification fires t-ask when the classifier flagged a task that
-// is missing information. Both needs_clarification == true and a non-empty
-// missing[] list are required so well-specified tasks bypass clarification.
+// needs more information. Spec: intent == "task" && needs_clarification == true.
+// Defensive: fires regardless of missing[] length, so an invalid classifier
+// payload (needs_clarification=true with empty missing[]) cannot silently fall
+// through to the direct-plan path. The classifier prompt enforces 1..4 missing
+// items upstream; this guard is the safety net.
 func guardNeedsClarification(tokens []*cpn.Token) bool {
 	r, ok := parseClassified(tokens)
 	if !ok {
 		return false
 	}
-	return strings.EqualFold(r.Intent, "task") && r.NeedsClarification && len(r.Missing) > 0
+	return strings.EqualFold(r.Intent, "task") && r.NeedsClarification
 }
 
 // guardPlanTaskDirect fires t-plan-direct when the classifier returned a task
 // intent that is fully-specified (no clarification needed).
+// Spec: intent == "task" && needs_clarification == false. The missing[] list
+// is intentionally NOT inspected here — see guardNeedsClarification for the
+// defensive complement.
 func guardPlanTaskDirect(tokens []*cpn.Token) bool {
 	r, ok := parseClassified(tokens)
 	if !ok {
@@ -76,7 +82,7 @@ func guardPlanTaskDirect(tokens []*cpn.Token) bool {
 	if !strings.EqualFold(r.Intent, "task") {
 		return false
 	}
-	return !(r.NeedsClarification && len(r.Missing) > 0)
+	return !r.NeedsClarification
 }
 
 // guardPlanTaskClarified fires t-plan-clarified once the user has answered
@@ -225,7 +231,9 @@ Rules for "intent":
 
 Rules for "needs_clarification" / "missing" (only relevant when intent == "task"):
 - Set needs_clarification == true ONLY when the request omits load-bearing details that materially change the plan (e.g. target audience, programming language, deadline, stack, scope, success criteria).
-- "missing" lists short field names of the gaps (e.g. ["audience","language","deadline"]). Maximum 4 items. Use [] if needs_clarification is false.
+- For backend / API / service requests, load-bearing dimensions include: persistence, framework, auth_strategy, deployment_target, scale, testing_expectations.
+- If needs_clarification == true, "missing" MUST contain between 1 and 4 short field names. If you cannot name at least one missing field, you MUST set needs_clarification = false and "missing": [].
+- If needs_clarification == false, "missing" MUST be [].
 - For "conversation", always emit "needs_clarification": false and "missing": [].
 
 Examples:
@@ -234,8 +242,9 @@ User: "What is a Petri net?" → {"intent":"conversation","needs_clarification":
 User: "Thanks!" → {"intent":"conversation","needs_clarification":false,"missing":[]}
 User: "Create a plan to implement a CNN in R for image classification on CIFAR-10 by next Friday" → {"intent":"task","needs_clarification":false,"missing":[]}
 User: "Help me learn about Coloured Petri Nets" → {"intent":"task","needs_clarification":true,"missing":["background","goal","time_budget"]}
-User: "Build a REST API" → {"intent":"task","needs_clarification":true,"missing":["language","auth","persistence"]}
+User: "Build a REST API" → {"intent":"task","needs_clarification":true,"missing":["language","auth_strategy","persistence"]}
 User: "Refactor the authentication module" → {"intent":"task","needs_clarification":true,"missing":["pain_point","scope"]}
+User: "crea un plan detallado para construir un API en golang con JWT" → {"intent":"task","needs_clarification":true,"missing":["persistence","framework","auth_strategy","deployment_target"]}
 
 Respond ONLY with the JSON object.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
