@@ -1,5 +1,5 @@
-import { lazy, Suspense, useState, useCallback } from 'react';
-import type { ComponentPropsWithoutRef } from 'react';
+import { lazy, Suspense, useState, useCallback, isValidElement } from 'react';
+import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from 'react';
 
 const SyntaxHighlighter = lazy(() =>
   import('./syntax-highlighter').then(mod => ({
@@ -12,50 +12,91 @@ const themePromise = import('./syntax-highlighter').then(mod => mod.deepSpaceThe
 // Regex hoisted outside component (js-hoist-regexp)
 const LANGUAGE_RE = /language-(\w+)/;
 
-// Transparent background so parent <pre> controls it
+// Transparent background so the .code-block-wrapper controls it.
+// PreTag="div" ensures no nested <pre> element inherits markdown styles.
 const highlighterStyle: React.CSSProperties = {
   background: 'transparent',
   margin: 0,
   padding: 0,
 };
 
-function CodeBlockFallback({ children }: { children: React.ReactNode }) {
+const codeTagStyle: React.CSSProperties = {
+  background: 'transparent',
+};
+
+/**
+ * Inline `<code>` handler for react-markdown.
+ * Fenced code blocks are handled by `PreBlock` (the `pre` element handler),
+ * so this component only needs to render inline spans.
+ */
+export function CodeBlock({ className, children, ...rest }: ComponentPropsWithoutRef<'code'>) {
   return (
-    <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.8125rem' }}>
+    <code className={className} {...rest}>
       {children}
     </code>
   );
 }
 
-export function CodeBlock({ className, children, ...rest }: ComponentPropsWithoutRef<'code'>) {
-  const match = LANGUAGE_RE.exec(className || '');
-  const codeString = String(children).replace(/\n$/, '');
+interface PreBlockProps {
+  children?: ReactNode;
+}
 
-  // Inline code — no language class (js-early-exit)
+interface CodeChildProps {
+  className?: string;
+  children?: ReactNode;
+}
+
+/**
+ * `<pre>` handler for react-markdown. Replaces the default <pre> wrapper
+ * with our styled `.code-block-wrapper` so there is exactly one box around
+ * fenced code blocks (fixes the double-box rendering bug).
+ */
+export function PreBlock({ children }: PreBlockProps) {
+  // react-markdown passes a single <code> React element as children for
+  // fenced code blocks.
+  if (!isValidElement(children)) {
+    return <pre>{children}</pre>;
+  }
+
+  const codeEl = children as ReactElement<CodeChildProps>;
+  const className = codeEl.props.className ?? '';
+  const match = LANGUAGE_RE.exec(className);
+  const codeString = String(codeEl.props.children ?? '').replace(/\n$/, '');
+
   if (!match) {
+    // Fenced block without a language — render a plain styled wrapper so it
+    // still gets the single-box treatment.
     return (
-      <code className={className} {...rest}>
-        {children}
-      </code>
+      <div className="code-block-wrapper code-block-wrapper--plain">
+        <CopyButton text={codeString} />
+        <pre className="code-block-pre">
+          <code>{codeString}</code>
+        </pre>
+      </div>
     );
   }
 
   const language = match[1];
-
   return (
     <div className="code-block-wrapper">
       <span className="code-lang-badge" aria-label={`${language} code`}>
         {language}
       </span>
       <CopyButton text={codeString} />
-      <Suspense fallback={<CodeBlockFallback>{children}</CodeBlockFallback>}>
+      <Suspense
+        fallback={
+          <pre className="code-block-pre">
+            <code>{codeString}</code>
+          </pre>
+        }
+      >
         <HighlightedCode language={language} code={codeString} />
       </Suspense>
     </div>
   );
 }
 
-// Separated to avoid inline component inside CodeBlock (rerender-no-inline-components)
+// Separated to avoid inline component inside PreBlock (rerender-no-inline-components)
 function HighlightedCode({ language, code }: { language: string; code: string }) {
   const [theme, setTheme] = useState<Record<string, React.CSSProperties> | null>(null);
 
@@ -63,9 +104,9 @@ function HighlightedCode({ language, code }: { language: string; code: string })
   if (!theme) {
     themePromise.then(setTheme);
     return (
-      <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.8125rem' }}>
-        {code}
-      </code>
+      <pre className="code-block-pre">
+        <code>{code}</code>
+      </pre>
     );
   }
 
@@ -74,7 +115,9 @@ function HighlightedCode({ language, code }: { language: string; code: string })
       language={language}
       style={theme}
       customStyle={highlighterStyle}
-      codeTagProps={{ style: {} }}
+      codeTagProps={{ style: codeTagStyle }}
+      PreTag="div"
+      className="code-block-pre"
     >
       {code}
     </SyntaxHighlighter>
