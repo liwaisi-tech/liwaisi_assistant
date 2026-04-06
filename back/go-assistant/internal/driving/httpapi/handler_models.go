@@ -16,8 +16,9 @@ type ModelRoleResponse struct {
 
 // ModelsResponse is the JSON response for GET /api/v1/models.
 type ModelsResponse struct {
-	DefaultModel string              `json:"default_model"`
-	Roles        []ModelRoleResponse `json:"roles"`
+	DefaultModel    string              `json:"default_model"`
+	AvailableModels []string            `json:"available_models"`
+	Roles           []ModelRoleResponse `json:"roles"`
 }
 
 // modelRoleLabels provides human-readable labels and descriptions for model roles.
@@ -52,7 +53,8 @@ func (h *Handlers) HandleGetModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ModelsResponse{
-		DefaultModel: "anthropic/claude-sonnet-4-6",
-		Roles:        roles,
+		DefaultModel:    "anthropic/claude-sonnet-4-6",
+		AvailableModels: openrouter.AvailableModels,
+		Roles:           roles,
 	})
 }

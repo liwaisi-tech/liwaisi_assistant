@@ -23,6 +23,7 @@ export interface ModelRole {
 
 export interface ModelsResponse {
   default_model: string;
+  available_models: string[];
   roles: ModelRole[];
 }
 

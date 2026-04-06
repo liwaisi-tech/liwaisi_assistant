@@ -294,11 +294,14 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
   });
 
   const handleResolveHITL = useCallback(
-    async (transitionId: string, action: HITLAction) => {
+    async (transitionId: string, action: HITLAction, content?: string) => {
       if (!sessionId) return;
       dispatch({ type: 'HITL_RESOLVED', transitionId, action });
       try {
-        await apiResolveHITL(sessionId, transitionId, { action });
+        await apiResolveHITL(sessionId, transitionId, {
+          action,
+          ...(action === 'revise' && content ? { content } : {}),
+        });
       } catch (err) {
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
       }

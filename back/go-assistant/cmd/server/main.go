@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -207,6 +208,8 @@ func main() {
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
 
 	// Wire event callback: CPN events -> SSE broker.
+	// HITL events are intercepted and re-emitted as A2UI stream chunks
+	// so the frontend renders the review card natively through A2UI.
 	appService.SetEventCallback(func(sessionID string, evt cpn.Event) {
 		if evt.Type == cpn.EventStreamChunk {
 			if chunk, ok := evt.Payload.(cpn.StreamChunk); ok {
@@ -214,7 +217,34 @@ func main() {
 				return
 			}
 		}
+
+		// Emit the raw event for any SSE listeners (monitor, execution trace, etc.)
 		srv.Broker().PublishEvent(sessionID, &evt)
+
+		// For HITL requests, also emit an A2UI review card as a stream chunk.
+		// The agent drives the UI: the backend decides what interface to show.
+		if evt.Type == cpn.EventHITLRequested {
+			prompt := "Please review and confirm."
+			if s, ok := evt.Payload.(string); ok && s != "" {
+				prompt = s
+			}
+			a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
+			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+				SessionID: sessionID,
+				CPNID:     evt.CPNID,
+				CPNRole:   "review",
+				Content:   a2uiPayload,
+				Done:      false,
+			})
+			// Done sentinel for this A2UI message.
+			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+				SessionID: sessionID,
+				CPNID:     evt.CPNID,
+				CPNRole:   "review",
+				Content:   "",
+				Done:      true,
+			})
+		}
 	})
 
 	// ── A2A protocol adapter (optional) ─────────────────────────────────
@@ -352,6 +382,47 @@ func parseDuration(key string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	return d
+}
+
+// buildHITLReviewCard constructs an A2UI payload for HITL review.
+// The backend drives the UI: approve, request changes, or discard.
+func buildHITLReviewCard(prompt, transitionID string) string {
+	type comp struct {
+		Type     string         `json:"type"`
+		Props    map[string]any `json:"props,omitempty"`
+		Children []comp         `json:"children,omitempty"`
+	}
+	type payload struct {
+		Components []comp `json:"components"`
+	}
+
+	p := payload{
+		Components: []comp{
+			{Type: "card", Props: map[string]any{"title": "Review Required"}, Children: []comp{
+				{Type: "text", Props: map[string]any{"content": prompt}},
+				{Type: "divider"},
+				{Type: "text", Props: map[string]any{"content": "Choose an action to continue:", "variant": "secondary"}},
+			}},
+			{Type: "button", Props: map[string]any{
+				"label": "✓ Approve", "variant": "success",
+				"actionType": "hitl:approve", "id": transitionID,
+			}},
+			{Type: "button", Props: map[string]any{
+				"label": "✎ Request Changes", "variant": "primary",
+				"actionType": "hitl:revise", "id": transitionID,
+			}},
+			{Type: "button", Props: map[string]any{
+				"label": "✗ Discard", "variant": "danger",
+				"actionType": "hitl:reject", "id": transitionID,
+			}},
+		},
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		return prompt // fallback to plain text
+	}
+	return "$$a2ui:" + string(data)
 }
 
 // slogLevel returns the slog level from LOG_LEVEL env var.

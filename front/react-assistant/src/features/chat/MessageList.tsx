@@ -17,7 +17,7 @@ interface MessageListProps {
   messages: ChatMessage[];
   sessionState: SessionState;
   onSuggestionClick?: (prompt: string) => void;
-  onHITLAction?: (transitionId: string, action: HITLAction) => void;
+  onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   onOpenMonitor?: () => void;
 }
 

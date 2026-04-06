@@ -11,6 +11,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 )
 
 // ServerConfig holds HTTP server configuration.
@@ -72,7 +73,7 @@ func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Lo
 	// When handlers.Verifier is nil (dev-mode), auth middleware passes through.
 	middlewares := []func(http.Handler) http.Handler{
 		CORSMiddleware(cfg.AllowedOrigins),
-		AuthMiddleware(handlers.Verifier, logger),
+		AuthMiddleware(handlers.Verifier, logger, handlers.ConfigProvider),
 		LoggingMiddleware(logger),
 		RecoveryMiddleware(logger),
 		RequestIDMiddleware,
@@ -174,5 +175,19 @@ func WithWaitlistRepo(repo persist.WaitlistRepository) ServerOption {
 func WithRateLimiting(cfg RateLimitConfig) ServerOption {
 	return func(h *Handlers) {
 		h.RateLimitCfg = &cfg
+	}
+}
+
+// WithConfigProvider injects the config provider for admin config endpoints.
+func WithConfigProvider(provider *config.Provider) ServerOption {
+	return func(h *Handlers) {
+		h.ConfigProvider = provider
+	}
+}
+
+// WithAdminEmail sets the admin email for authorization.
+func WithAdminEmail(email string) ServerOption {
+	return func(h *Handlers) {
+		h.AdminEmail = email
 	}
 }

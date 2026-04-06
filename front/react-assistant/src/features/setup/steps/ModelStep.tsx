@@ -20,6 +20,7 @@ export function ModelStep({
 }: ModelStepProps) {
   const [roles, setRoles] = useState<ModelRole[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -32,6 +33,7 @@ export function ModelStep({
         if (cancelled) return;
         setDefaultModel(res.default_model);
         setRoles(res.roles);
+        setAvailableModels(res.available_models ?? [res.default_model]);
         if (!selectedModel) {
           onSelectModel(res.default_model);
         }
@@ -46,13 +48,6 @@ export function ModelStep({
       cancelled = true;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Collect all unique model names from roles for dropdown options
-  const availableModels = roles.length > 0
-    ? [...new Set([defaultModel, ...roles.map((r) => r.default_model)].filter(Boolean))]
-    : defaultModel
-      ? [defaultModel]
-      : [];
 
   return (
     <div

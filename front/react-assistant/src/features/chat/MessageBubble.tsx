@@ -1,10 +1,10 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MarkdownContent } from './MarkdownContent.tsx';
-import { useA2UIAdapter } from '../../hooks/useA2UIAdapter.ts';
 import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
-import type { A2UIAction } from './a2ui/types.ts';
+import type { A2UIPayload, A2UIAction } from './a2ui/types.ts';
 import type { HITLAction } from '../../types/chat';
+
+const A2UI_MARKER = '$$a2ui:';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
@@ -16,27 +16,68 @@ interface MessageBubbleProps {
   hitlTransitionId?: string;
   hitlActions?: HITLAction[];
   hitlResolved?: HITLAction;
-  onHITLAction?: (transitionId: string, action: HITLAction) => void;
-  onA2UIAction?: (action: A2UIAction) => void;
+  onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   onOpenMonitor?: () => void;
+}
+
+/**
+ * Parse A2UI payload from message content.
+ * Returns the parsed payload if content starts with $$a2ui:, otherwise builds
+ * a default text component payload for markdown rendering.
+ */
+function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
+  if (content.startsWith(A2UI_MARKER)) {
+    try {
+      return JSON.parse(content.slice(A2UI_MARKER.length));
+    } catch {
+      // Malformed A2UI JSON — fall through to text rendering
+    }
+  }
+
+  // Default: wrap plain content in a text component (renders via MarkdownContent)
+  return {
+    components: content
+      ? [{ type: 'text', props: { content, isStreaming } }]
+      : [],
+  };
 }
 
 export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
-  hitlTransitionId, hitlActions, hitlResolved, onHITLAction, onA2UIAction, onOpenMonitor,
+  hitlTransitionId, hitlResolved, onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
-  const { detect, parse } = useA2UIAdapter();
-  const a2uiPayload = !isUser ? parse(content) : null;
-  const isA2UI = !isUser && detect(content) && a2uiPayload !== null;
+  const [reviseMode, setReviseMode] = useState(false);
+  const [reviseText, setReviseText] = useState('');
 
+  // Build A2UI payload — either from backend A2UI content or wrapping text
+  const payload = useMemo<A2UIPayload | null>(() => {
+    if (isUser) return null;
+    return parsePayload(content, isStreaming ?? false);
+  }, [isUser, content, isStreaming]);
+
+  // Route A2UI actions — HITL actions dispatch to the resolver
   const handleA2UIAction = useCallback(
     (action: A2UIAction) => {
-      onA2UIAction?.(action);
+      if (action.type === 'hitl:revise') {
+        setReviseMode(true);
+        return;
+      }
+      if (action.type.startsWith('hitl:') && action.componentId) {
+        const hitlAction = action.type.replace('hitl:', '') as HITLAction;
+        onHITLAction?.(action.componentId, hitlAction);
+      }
     },
-    [onA2UIAction],
+    [onHITLAction],
   );
+
+  const handleReviseSubmit = useCallback(() => {
+    if (!reviseText.trim() || !hitlTransitionId) return;
+    onHITLAction?.(hitlTransitionId, 'revise', reviseText.trim());
+    setReviseMode(false);
+    setReviseText('');
+  }, [reviseText, hitlTransitionId, onHITLAction]);
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -49,6 +90,7 @@ export const MessageBubble = memo(function MessageBubble({
           border: isUser ? 'none' : '1px solid var(--border-dim)',
         }}
       >
+        {/* CPN role badge */}
         {!isUser && cpnRole && (
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-[10px] font-medium uppercase tracking-widest"
@@ -75,54 +117,78 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
+        {/* Content — user: plain text, assistant: A2UI native */}
         {isUser ? (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words"
              style={{ color: 'var(--text-primary)', margin: 0 }}>
             {content}
           </p>
-        ) : isA2UI && a2uiPayload ? (
+        ) : payload ? (
           <A2UIProviderWrapper
-            payload={a2uiPayload}
+            payload={payload}
             isStreaming={isStreaming ?? false}
             onAction={handleA2UIAction}
           />
-        ) : (
-          <MarkdownContent content={content} isStreaming={isStreaming ?? false} />
-        )}
+        ) : null}
 
-        {hitlTransitionId && hitlActions && !hitlResolved && (
-          <div className="flex gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
-            <button
-              onClick={() => onHITLAction?.(hitlTransitionId, 'approve')}
-              className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+        {/* Revise mode: text input for feedback */}
+        {reviseMode && (
+          <div className="flex flex-col gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
+            <textarea
+              value={reviseText}
+              onChange={(e) => setReviseText(e.target.value)}
+              placeholder={t('messageBubble.reviseplaceholder', 'Describe what changes you want...')}
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none"
               style={{
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                color: '#34d399',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
+                backgroundColor: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-dim)',
+                fontFamily: "'DM Sans', system-ui, sans-serif",
               }}
-            >
-              {t('messageBubble.looksGood')}
-            </button>
-            <button
-              onClick={() => onHITLAction?.(hitlTransitionId, 'reject')}
-              className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                color: '#f87171',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-              }}
-            >
-              {t('messageBubble.cancel')}
-            </button>
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleReviseSubmit}
+                disabled={!reviseText.trim()}
+                className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
+                style={{
+                  backgroundColor: 'rgba(14, 165, 233, 0.15)',
+                  color: 'var(--accent)',
+                  border: '1px solid rgba(14, 165, 233, 0.3)',
+                  opacity: reviseText.trim() ? 1 : 0.5,
+                  cursor: reviseText.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {t('messageBubble.sendChanges', 'Send Changes')}
+              </button>
+              <button
+                onClick={() => { setReviseMode(false); setReviseText(''); }}
+                className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-dim)',
+                }}
+              >
+                {t('messageBubble.cancelRevise', 'Cancel')}
+              </button>
+            </div>
           </div>
         )}
 
-        {hitlTransitionId && hitlResolved && (
+        {/* HITL resolved badge */}
+        {hitlResolved && (
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
             <span className="text-[11px] font-medium" style={{
-              color: hitlResolved === 'approve' ? '#34d399' : '#f87171',
+              color: hitlResolved === 'approve' ? '#34d399' : hitlResolved === 'revise' ? 'var(--accent)' : '#f87171',
             }}>
-              {hitlResolved === 'approve' ? t('messageBubble.youApproved') : t('messageBubble.youCancelled')}
+              {hitlResolved === 'approve'
+                ? t('messageBubble.youApproved')
+                : hitlResolved === 'revise'
+                  ? t('messageBubble.youRequestedChanges', 'You requested changes')
+                  : t('messageBubble.youCancelled')}
             </span>
           </div>
         )}

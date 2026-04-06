@@ -31,6 +31,9 @@ RUN addgroup -S app && adduser -S app -G app
 COPY --from=builder /liwaisi-server /usr/local/bin/liwaisi-server
 COPY --from=builder /build/store/postgres/migrations /app/migrations
 
+# Ensure secrets directory exists and is writable by app user
+RUN mkdir -p /data/secrets && chown app:app /data/secrets
+
 USER app
 
 EXPOSE 8080

@@ -48,6 +48,18 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	// Models
 	mux.HandleFunc("GET /api/v1/models", h.HandleGetModels)
 
+	// Admin config (admin-only, except status which is public)
+	if h.AdminEmail != "" {
+		adminAuth := AdminMiddleware(h.AdminEmail)
+		mux.Handle("GET /api/v1/admin/config", adminAuth(http.HandlerFunc(h.HandleListConfig)))
+		mux.Handle("PUT /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleSetConfig)))
+		mux.Handle("DELETE /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleDeleteConfig)))
+	}
+	mux.HandleFunc("GET /api/v1/admin/config/status", h.HandleConfigStatus)
+
 	// Waitlist (public, no auth required)
 	mux.HandleFunc("POST /api/v1/waitlist", h.HandleWaitlist)
+
+	// Dev-only: A2UI test endpoint — injects A2UI content through real SSE pipeline
+	mux.HandleFunc("POST /api/v1/sessions/{id}/test-a2ui", h.HandleTestA2UI)
 }

@@ -1,5 +1,6 @@
 import { useDeferredValue, useCallback, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
+import { MarkdownContent } from '../MarkdownContent.tsx';
 import type { A2UIPayload, A2UIComponent, A2UIAction, AlertSeverity, FormField } from './types.ts';
 
 // ── Component Catalog ──────────────────────────────────────────────────────
@@ -17,19 +18,12 @@ function renderChildren(children: A2UIComponent[] | undefined, onAction: (action
 }
 
 // ── text ────────────────────────────────────────────────────────────────────
+// Uses MarkdownContent for full markdown rendering (code blocks, tables, math, etc.)
 
 function TextComponent({ component }: ComponentProps) {
   const content = (component.props.content as string) ?? '';
-  const variant = component.props.variant as string | undefined;
-  const style: React.CSSProperties = {
-    color: variant === 'muted' ? 'var(--text-muted)' : variant === 'secondary' ? 'var(--text-secondary)' : 'var(--text-primary)',
-    margin: 0,
-  };
-  return (
-    <p className="text-sm leading-relaxed" style={style}>
-      {content}
-    </p>
-  );
+  const isStreaming = component.props.isStreaming === true;
+  return <MarkdownContent content={content} isStreaming={isStreaming} />;
 }
 
 // ── button ──────────────────────────────────────────────────────────────────
@@ -37,28 +31,36 @@ function TextComponent({ component }: ComponentProps) {
 function ButtonComponent({ component, onAction }: ComponentProps) {
   const label = (component.props.label as string) ?? '';
   const componentId = (component.props.id as string) ?? '';
+  const actionType = (component.props.actionType as string) ?? 'click';
   const variant = (component.props.variant as string) ?? 'primary';
   const disabled = component.props.disabled === true;
 
   const handleClick = () => {
     onAction({
-      type: 'click',
+      type: actionType,
       componentId,
       payload: component.props.payload ?? null,
     });
   };
 
-  const isPrimary = variant === 'primary';
+  const variantStyles: Record<string, { bg: string; color: string; border: string; glow: string }> = {
+    primary: { bg: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)', border: 'rgba(14, 165, 233, 0.3)', glow: '0 0 8px -2px var(--accent-glow)' },
+    secondary: { bg: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-secondary)', border: 'var(--border-dim)', glow: 'none' },
+    danger: { bg: 'rgba(239, 68, 68, 0.1)', color: '#f87171', border: 'rgba(239, 68, 68, 0.2)', glow: 'none' },
+    success: { bg: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: 'rgba(16, 185, 129, 0.3)', glow: 'none' },
+  };
+  const s = variantStyles[variant] ?? variantStyles.primary;
+
   return (
     <button
       onClick={handleClick}
       disabled={disabled}
-      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
       style={{
-        backgroundColor: isPrimary ? 'rgba(14, 165, 233, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-        color: isPrimary ? 'var(--accent)' : 'var(--text-secondary)',
-        border: `1px solid ${isPrimary ? 'rgba(14, 165, 233, 0.3)' : 'var(--border-dim)'}`,
-        boxShadow: isPrimary ? '0 0 8px -2px var(--accent-glow)' : 'none',
+        backgroundColor: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+        boxShadow: s.glow,
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
       }}
