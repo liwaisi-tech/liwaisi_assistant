@@ -228,3 +228,64 @@ User: "crea un plan detallado para construir un API en golang con JWT"
 - `spec/spec-architecture-a2a-a2ui-protocol-integration.md` (guard definitions, §946).
 - Commit `c889b5b` — feat(a2ui): add clarification node (t-ask/t-clarify) with questionnaire component.
 - Commit `9abc976` — fix(a2ui): suppress duplicate HITL surface when transition owns the A2UI.
+
+## 12. Addendum — Confidence Field and Principled Ambiguity Rule (2026-04-06)
+
+A second wave of observed failures (an ambiguous Spanish product-launch prompt
+slipped through as `needs_clarification=false`, and the previous prompt over-fit
+to hardcoded domain examples) drove the following changes. This section is
+additive and does not supersede prior sections.
+
+### 12.1 Principled ambiguity rule
+
+`PROMPT_CLASSIFIER` no longer enumerates domain-specific dimension tables or
+worked examples for specific languages / launch scenarios. Instead it gives the
+model a decision procedure:
+
+> A task is fully specified if a senior practitioner in the relevant field could
+> produce a concrete, non-generic plan without making more than ONE significant
+> assumption about an unnamed parameter. Otherwise it is under-specified.
+
+The prompt lists a generic mental checklist (audience, success criterion,
+stack/medium/format, scope, timeline, constraints) and instructs the model to
+count how many of those are load-bearing AND unnamed. The prompt keeps a tiny
+set of shape-only examples across unrelated domains so no single domain
+dominates. The Spanish JWT-API and Spanish product-launch prompts are NOT
+present verbatim — they are covered by the principle.
+
+### 12.2 `confidence` field
+
+The classifier schema gains a required `confidence` float in `[0.0, 1.0]`
+reflecting certainty about BOTH the intent and (for tasks) the specification-
+completeness judgment. Calibration anchors are written into the prompt
+(1.0 certain, 0.85 clearly right, 0.7 more likely than not, 0.5 coin flip).
+
+Backward compatibility: if `confidence` is absent (legacy classifier), it is
+treated as `1.0` by `classifierResult.confidence()`.
+
+### 12.3 Threshold and guard behavior
+
+A new env var `CLASSIFIER_CONFIDENCE_THRESHOLD` (default `0.7`) gates the
+planner path:
+
+- `guardPlanTaskDirect` fires only when
+  `intent=="task" && !needs_clarification && confidence >= threshold`.
+- `guardNeedsClarification` fires when
+  `intent=="task" && (needs_clarification || confidence < threshold)`.
+  The second disjunct is the **safety net** against overconfident skips.
+- `guardDirectConversation` is unchanged. Low confidence on a conversation
+  intent does NOT block the direct path — conversation is the safe fallback.
+
+The default of `0.7` was chosen so that "more likely right than not" still
+plans directly, but any honest "coin flip" bucket (≤0.5) routes through
+clarification. Operators who observe either too much or too little clarifying
+can tune the env var without a redeploy of prompt text.
+
+### 12.4 `t-ask` fallback for empty `missing[]`
+
+Because a low-confidence task can now reach `t-ask` with an empty `missing[]`
+array, `PROMPT_ASK` gains a short fallback instruction: generate 2–4 generic
+clarifying questions drawn from the same load-bearing dimensions (audience,
+success criterion, scope, stack/medium/format, timeline) when `missing` is
+absent or empty. The schema and option rules are unchanged.
+

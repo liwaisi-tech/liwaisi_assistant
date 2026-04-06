@@ -3,11 +3,34 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
+
+// defaultClassifierConfidenceThreshold is the minimum Confidence the classifier
+// must emit for a task flagged as fully-specified to skip the clarification
+// questionnaire. Below this, the safety net routes through t-ask even if
+// needs_clarification=false. Overridable via CLASSIFIER_CONFIDENCE_THRESHOLD.
+const defaultClassifierConfidenceThreshold = 0.7
+
+// classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each
+// call. Invalid or unset values fall back to defaultClassifierConfidenceThreshold.
+// Parsed lazily to keep tests and env tweaks simple.
+func classifierConfidenceThreshold() float64 {
+	v := os.Getenv("CLASSIFIER_CONFIDENCE_THRESHOLD")
+	if v == "" {
+		return defaultClassifierConfidenceThreshold
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return defaultClassifierConfidenceThreshold
+	}
+	return f
+}
 
 // ── Named guard functions (registered in FuncRegistry for topology serialization) ──
 
@@ -19,6 +42,20 @@ type classifierResult struct {
 	Intent             string   `json:"intent"`
 	NeedsClarification bool     `json:"needs_clarification,omitempty"`
 	Missing            []string `json:"missing,omitempty"`
+	// Confidence is the model's self-reported certainty about both the intent
+	// and (for tasks) the specification-completeness judgment. Range [0.0, 1.0].
+	// Absence is treated as 1.0 for backward compatibility with classifiers
+	// that haven't been updated to emit it.
+	Confidence *float64 `json:"confidence,omitempty"`
+}
+
+// confidence returns the effective confidence, defaulting to 1.0 when the
+// classifier did not emit the field (legacy/back-compat).
+func (r classifierResult) confidence() float64 {
+	if r.Confidence == nil {
+		return 1.0
+	}
+	return *r.Confidence
 }
 
 // parseClassified extracts the classifier JSON from the first string-payload
@@ -66,7 +103,15 @@ func guardNeedsClarification(tokens []*cpn.Token) bool {
 	if !ok {
 		return false
 	}
-	return strings.EqualFold(r.Intent, "task") && r.NeedsClarification
+	if !strings.EqualFold(r.Intent, "task") {
+		return false
+	}
+	if r.NeedsClarification {
+		return true
+	}
+	// Safety net: the classifier claimed the task is fully-specified but its
+	// self-reported confidence is below threshold. Prefer asking over guessing.
+	return r.confidence() < classifierConfidenceThreshold()
 }
 
 // guardPlanTaskDirect fires t-plan-direct when the classifier returned a task
@@ -82,7 +127,13 @@ func guardPlanTaskDirect(tokens []*cpn.Token) bool {
 	if !strings.EqualFold(r.Intent, "task") {
 		return false
 	}
-	return !r.NeedsClarification
+	if r.NeedsClarification {
+		return false
+	}
+	// Confidence gate: require the classifier to be sufficiently sure before
+	// skipping clarification. Keeps ambiguous-but-overconfident prompts out of
+	// the direct-plan path. See guardNeedsClarification for the complement.
+	return r.confidence() >= classifierConfidenceThreshold()
 }
 
 // guardPlanTaskClarified fires t-plan-clarified once the user has answered
@@ -218,43 +269,72 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 	// t-classify: fast intent classifier using lightweight model.
 	tClassify := cpn.NewTransition("t-classify", cpn.NodeKindLLM,
 		[]string{"p-input"}, []string{"p-classified"})
-	tClassify.SystemPrompt = envOr("PROMPT_CLASSIFIER", `You are an intent classifier. Classify the user's message into exactly one category and, for tasks, decide whether key information is missing.
-Respond with JSON only, no explanation.
+	tClassify.SystemPrompt = envOr("PROMPT_CLASSIFIER", `You are an intent classifier. You read the user's latest message and emit a single JSON object. No prose, no code fences, no explanation.
 
-Schema:
-{"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...]}
+Schema (all keys required):
+{"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...],"confidence":0.0}
 
-Rules for "intent":
-- "conversation": greetings, casual chat, simple one-sentence factual answers, clarifications, thank you messages
-- "task": requests that need a plan, multi-step work, guided learning, tutorials, code generation, document creation, analysis, implementation, design, architecture, or any request where the user asks you to BUILD, CREATE, DESIGN, PLAN, IMPLEMENT, HELP WITH A PROJECT, or TEACH step-by-step
-- When in doubt, classify as "task"
+Decision procedure — run these steps mentally, then emit JSON.
 
-Rules for "needs_clarification" / "missing" (only relevant when intent == "task"):
-- Default bias: if the request does not name the concrete details needed to produce an actionable, opinionated plan, set needs_clarification = true. Prefer asking over guessing.
-- Set needs_clarification == true whenever the request omits load-bearing details that would materially change the plan. Load-bearing dimensions depend on the task domain:
-  * Backend / API / service: persistence, framework, auth_strategy, deployment_target, scale, testing_expectations.
-  * Frontend / UI: framework, design_system, target_devices, accessibility, state_management.
-  * Product launch / marketing / release / event: audience, channels, timing, goals, success_metrics, invitation_mechanism, budget.
-  * Content / writing / documentation: audience, tone, length, format, purpose.
-  * Research / analysis / report: scope, sources, depth, output_format, deadline.
-  * Learning / tutorial / teaching: background, goal, time_budget, preferred_format.
-  * Data / ML: dataset, task_type, metrics, constraints, deployment.
-- Generic fallbacks that apply to any domain: audience, scope, success_criteria, deadline, constraints, stack.
-- If needs_clarification == true, "missing" MUST contain between 1 and 4 short field names. If you cannot name at least one missing field, you MUST set needs_clarification = false and "missing": [].
-- If needs_clarification == false, "missing" MUST be [].
-- For "conversation", always emit "needs_clarification": false and "missing": [].
+Step 1. Intent.
+- "conversation": greetings, small talk, thanks, acknowledgements, a single factual question answerable in one short paragraph, or a meta-question about you.
+- "task": anything that asks you to produce, build, design, plan, implement, write, analyze, research, refactor, teach step-by-step, or otherwise deliver an artifact or multi-step result.
+- When genuinely torn between the two, pick "task".
 
-Examples:
-User: "Hola, ¿cómo estás?" → {"intent":"conversation","needs_clarification":false,"missing":[]}
-User: "What is a Petri net?" → {"intent":"conversation","needs_clarification":false,"missing":[]}
-User: "Thanks!" → {"intent":"conversation","needs_clarification":false,"missing":[]}
-User: "Create a plan to implement a CNN in R for image classification on CIFAR-10 by next Friday" → {"intent":"task","needs_clarification":false,"missing":[]}
-User: "Help me learn about Coloured Petri Nets" → {"intent":"task","needs_clarification":true,"missing":["background","goal","time_budget"]}
-User: "Build a REST API" → {"intent":"task","needs_clarification":true,"missing":["language","auth_strategy","persistence"]}
-User: "Refactor the authentication module" → {"intent":"task","needs_clarification":true,"missing":["pain_point","scope"]}
-User: "crea un plan detallado para construir un API en golang con JWT" → {"intent":"task","needs_clarification":true,"missing":["persistence","framework","auth_strategy","deployment_target"]}
-User: "Quiero hacer un lanzamiento de producto en versión preview, solo pocas personas invitadas. ¿Me ayudas con el plan?" → {"intent":"task","needs_clarification":true,"missing":["audience","channels","goals","invitation_mechanism"]}
-User: "Escríbeme un blog post sobre IA" → {"intent":"task","needs_clarification":true,"missing":["audience","tone","length","angle"]}
+Step 2. If intent == "task", judge specification-completeness with this rule:
+  A task is FULLY SPECIFIED if a senior practitioner in the relevant field could
+  produce a concrete, non-generic plan without making more than ONE significant
+  assumption about an unnamed parameter. Otherwise it is UNDER-SPECIFIED.
+
+  Assumptions that silently change scope, audience, stack, deliverable shape,
+  or success criteria count as missing information. Prefer asking over guessing.
+
+Step 3. Mental checklist — for the task at hand, which of these are load-bearing
+(i.e. a different answer would produce a meaningfully different plan)?
+  - audience / who it is for
+  - success criterion / what "done" looks like
+  - stack, medium, or format (language, framework, channel, document type, ...)
+  - scope boundary (what is in, what is out, how big)
+  - timeline or effort budget
+  - constraints (compliance, budget, tooling, environment)
+Count how many load-bearing items the user did NOT name. If zero or one, the
+task is fully specified. If two or more, it is under-specified.
+
+Step 4. Fill the fields:
+- needs_clarification = true  ⇒ under-specified. "missing" MUST list 1..4 short
+  snake_case field names drawn from the load-bearing items you identified. Use
+  names that make sense for the actual domain; do not invent keys you cannot
+  defend. If you cannot name at least one concrete missing field, the task is
+  not actually under-specified — set needs_clarification=false and missing=[].
+- needs_clarification = false ⇒ fully specified. "missing" MUST be [].
+- intent == "conversation"    ⇒ needs_clarification=false, missing=[].
+
+Step 5. Confidence (float in [0.0, 1.0]).
+- Reflects your certainty about BOTH the intent choice AND, for tasks, the
+  specification-completeness judgment. It is NOT how confident you are that
+  you could answer the user.
+- Calibration anchors:
+    1.0 = certain, no reasonable reading of the message contradicts your call.
+    0.85 = clearly right, minor edge cases exist.
+    0.7 = more likely right than not, but you can imagine a plausible alternative reading.
+    0.5 = coin flip.
+    <0.5 = you are guessing.
+- Below 0.7 means meaningfully unsure; downstream will treat it as a safety-net
+  trigger for clarification. Be honest — do not inflate.
+
+Examples (shape and edge cases; do not pattern-match on domain):
+
+User: "hey, how are you?"
+→ {"intent":"conversation","needs_clarification":false,"missing":[],"confidence":0.99}
+
+User: "Write a 500-word beginner-friendly blog post in English explaining what a semaphore is, with one code example in Python, for publication on our engineering blog tomorrow."
+→ {"intent":"task","needs_clarification":false,"missing":[],"confidence":0.92}
+
+User: "help me with my project"
+→ {"intent":"task","needs_clarification":true,"missing":["project_topic","goal","scope","deadline"],"confidence":0.95}
+
+User: "plan a workshop about our new feature"
+→ {"intent":"task","needs_clarification":true,"missing":["audience","duration","format","success_criteria"],"confidence":0.9}
 
 Respond ONLY with the JSON object.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
@@ -318,7 +398,13 @@ Rules:
 - Each question MUST have 2-4 options. Each option has a short id (opt-a, opt-b, ...) and a human label.
 - "recommended" is the option id you would pick by default given the user's request. Always set it.
 - Keep prompts concise (under 80 characters).
-- Do not include any keys other than "questions".`)
+- Do not include any keys other than "questions".
+
+Fallback: if "missing" is absent or empty (the upstream classifier was unsure
+but did not enumerate fields), generate 2-4 generic clarifying questions based
+on the load-bearing dimensions any plan depends on: audience, success criterion,
+scope boundary, stack/medium/format, and timeline. Pick the dimensions that are
+most ambiguous for this specific request. The schema and rules above still apply.`)
 	tAsk.LLMConfig = &cpn.LLMConfig{
 		Model:        "classifier",
 		MaxTokens:    envInt("MAX_TOKENS_ASK", 512),

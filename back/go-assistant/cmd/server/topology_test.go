@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -267,38 +268,98 @@ func TestUnifiedTopology_ClarificationGuardMatrix(t *testing.T) {
 	}
 }
 
-// TestUnifiedTopology_RegressionSpanishJWTAPIPrompt encodes the exact failing
-// prompt from spec-process-bugfix-classifier-clarify-bypass.md (REQ-007 /
-// AC-004). Given a realistic classifier output for the Spanish JWT-API
-// request, the topology MUST route through the clarification questionnaire
-// rather than producing a plan directly.
-func TestUnifiedTopology_RegressionSpanishJWTAPIPrompt(t *testing.T) {
-	const userPrompt = "crea un plan detallado para construir un API en golang con JWT"
-	_ = userPrompt // documentation: the prompt the classifier was given
+// TestUnifiedTopology_ConfidenceSafetyNet verifies the confidence-based
+// routing rules: a task the classifier claims is fully specified still routes
+// through clarification if its self-reported confidence is below threshold.
+// Conversation intents are never blocked by low confidence.
+func TestUnifiedTopology_ConfidenceSafetyNet(t *testing.T) {
+	// Make the threshold explicit so the test does not depend on env state.
+	t.Setenv("CLASSIFIER_CONFIDENCE_THRESHOLD", "0.7")
+
+	cases := []struct {
+		name           string
+		payload        string
+		wantAsk        bool
+		wantPlanDirect bool
+		wantDirect     bool
+	}{
+		{
+			name:           "high_confidence_fully_specified_task_plans_direct",
+			payload:        `{"intent":"task","needs_clarification":false,"missing":[],"confidence":0.9}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+		{
+			name:           "low_confidence_fully_specified_task_routes_to_ask",
+			payload:        `{"intent":"task","needs_clarification":false,"missing":[],"confidence":0.5}`,
+			wantAsk:        true,
+			wantPlanDirect: false,
+		},
+		{
+			name:           "high_confidence_needs_clarification_routes_to_ask",
+			payload:        `{"intent":"task","needs_clarification":true,"missing":["audience"],"confidence":0.9}`,
+			wantAsk:        true,
+			wantPlanDirect: false,
+		},
+		{
+			name:       "low_confidence_conversation_still_direct",
+			payload:    `{"intent":"conversation","needs_clarification":false,"missing":[],"confidence":0.3}`,
+			wantDirect: true,
+		},
+		{
+			// Exactly at threshold: plan-direct is allowed (>= threshold).
+			name:           "threshold_boundary_exact_match_plans_direct",
+			payload:        `{"intent":"task","needs_clarification":false,"missing":[],"confidence":0.7}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+		{
+			// Legacy classifier without confidence: treated as 1.0.
+			name:           "legacy_missing_confidence_plans_direct",
+			payload:        `{"intent":"task","needs_clarification":false,"missing":[]}`,
+			wantAsk:        false,
+			wantPlanDirect: true,
+		},
+	}
 
 	c := unifiedTopologyFactory("test-session")
 	tAsk := c.Transitions["t-ask"]
 	tPlanDirect := c.Transitions["t-plan-direct"]
-	if tAsk == nil || tPlanDirect == nil {
-		t.Fatal("expected t-ask and t-plan-direct transitions")
+	tDirect := c.Transitions["t-direct"]
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := &cpn.Token{Payload: tc.payload}
+			if got := tAsk.Guard([]*cpn.Token{tok}); got != tc.wantAsk {
+				t.Errorf("t-ask guard = %v, want %v", got, tc.wantAsk)
+			}
+			if got := tPlanDirect.Guard([]*cpn.Token{tok}); got != tc.wantPlanDirect {
+				t.Errorf("t-plan-direct guard = %v, want %v", got, tc.wantPlanDirect)
+			}
+			if tc.wantDirect {
+				if got := tDirect.Guard([]*cpn.Token{tok}); !got {
+					t.Errorf("t-direct guard = false, want true (conversation must not be blocked by confidence)")
+				}
+			}
+		})
+	}
+}
+
+// TestClassifierConfidenceThreshold_EnvOverride verifies the env var plumbing.
+func TestClassifierConfidenceThreshold_EnvOverride(t *testing.T) {
+	t.Setenv("CLASSIFIER_CONFIDENCE_THRESHOLD", "0.85")
+	if got := classifierConfidenceThreshold(); got != 0.85 {
+		t.Errorf("threshold = %v, want 0.85", got)
 	}
 
-	// Realistic classifier output for the prompt above, matching the worked
-	// example added to PROMPT_CLASSIFIER per REQ-004.
-	classifierJSON := `{"intent":"task","needs_clarification":true,"missing":["persistence","framework","auth_strategy","deployment_target"]}`
-	tok := &cpn.Token{Payload: classifierJSON}
+	os.Unsetenv("CLASSIFIER_CONFIDENCE_THRESHOLD")
+	if got := classifierConfidenceThreshold(); got != 0.7 {
+		t.Errorf("default threshold = %v, want 0.7", got)
+	}
 
-	if got := guardNeedsClarification([]*cpn.Token{tok}); !got {
-		t.Errorf("guardNeedsClarification = false, want true for ambiguous JWT-API prompt")
-	}
-	if got := guardPlanTaskDirect([]*cpn.Token{tok}); got {
-		t.Errorf("guardPlanTaskDirect = true, want false for ambiguous JWT-API prompt")
-	}
-	if got := tAsk.Guard([]*cpn.Token{tok}); !got {
-		t.Errorf("t-ask guard = false, want true")
-	}
-	if got := tPlanDirect.Guard([]*cpn.Token{tok}); got {
-		t.Errorf("t-plan-direct guard = true, want false")
+	t.Setenv("CLASSIFIER_CONFIDENCE_THRESHOLD", "not-a-number")
+	if got := classifierConfidenceThreshold(); got != 0.7 {
+		t.Errorf("invalid env threshold should fall back to 0.7, got %v", got)
 	}
 }
 
