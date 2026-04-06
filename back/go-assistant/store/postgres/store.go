@@ -147,3 +147,6 @@ func (s *Store) Personalities() persist.PersonalityRepository { return s.persona
 
 // Waitlist returns the waitlist repository (Postgres).
 func (s *Store) Waitlist() persist.WaitlistRepository { return s.waitlist }
+
+// Pool returns the underlying pgx pool for creating additional repositories.
+func (s *Store) Pool() pgxPool { return s.pool }

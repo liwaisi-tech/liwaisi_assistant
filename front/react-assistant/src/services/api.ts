@@ -2,6 +2,7 @@ import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSess
 import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
 import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
 import type { UserProfile, UserPreferences, OnboardingCompleteRequest, ModelsResponse } from '../types/setup';
+import type { AdminConfigResponse, PlatformStatusResponse } from '../types/admin';
 
 const BASE_URL = '/api/v1';
 
@@ -198,6 +199,29 @@ export async function completeOnboarding(data: OnboardingCompleteRequest): Promi
 
 export async function getModels(): Promise<ModelsResponse> {
   return request<ModelsResponse>('/models');
+}
+
+// ── Admin Config API ──────────────────────────────────────────────────
+
+export async function getAdminConfig(): Promise<AdminConfigResponse> {
+  return request<AdminConfigResponse>('/admin/config');
+}
+
+export async function setAdminConfig(key: string, value: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  });
+}
+
+export async function deleteAdminConfig(key: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getPlatformStatus(): Promise<PlatformStatusResponse> {
+  return request<PlatformStatusResponse>('/admin/config/status');
 }
 
 export async function joinWaitlist(email: string): Promise<WaitlistResponse> {

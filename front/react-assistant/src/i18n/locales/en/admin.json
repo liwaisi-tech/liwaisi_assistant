@@ -1,0 +1,31 @@
+{
+  "title": "Platform Configuration",
+  "subtitle": "Manage platform secrets and settings",
+  "setupRequired": "Setup required: some required configuration is missing.",
+  "refresh": "Refresh",
+  "categories": {
+    "llm": "LLM Configuration",
+    "auth": "Authentication",
+    "server": "Server Settings",
+    "models": "Model Overrides"
+  },
+  "source": {
+    "env": "ENV",
+    "db": "DB",
+    "default": "DEFAULT"
+  },
+  "field": {
+    "save": "Save",
+    "delete": "Remove",
+    "reveal": "Show value",
+    "hide": "Hide value",
+    "locked": "Set via environment variable — takes precedence over DB value",
+    "saving": "Saving...",
+    "saved": "Saved",
+    "deleted": "Removed",
+    "error": "Failed to save"
+  },
+  "loading": "Loading configuration...",
+  "error": "Failed to load configuration",
+  "retry": "Retry"
+}

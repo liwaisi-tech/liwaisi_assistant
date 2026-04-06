@@ -1,16 +1,18 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { setTokenGetter } from '../services/api';
+import { setTokenGetter, getUserProfile } from '../services/api';
 
 interface User {
   email: string;
   name: string;
   picture: string;
+  is_admin: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   logout: () => void;
   getToken: () => string | null;
 }
@@ -32,7 +34,11 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem('liwaisi_user');
-    return stored ? JSON.parse(stored) : null;
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return { ...parsed, is_admin: parsed.is_admin ?? false };
+    }
+    return null;
   });
   const [token, setToken] = useState<string | null>(() => {
     return localStorage.getItem('liwaisi_token');
@@ -51,12 +57,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // include the Authorization header from the very first request.
   setTokenGetter(getToken);
 
+  // Fetch admin status from backend profile endpoint.
+  const fetchAdminStatus = useCallback(async () => {
+    try {
+      const profile = await getUserProfile();
+      const isAdmin = (profile as unknown as Record<string, unknown>).is_admin === true;
+      setUser((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, is_admin: isAdmin };
+        localStorage.setItem('liwaisi_user', JSON.stringify(updated));
+        return updated;
+      });
+    } catch {
+      // Profile fetch failure is non-fatal for admin status.
+    }
+  }, []);
+
+  // On mount, if we already have a token, refresh admin status.
+  useEffect(() => {
+    if (token) {
+      fetchAdminStatus();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleCredentialResponse = useCallback((response: { credential: string }) => {
     const payload = decodeJwtPayload(response.credential);
     const userData: User = {
       email: payload.email as string,
       name: payload.name as string,
       picture: payload.picture as string,
+      is_admin: false,
     };
     // Update tokenRef SYNCHRONOUSLY so the token is available for API calls
     // that fire in the same render cycle as the state update.
@@ -65,7 +95,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(response.credential);
     localStorage.setItem('liwaisi_user', JSON.stringify(userData));
     localStorage.setItem('liwaisi_token', response.credential);
-  }, []);
+
+    // Fetch admin status asynchronously after login.
+    setTimeout(() => fetchAdminStatus(), 100);
+  }, [fetchAdminStatus]);
 
   useEffect(() => {
     if (initRef.current) return;
@@ -123,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, logout, getToken }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isAdmin: user?.is_admin ?? false, logout, getToken }}>
       {children}
     </AuthContext.Provider>
   );

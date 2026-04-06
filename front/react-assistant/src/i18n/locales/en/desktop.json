@@ -5,6 +5,7 @@
     "monitor": "Monitor",
     "tools": "Tools",
     "identity": "Identity",
+    "admin": "Admin",
     "settings": "Settings"
   },
   "commandPalette": {
@@ -38,7 +39,8 @@
       "flows": "Flows",
       "monitor": "Monitor",
       "personality": "Identity",
-      "tools": "Tools"
+      "tools": "Tools",
+      "admin": "Admin"
     },
     "signOut": "Sign out"
   },

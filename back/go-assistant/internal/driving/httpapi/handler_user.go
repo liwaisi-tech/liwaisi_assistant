@@ -21,6 +21,7 @@ type UserProfileResponse struct {
 	Picture             string              `json:"picture"`
 	Preferences         UserPreferencesJSON `json:"preferences"`
 	OnboardingCompleted bool                `json:"onboarding_completed"`
+	IsAdmin             bool                `json:"is_admin"`
 	CreatedAt           string              `json:"created_at"`
 }
 
@@ -75,6 +76,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 			Picture:             user.Picture,
 			Preferences:         UserPreferencesJSON{PreferredLanguage: "en", ModelOverrides: map[string]string{}},
 			OnboardingCompleted: false,
+			IsAdmin:             h.AdminEmail != "" && user.Email == h.AdminEmail,
 			CreatedAt:           time.Now().Format(time.RFC3339),
 		})
 		return
@@ -101,6 +103,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 			ModelOverrides:    overrides,
 		},
 		OnboardingCompleted: rec.OnboardingCompletedAt != nil,
+		IsAdmin:             h.AdminEmail != "" && rec.Email == h.AdminEmail,
 		CreatedAt:           rec.CreatedAt.Format(time.RFC3339),
 	})
 }

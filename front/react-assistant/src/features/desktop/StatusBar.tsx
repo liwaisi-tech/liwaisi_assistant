@@ -12,7 +12,7 @@ interface PersonalityBadge {
 interface StatusBarProps {
   sessionState: SessionState;
   isConnected: boolean;
-  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
+  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
   personalityPrinciples?: PersonalityBadge[];
 }
 
