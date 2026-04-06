@@ -223,10 +223,26 @@ func main() {
 
 		// For HITL requests, also emit an A2UI review card as a stream chunk.
 		// The agent drives the UI: the backend decides what interface to show.
+		//
+		// When the transition already published its own A2UI surface (signalled
+		// via HITLRequestedPayload{CustomSurface:true}), the default card is
+		// suppressed — emitting both would concatenate two "$$a2ui:" chunks
+		// into one streaming assistant message, breaking JSON.parse on the
+		// frontend and falling through to raw markdown.
 		if evt.Type == cpn.EventHITLRequested {
 			prompt := "Please review and confirm."
-			if s, ok := evt.Payload.(string); ok && s != "" {
-				prompt = s
+			switch p := evt.Payload.(type) {
+			case string:
+				if p != "" {
+					prompt = p
+				}
+			case cpn.HITLRequestedPayload:
+				if p.CustomSurface {
+					return // transition owns the surface; skip default card
+				}
+				if p.Prompt != "" {
+					prompt = p.Prompt
+				}
 			}
 			a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
 			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{

@@ -10,6 +10,20 @@ import (
 // DefaultMaxRevisions is the recommended cap for revision loop rounds.
 const DefaultMaxRevisions = 5
 
+// HITLRequestedPayload is the payload carried by EventHITLRequested when the
+// transition publishes its own A2UI surface (e.g. a questionnaire) via
+// HITLConfig.A2UIPayloadBuilder. The CustomSurface flag signals to the
+// integration layer that a default review card MUST NOT be emitted, since
+// the custom surface is already on the wire.
+//
+// When A2UIPayloadBuilder is not configured, fireHITL keeps emitting the
+// prompt as a bare string for backward compatibility with existing consumers
+// (legacy review card emission, a2a mapper).
+type HITLRequestedPayload struct {
+	Prompt        string `json:"prompt"`
+	CustomSurface bool   `json:"custom_surface"`
+}
+
 // HITLConfig configures human-in-the-loop behavior for NodeKindHITL transitions.
 // Implements Building Block 7 (Feedback).
 type HITLConfig struct {
@@ -74,6 +88,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// channel BEFORE blocking on human input. The frontend matches the
 	// "$$a2ui:" prefix and renders an interactive surface that ultimately
 	// resolves the HITL request via the regular HTTP endpoint.
+	customSurface := false
 	if cfg.A2UIPayloadBuilder != nil {
 		if payload, err := cfg.A2UIPayloadBuilder(consumed); err == nil && payload != nil {
 			if encoded, mErr := json.Marshal(payload); mErr == nil {
@@ -90,6 +105,24 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 						Done:      false,
 					},
 				})
+				// Finalize the streaming assistant message so the next
+				// StreamChunk (from any source) starts a fresh bubble
+				// instead of being concatenated onto this one. Mirrors
+				// the sentinel pattern used by the legacy main.go HITL
+				// card emission path.
+				c.emit(&Event{
+					Type:           EventStreamChunk,
+					TransitionID:   t.ID,
+					TransitionKind: NodeKindHITL,
+					Payload: StreamChunk{
+						SessionID: c.SessionID,
+						CPNID:     c.ID,
+						CPNRole:   c.Role,
+						Content:   "",
+						Done:      true,
+					},
+				})
+				customSurface = true
 			}
 		}
 	}
@@ -98,11 +131,21 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// Note: consumed token content is NOT included in the payload because
 	// upstream LLM transitions with StreamOutput=true already stream
 	// their output to the frontend. Including it would cause duplication.
+	//
+	// When a custom A2UI surface was just published, emit a structured
+	// HITLRequestedPayload so downstream consumers (legacy review-card
+	// emitter, frontend useChat) can suppress their default rendering
+	// and avoid duplicating the surface. Otherwise emit the bare string
+	// prompt to preserve backward compatibility.
+	var hitlPayload any = cfg.Prompt
+	if customSurface {
+		hitlPayload = HITLRequestedPayload{Prompt: cfg.Prompt, CustomSurface: true}
+	}
 	c.emit(&Event{
 		Type:           EventHITLRequested,
 		TransitionID:   t.ID,
 		TransitionKind: NodeKindHITL,
-		Payload:        cfg.Prompt,
+		Payload:        hitlPayload,
 	})
 
 	// REQ-003: Set StateWaiting before blocking on channel.
