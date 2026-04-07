@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
-import { getAdminConfig, setAdminConfig, deleteAdminConfig } from '../../services/api';
+import { getAdminConfig, setAdminConfig, deleteAdminConfig, AdminApiError } from '../../services/api';
 import type { ConfigItem } from '../../types/admin';
 import { SecretField } from './SecretField';
+import { useAuth } from '../../contexts/AuthContext';
 
 const CATEGORY_ORDER = ['llm', 'auth', 'server', 'models'];
 
@@ -16,6 +17,7 @@ const categoryLabelKeys: Record<string, string> = {
 
 export function AdminSecretsPanel() {
   const { t } = useTranslation('admin');
+  const auth = useAuth();
   const [items, setItems] = useState<ConfigItem[]>([]);
   const [setupRequired, setSetupRequired] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -30,12 +32,26 @@ export function AdminSecretsPanel() {
       const data = await getAdminConfig();
       setItems(data.items);
       setSetupRequired(data.setup_required);
-    } catch {
-      setError(t('error'));
+    } catch (e) {
+      if (e instanceof AdminApiError) {
+        if (e.status === 401) {
+          auth.logout();
+          return;
+        }
+        if (e.status === 403) {
+          setError(t('errors.forbidden'));
+          return;
+        }
+        if (e.status === 503) {
+          setError(t('errors.unavailable'));
+          return;
+        }
+      }
+      setError(t('errors.generic'));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, auth]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 

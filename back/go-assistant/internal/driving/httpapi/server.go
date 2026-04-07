@@ -185,9 +185,16 @@ func WithConfigProvider(provider *config.Provider) ServerOption {
 	}
 }
 
-// WithAdminEmail sets the admin email for authorization.
-func WithAdminEmail(email string) ServerOption {
+// WithAdminEmails sets the admin email allow-list for authorization.
+func WithAdminEmails(emails []string) ServerOption {
 	return func(h *Handlers) {
-		h.AdminEmail = email
+		h.AdminEmails = emails
+	}
+}
+
+// WithAuditRepo injects the audit log repository for admin config mutations.
+func WithAuditRepo(repo AuditLogger) ServerOption {
+	return func(h *Handlers) {
+		h.AuditRepo = repo
 	}
 }

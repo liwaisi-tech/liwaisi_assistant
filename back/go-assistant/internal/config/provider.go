@@ -11,6 +11,7 @@ import (
 // Resolution priority: env var > DB stored value > default.
 type Provider struct {
 	mu       sync.RWMutex
+	callMu   sync.Mutex // serializes Set/Delete cache-write+fan-out per Provider
 	store    Store
 	cache    map[string]*Entry
 	onChange []func(key, value string)
@@ -68,7 +69,8 @@ func (p *Provider) Source(key string) string {
 }
 
 // Set writes a config value to the store and updates the cache.
-// Fires OnChange callbacks.
+// Fires OnChange callbacks. Per-Provider serialization (callMu) ensures
+// fan-out ordering matches commit ordering for the same key.
 func (p *Provider) Set(ctx context.Context, key, value, updatedBy string) error {
 	def := DefByKey(key)
 	if def == nil {
@@ -82,16 +84,20 @@ func (p *Provider) Set(ctx context.Context, key, value, updatedBy string) error 
 		UpdatedAt: time.Now(),
 		UpdatedBy: updatedBy,
 	}
+
+	p.callMu.Lock()
+	defer p.callMu.Unlock()
+
 	if err := p.store.Set(ctx, entry); err != nil {
 		return err
 	}
 
 	p.mu.Lock()
 	p.cache[key] = entry
+	callbacks := append([]func(string, string){}, p.onChange...)
 	p.mu.Unlock()
 
-	// Fire callbacks.
-	for _, fn := range p.onChange {
+	for _, fn := range callbacks {
 		fn(key, value)
 	}
 	return nil
@@ -99,16 +105,21 @@ func (p *Provider) Set(ctx context.Context, key, value, updatedBy string) error 
 
 // Delete removes a config value from the store and cache.
 func (p *Provider) Delete(ctx context.Context, key string) error {
+	p.callMu.Lock()
+	defer p.callMu.Unlock()
+
 	if err := p.store.Delete(ctx, key); err != nil {
 		return err
 	}
+
 	p.mu.Lock()
 	delete(p.cache, key)
+	callbacks := append([]func(string, string){}, p.onChange...)
 	p.mu.Unlock()
 
 	// Fire callbacks with the new resolved value (env or default).
 	resolved := p.Get(key)
-	for _, fn := range p.onChange {
+	for _, fn := range callbacks {
 		fn(key, resolved)
 	}
 	return nil
@@ -130,26 +141,35 @@ func (p *Provider) Refresh(ctx context.Context) error {
 }
 
 // OnChange registers a callback fired when a config value is changed via Set or Delete.
+// Append on a fresh slice to avoid aliasing with in-flight snapshots.
 func (p *Provider) OnChange(fn func(key, value string)) {
-	p.onChange = append(p.onChange, fn)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onChange = append(append([]func(string, string){}, p.onChange...), fn)
+}
+
+// maskSecret renders a secret value with last-4 visibility per PAT-003.
+func maskSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(value) < 8 {
+		return "********"
+	}
+	return "********" + value[len(value)-4:]
 }
 
 // ListAll returns all known config entries with their resolved values and sources.
-// Secret values from DB are masked. Env-sourced secret values are also masked.
+// Secret values from any source (env or db) are masked identically.
 func (p *Provider) ListAll() []ResolvedConfig {
 	result := make([]ResolvedConfig, 0, len(PlatformConfigs))
 	for _, def := range PlatformConfigs {
 		source := p.Source(def.Key)
 		value := p.Get(def.Key)
 
-		// Mask secrets.
 		displayValue := value
-		if def.IsSecret && value != "" {
-			if len(value) > 10 {
-				displayValue = value[:10] + "***"
-			} else {
-				displayValue = "********"
-			}
+		if def.IsSecret {
+			displayValue = maskSecret(value)
 		}
 
 		var updatedAt, updatedBy string

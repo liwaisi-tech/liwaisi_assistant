@@ -27,5 +27,10 @@
   },
   "loading": "Loading configuration...",
   "error": "Failed to load configuration",
+  "errors": {
+    "forbidden": "You do not have admin access.",
+    "unavailable": "Admin service is unavailable.",
+    "generic": "Could not load configuration."
+  },
   "retry": "Retry"
 }

@@ -51,6 +51,35 @@ export class ApiError extends Error {
   }
 }
 
+export class AdminApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'AdminApiError';
+  }
+}
+
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  const authToken = tokenGetter?.();
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers,
+    ...options,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText }));
+    throw new AdminApiError(response.status, body.error || response.statusText);
+  }
+  return response.json();
+}
+
 export async function createSession(userId: string, channel: string = 'web'): Promise<SessionResponse> {
   return request<SessionResponse>('/sessions', {
     method: 'POST',
@@ -204,18 +233,18 @@ export async function getModels(): Promise<ModelsResponse> {
 // ── Admin Config API ──────────────────────────────────────────────────
 
 export async function getAdminConfig(): Promise<AdminConfigResponse> {
-  return request<AdminConfigResponse>('/admin/config');
+  return adminRequest<AdminConfigResponse>('/admin/config');
 }
 
 export async function setAdminConfig(key: string, value: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+  return adminRequest<{ ok: boolean }>(`/admin/config/${key}`, {
     method: 'PUT',
     body: JSON.stringify({ value }),
   });
 }
 
 export async function deleteAdminConfig(key: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/admin/config/${key}`, {
+  return adminRequest<{ ok: boolean }>(`/admin/config/${key}`, {
     method: 'DELETE',
   });
 }

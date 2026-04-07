@@ -76,7 +76,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 			Picture:             user.Picture,
 			Preferences:         UserPreferencesJSON{PreferredLanguage: "en", ModelOverrides: map[string]string{}},
 			OnboardingCompleted: false,
-			IsAdmin:             h.AdminEmail != "" && user.Email == h.AdminEmail,
+			IsAdmin:             h.isAdminEmail(user.Email),
 			CreatedAt:           time.Now().Format(time.RFC3339),
 		})
 		return
@@ -103,7 +103,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 			ModelOverrides:    overrides,
 		},
 		OnboardingCompleted: rec.OnboardingCompletedAt != nil,
-		IsAdmin:             h.AdminEmail != "" && rec.Email == h.AdminEmail,
+		IsAdmin:             h.isAdminEmail(rec.Email),
 		CreatedAt:           rec.CreatedAt.Format(time.RFC3339),
 	})
 }
