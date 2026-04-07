@@ -3,9 +3,13 @@ package billing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -26,14 +30,71 @@ type Client struct {
 }
 
 // NewClient returns a configured client with sensible defaults.
+//
+// The HTTP client is tuned for fragile container egress paths: it forces a
+// short happy-eyeballs fallback so an IPv6 black-hole (a recurring failure
+// mode on Docker/VPS networks where AAAA records resolve but IPv6 routing
+// drops packets) cannot stall the dial for the full deadline. Set FORCE_IPV4=1
+// to bypass IPv6 entirely.
 func NewClient(apiKey, baseURL string) *Client {
+	forceV4 := strings.EqualFold(os.Getenv("FORCE_IPV4"), "1") ||
+		strings.EqualFold(os.Getenv("FORCE_IPV4"), "true")
+
+	dialer := &net.Dialer{
+		Timeout:       8 * time.Second,
+		KeepAlive:     30 * time.Second,
+		FallbackDelay: 50 * time.Millisecond,
+	}
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if forceV4 && (network == "tcp" || network == "tcp6") {
+			network = "tcp4"
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
+
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		MaxIdleConnsPerHost:   2,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   8 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	}
+
 	return &Client{
 		apiKey:  apiKey,
 		BaseURL: baseURL,
 		HTTPClient: &http.Client{
-			Timeout: 15 * time.Second,
+			Transport: transport,
+			Timeout:   15 * time.Second,
 		},
 	}
+}
+
+// isTransientNetErr reports whether the error is a connection-level failure
+// that is safe to retry on an idempotent GET (dial timeout, connection reset,
+// EOF before headers, etc). It deliberately does NOT retry on HTTP-level
+// errors — those are handled by the caller.
+func isTransientNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false // caller cancelled — do not retry
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "no route to host") ||
+		strings.Contains(msg, "connection refused")
 }
 
 // String implements fmt.Stringer. Redacts the API key.
@@ -74,7 +135,22 @@ func (c *Client) Fetch(ctx context.Context) (*KeyInfo, error) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "application/json")
 
+	// One-shot retry on transient network errors. The /key endpoint is a
+	// pure GET so retrying is safe and never double-bills. We do NOT retry
+	// HTTP-level failures (4xx/5xx) — those are surfaced to the caller.
 	resp, err := c.HTTPClient.Do(req)
+	if err != nil && isTransientNetErr(err) {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("billing: request failed: %w", err)
+		case <-time.After(200 * time.Millisecond):
+		}
+		retryReq, rerr := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		if rerr == nil {
+			retryReq.Header = req.Header.Clone()
+			resp, err = c.HTTPClient.Do(retryReq)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("billing: request failed: %w", err)
 	}

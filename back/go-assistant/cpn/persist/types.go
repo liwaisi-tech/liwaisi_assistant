@@ -120,6 +120,32 @@ type LedgerRecord struct {
 	LastUpdated   time.Time
 }
 
+// LLMCallRecord is the persistence DTO for a single LLM invocation.
+// One row is written per call (success or failure), independent of the
+// per-session aggregate in LedgerRecord.
+type LLMCallRecord struct {
+	ID                  string
+	SessionID           string
+	TransitionID        string
+	CPNID               string
+	ModelRequested      string
+	ModelResolved       string
+	Endpoint            string
+	Streamed            bool
+	InputTokens         int
+	OutputTokens        int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	ReasoningTokens     int
+	CostUSD             float64
+	RequestMessages     json.RawMessage // JSONB: [{"role":"...","content":"..."}, ...]
+	ResponseText        string
+	FinishReason        string
+	Error               string
+	DurationMs          int64
+	CreatedAt           time.Time
+}
+
 // LedgerAggregate holds aggregated ledger metrics over a date range.
 type LedgerAggregate struct {
 	TotalInputTokens  int64

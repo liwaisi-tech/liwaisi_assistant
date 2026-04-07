@@ -90,9 +90,16 @@ func (h *StreamHandler) parseChatSSEInternal(body io.ReadCloser, onDelta func(st
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage struct {
-				PromptTokens     int     `json:"prompt_tokens"`
-				CompletionTokens int     `json:"completion_tokens"`
-				Cost             float64 `json:"cost"`
+				PromptTokens        int     `json:"prompt_tokens"`
+				CompletionTokens    int     `json:"completion_tokens"`
+				Cost                float64 `json:"cost"`
+				PromptTokensDetails *struct {
+					CachedTokens     int `json:"cached_tokens"`
+					CacheWriteTokens int `json:"cache_write_tokens"`
+				} `json:"prompt_tokens_details"`
+				CompletionTokensDetails *struct {
+					ReasoningTokens int `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
 			} `json:"usage"`
 		}
 
@@ -135,6 +142,13 @@ func (h *StreamHandler) parseChatSSEInternal(body io.ReadCloser, onDelta func(st
 			resp.InputTokens = chunk.Usage.PromptTokens
 			resp.OutputTokens = chunk.Usage.CompletionTokens
 			resp.CostUSD = chunk.Usage.Cost
+			if chunk.Usage.PromptTokensDetails != nil {
+				resp.CacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+				resp.CacheCreationTokens = chunk.Usage.PromptTokensDetails.CacheWriteTokens
+			}
+			if chunk.Usage.CompletionTokensDetails != nil {
+				resp.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+			}
 		}
 	}
 

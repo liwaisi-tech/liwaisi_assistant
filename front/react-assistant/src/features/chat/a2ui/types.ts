@@ -55,6 +55,8 @@ export interface ChoiceProps {
   id: string;
   label: string;
   recommended?: string;
+  quoteFromUser?: string;
+  whyItMatters?: string;
   options: ChoiceOption[];
 }
 
@@ -62,6 +64,8 @@ export interface ChoiceProps {
 export interface QuestionnaireProps {
   id: string;
   submitLabel?: string;
+  restatedGoal?: string;
+  assumptions?: string[];
 }
 
 /** Payload dispatched by the questionnaire submit action. */

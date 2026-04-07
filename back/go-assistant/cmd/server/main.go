@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
@@ -133,6 +134,13 @@ func main() {
 
 	// ── Driven adapters ─────────────────────────────────────────────────
 	llmClient := openrouter.NewClient(apiKey, defaultModel)
+	// Per-call audit recorder (writes one row per LLM invocation to llm_calls).
+	// Only enabled when persistence is configured.
+	var callRecorder openrouter.CallRecorder
+	if store != nil {
+		callRecorder = &llmCallRecorderAdapter{repo: store.LLMCalls(), logger: logger}
+		llmClient.CallRecorder = callRecorder
+	}
 	holder := config.NewLLMClientHolder(llmClient)
 	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
 
@@ -150,6 +158,7 @@ func main() {
 				newAPIKey := configProvider.Get("openrouter_api_key")
 				newModel := configProvider.Get("default_model")
 				newClient := openrouter.NewClient(newAPIKey, newModel)
+				newClient.CallRecorder = callRecorder
 				holder.Swap(newClient)
 				logger.Info("LLM client hot-reloaded", "trigger_key", key)
 			}
@@ -351,6 +360,61 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 		return 0
 	}
 	return rec.TotalCostUSD
+}
+
+// llmCallRecorderAdapter bridges openrouter.CallRecorder (the LLM hot path)
+// to persist.LLMCallRepository (the Postgres audit log). Each RecordCall
+// dispatches a background goroutine with a fresh context so the LLM caller
+// never blocks on the database.
+type llmCallRecorderAdapter struct {
+	repo   persist.LLMCallRepository
+	logger *slog.Logger
+}
+
+func (a *llmCallRecorderAdapter) RecordCall(_ context.Context, rec openrouter.CallRecord) {
+	if a == nil || a.repo == nil {
+		return
+	}
+
+	msgsJSON, err := json.Marshal(rec.RequestMessages)
+	if err != nil {
+		// Fall back to an empty array so the JSONB column stays valid.
+		msgsJSON = []byte("[]")
+	}
+
+	pr := &persist.LLMCallRecord{
+		SessionID:           rec.SessionID,
+		TransitionID:        rec.TransitionID,
+		CPNID:               rec.CPNID,
+		ModelRequested:      rec.ModelRequested,
+		ModelResolved:       rec.ModelResolved,
+		Endpoint:            rec.Endpoint,
+		Streamed:            rec.Streamed,
+		InputTokens:         rec.InputTokens,
+		OutputTokens:        rec.OutputTokens,
+		CacheReadTokens:     rec.CacheReadTokens,
+		CacheCreationTokens: rec.CacheCreationTokens,
+		ReasoningTokens:     rec.ReasoningTokens,
+		CostUSD:             rec.CostUSD,
+		RequestMessages:     msgsJSON,
+		ResponseText:        rec.ResponseText,
+		FinishReason:        rec.FinishReason,
+		Error:               rec.Error,
+		DurationMs:          rec.Duration.Milliseconds(),
+		CreatedAt:           rec.CreatedAt,
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := a.repo.Record(ctx, pr); err != nil {
+			a.logger.Warn("llm call audit record failed",
+				slog.String("session_id", pr.SessionID),
+				slog.String("model", pr.ModelResolved),
+				slog.Any("error", err),
+			)
+		}
+	}()
 }
 
 // tokenLedgerAdapter adapts openrouter.TokenLedger to app.TokenLedgerReader.

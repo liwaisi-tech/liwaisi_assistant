@@ -37,7 +37,7 @@ func successHandler(w http.ResponseWriter, _ *http.Request) {
 		"usage": map[string]any{
 			"prompt_tokens":     10,
 			"completion_tokens": 5,
-			"total_cost":        0.001,
+			"cost":              0.001,
 		},
 		"model": "test-default-model",
 	})

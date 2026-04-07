@@ -28,6 +28,7 @@ type Store struct {
 	sessions      persist.SessionRepository
 	events        persist.EventRepository
 	ledger        persist.LedgerRepository
+	llmCalls      persist.LLMCallRepository
 	flows         persist.FlowRepository
 	intelligence  persist.IntelligenceRepository
 	hitl          persist.HITLRepository
@@ -72,6 +73,7 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 		sessions:      storeredis.NewSessionRepository(rdb, pgSessionRepo),
 		events:        pgEventRepo,
 		ledger:        NewLedgerRepository(pool),
+		llmCalls:      NewLLMCallRepository(pool),
 		flows:         NewFlowRepository(pool),
 		intelligence:  NewIntelligenceRepository(pool),
 		hitl:          storeredis.NewHITLRepository(rdb),
@@ -129,6 +131,9 @@ func (s *Store) EventBatcher() *EventBatcher { return s.batcher }
 
 // Ledger returns the token ledger repository (Postgres).
 func (s *Store) Ledger() persist.LedgerRepository { return s.ledger }
+
+// LLMCalls returns the per-call LLM audit repository (Postgres).
+func (s *Store) LLMCalls() persist.LLMCallRepository { return s.llmCalls }
 
 // Flows returns the flow repository (Postgres, soft-delete).
 func (s *Store) Flows() persist.FlowRepository { return s.flows }

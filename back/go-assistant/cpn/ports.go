@@ -143,6 +143,11 @@ type LLMResponse struct {
 	// CacheCreationTokens is the number of tokens used to create the cache.
 	CacheCreationTokens int
 
+	// ReasoningTokens is the number of internal reasoning/thinking tokens
+	// generated (Anthropic extended thinking, OpenAI o-series). Always 0 for
+	// non-reasoning models.
+	ReasoningTokens int
+
 	// StopReason indicates why the model stopped generating.
 	StopReason string
 }

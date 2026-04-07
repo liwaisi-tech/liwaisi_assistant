@@ -90,7 +90,11 @@ export function TransitionInspector({
           <div>
             <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>{t('transitionInspector.cost')}</div>
             <div className="text-sm font-bold" style={{ color: 'var(--accent)' }}>
-              ${completedPayload.cost_usd.toFixed(4)}
+              {completedPayload.cost_usd === 0
+                ? '$0.0000'
+                : completedPayload.cost_usd < 0.0001
+                  ? '< $0.0001'
+                  : `$${completedPayload.cost_usd.toFixed(4)}`}
             </div>
           </div>
           <div>

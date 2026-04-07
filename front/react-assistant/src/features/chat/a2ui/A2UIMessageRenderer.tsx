@@ -313,6 +313,8 @@ interface ChoiceFieldProps {
   label: string;
   options: ChoiceOption[];
   recommended?: string;
+  quoteFromUser?: string;
+  whyItMatters?: string;
   selected?: string;
   onSelect?: (optionId: string) => void;
   groupName: string;
@@ -331,6 +333,8 @@ function ChoiceField({
   label,
   options,
   recommended,
+  quoteFromUser,
+  whyItMatters,
   selected,
   onSelect,
   groupName,
@@ -348,49 +352,88 @@ function ChoiceField({
   const otherInputId = `${groupName}-${OTHER_OPTION_ID}`;
   const otherTextInputId = `${groupName}-${OTHER_OPTION_ID}-text`;
   return (
-    <fieldset
-      className="my-2 p-3 rounded-lg"
-      style={{
-        border: '1px solid var(--border-dim)',
-        backgroundColor: 'var(--bg-input)',
-      }}
-    >
+    <fieldset className="my-2">
+      {quoteFromUser && (
+        <div
+          className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium"
+          style={{
+            color: 'var(--accent)',
+            border: '1px solid rgba(14, 165, 233, 0.35)',
+            background: 'rgba(14, 165, 233, 0.08)',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          <span aria-hidden="true">{'\u201C'}</span>
+          <span className="italic">{quoteFromUser}</span>
+          <span aria-hidden="true">{'\u201D'}</span>
+        </div>
+      )}
       <legend
-        className="px-1 text-xs font-medium"
-        style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}
+        className="block text-sm font-medium mb-1 leading-snug"
+        style={{ color: 'var(--text-primary)' }}
       >
         {label}
       </legend>
-      <div className="flex flex-col gap-1.5 mt-1">
+      {whyItMatters && (
+        <p
+          className="text-[11px] mb-2.5 leading-snug"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          {whyItMatters}
+        </p>
+      )}
+      <div role="radiogroup" aria-label={label} className="flex flex-col gap-2">
         {options.map((opt) => {
           const isRecommended = recommended === opt.id;
+          const isSelected = selected === opt.id && !isFreeText;
           const inputId = `${groupName}-${opt.id}`;
           return (
             <label
               key={opt.id}
               htmlFor={inputId}
-              className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
-              style={{ color: 'var(--text-primary)' }}
+              className="group relative flex items-start gap-3 cursor-pointer rounded-xl px-3.5 py-3 text-sm transition-all duration-150 hover:-translate-y-px"
+              style={{
+                color: 'var(--text-primary)',
+                border: `1.5px solid ${isSelected ? 'var(--accent)' : 'var(--border-dim)'}`,
+                backgroundColor: isSelected ? 'rgba(14, 165, 233, 0.10)' : 'var(--bg-input)',
+                boxShadow: isSelected ? '0 0 0 3px rgba(14, 165, 233, 0.12)' : 'none',
+              }}
             >
               <input
                 id={inputId}
                 type="radio"
                 name={groupName}
                 value={opt.id}
-                checked={selected === opt.id}
+                checked={isSelected}
                 onChange={() => onSelect?.(opt.id)}
                 aria-describedby={isRecommended ? `${inputId}-rec` : undefined}
-                style={{ accentColor: 'var(--accent)' }}
+                className="sr-only"
               />
-              <span className="flex-1">{opt.label}</span>
+              {/* Custom indicator dot */}
+              <span
+                aria-hidden="true"
+                className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors"
+                style={{
+                  border: `1.5px solid ${isSelected ? 'var(--accent)' : 'var(--border-dim)'}`,
+                  backgroundColor: isSelected ? 'var(--accent)' : 'transparent',
+                }}
+              >
+                {isSelected && (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{ backgroundColor: 'var(--bg-deep)' }}
+                  />
+                )}
+              </span>
+              <span className="flex-1 leading-snug">{opt.label}</span>
               {isRecommended && (
                 <span
                   id={`${inputId}-rec`}
-                  className="inline-block text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full"
+                  className="inline-block text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full whitespace-nowrap self-start"
                   style={{
                     color: 'var(--accent)',
                     border: '1px solid var(--accent)',
-                    background: 'rgba(14, 165, 233, 0.08)',
+                    background: 'rgba(14, 165, 233, 0.10)',
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >
@@ -403,8 +446,13 @@ function ChoiceField({
         {allowFreeText && (
           <label
             htmlFor={otherInputId}
-            className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
-            style={{ color: 'var(--text-primary)' }}
+            className="group relative flex items-start gap-3 cursor-pointer rounded-xl px-3.5 py-3 text-sm transition-all duration-150 hover:-translate-y-px"
+            style={{
+              color: 'var(--text-primary)',
+              border: `1.5px dashed ${isFreeText ? 'var(--accent)' : 'var(--border-dim)'}`,
+              backgroundColor: isFreeText ? 'rgba(14, 165, 233, 0.10)' : 'transparent',
+              boxShadow: isFreeText ? '0 0 0 3px rgba(14, 165, 233, 0.12)' : 'none',
+            }}
           >
             <input
               id={otherInputId}
@@ -413,24 +461,42 @@ function ChoiceField({
               value={OTHER_OPTION_ID}
               checked={isFreeText}
               onChange={() => onFreeTextSelect?.()}
-              style={{ accentColor: 'var(--accent)' }}
+              className="sr-only"
             />
-            <span className="flex-1">{otherLabel}</span>
+            <span
+              aria-hidden="true"
+              className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+              style={{
+                border: `1.5px solid ${isFreeText ? 'var(--accent)' : 'var(--border-dim)'}`,
+                backgroundColor: isFreeText ? 'var(--accent)' : 'transparent',
+              }}
+            >
+              {isFreeText && (
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: 'var(--bg-deep)' }}
+                />
+              )}
+            </span>
+            <span className="flex-1 leading-snug italic" style={{ color: 'var(--text-secondary)' }}>
+              {otherLabel}…
+            </span>
           </label>
         )}
         {allowFreeText && isFreeText && (
           <input
             id={otherTextInputId}
             type="text"
+            autoFocus
             aria-label={`${label} — ${otherLabel}`}
             placeholder={freeTextPlaceholder ?? defaultFreeTextPlaceholder}
             value={freeTextValue}
             onChange={(e) => onFreeTextChange?.(e.target.value)}
-            className="ml-6 mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+            className="mt-1 px-3.5 py-2.5 rounded-xl text-sm outline-none transition-colors focus:ring-2"
             style={{
               backgroundColor: 'var(--bg-deep)',
               color: 'var(--text-primary)',
-              border: '1px solid var(--border-dim)',
+              border: '1.5px solid var(--accent)',
               fontFamily: "'DM Sans', system-ui, sans-serif",
             }}
           />
@@ -468,6 +534,8 @@ interface QuestionDescriptor {
   label: string;
   options: ChoiceOption[];
   recommended?: string;
+  quoteFromUser?: string;
+  whyItMatters?: string;
   allowFreeText?: boolean;
   freeTextPlaceholder?: string;
 }
@@ -484,6 +552,8 @@ function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescri
       label: (child.props.label as string) ?? '',
       options: (child.props.options as ChoiceOption[]) ?? [],
       recommended: child.props.recommended as string | undefined,
+      quoteFromUser: child.props.quoteFromUser as string | undefined,
+      whyItMatters: child.props.whyItMatters as string | undefined,
       allowFreeText: child.props.allowFreeText !== false,
       freeTextPlaceholder: child.props.freeTextPlaceholder as string | undefined,
     });
@@ -495,6 +565,8 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const { t } = useTranslation('chat');
   const componentId = (component.props.id as string) ?? '';
   const submitLabel = (component.props.submitLabel as string) ?? t('a2ui.submit', 'Submit');
+  const restatedGoal = (component.props.restatedGoal as string | undefined) ?? '';
+  const assumptions = (component.props.assumptions as string[] | undefined) ?? [];
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
@@ -585,8 +657,69 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
     [currentAnswered, goNext, isFinalStep],
   );
 
+  const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
+
+  const framingHeader = hasFraming ? (
+    <div
+      className="rounded-xl px-3.5 py-3 flex flex-col gap-2"
+      style={{
+        backgroundColor: 'var(--bg-input)',
+        border: '1px solid var(--border-dim)',
+      }}
+    >
+      <div
+        className="text-[10px] uppercase tracking-widest font-semibold"
+        style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {t('a2ui.understoodAs', 'I understood')}
+      </div>
+      {restatedGoal && (
+        <div className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>
+          {restatedGoal}
+        </div>
+      )}
+      {assumptions.length > 0 && (
+        <ul className="flex flex-col gap-1 mt-1 list-disc pl-5">
+          {assumptions.map((a, i) => (
+            <li key={i} className="text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+              {a}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  ) : null;
+
   if (totalSteps === 0 || !currentQuestion) {
-    return null;
+    if (!hasFraming) return null;
+    const confirmLabel = t('a2ui.confirmAndContinue', 'Confirm and continue');
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onAction({ type: 'hitl:submit', componentId, payload: { answers: {} } });
+        }}
+        aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
+        className="flex flex-col gap-3 my-2"
+      >
+        {framingHeader}
+        <div>
+          <button
+            type="submit"
+            className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+            style={{
+              backgroundColor: 'rgba(14, 165, 233, 0.15)',
+              color: 'var(--accent)',
+              border: '1px solid rgba(14, 165, 233, 0.3)',
+              boxShadow: '0 0 8px -2px var(--accent-glow)',
+              cursor: 'pointer',
+            }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </form>
+    );
   }
 
   const previousLabel = t('a2ui.previous', 'Previous');
@@ -611,6 +744,7 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
       aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
       className="flex flex-col gap-3 my-2"
     >
+      {framingHeader}
       {!isSingleQuestion && (
         <div className="flex flex-col gap-1.5">
           <div
@@ -649,6 +783,8 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
         label={currentQuestion.label}
         options={currentQuestion.options}
         recommended={currentQuestion.recommended}
+        quoteFromUser={currentQuestion.quoteFromUser}
+        whyItMatters={currentQuestion.whyItMatters}
         selected={answers[currentQuestion.id]}
         onSelect={(optionId) => handleSelect(currentQuestion.id, optionId)}
         groupName={`${componentId}-${currentQuestion.id}`}

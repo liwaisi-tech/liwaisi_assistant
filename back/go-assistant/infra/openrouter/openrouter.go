@@ -33,11 +33,24 @@ var DefaultModelRegistry = map[string]string{
 
 // AvailableModels lists all models offered to users for selection.
 // Ordered by provider then capability tier.
+//
+// ⚠️ DO NOT REMOVE entries from this list without explicit user confirmation.
+// The user curates this list manually and depends on it for cost control;
+// a silent deletion has previously caused regressions. Additions are fine,
+// but every removal MUST be approved by the user in the same conversation.
 var AvailableModels = []string{
+	// Anthropic
 	"anthropic/claude-opus-4-6",
 	"anthropic/claude-sonnet-4-6",
 	"anthropic/claude-haiku-4-5-20251001",
+	// Google
+	"google/gemma-4-31b-it",
+	"google/gemma-4-26b-a4b-it",
+	"google/gemini-3.1-flash-lite-preview",
+	"google/gemini-2.5-flash-lite",
 	"google/gemini-2.0-flash-001",
+	// Z.ai
+	"z-ai/glm-5.1",
 }
 
 // ModelEnvVars maps each registry key to the environment variable that overrides it.
@@ -108,6 +121,12 @@ type Client struct {
 
 	// TokenLedger tracks per-session token usage and cost.
 	TokenLedger *TokenLedger
+
+	// CallRecorder, if set, receives a per-call audit record after every
+	// Complete / CompleteStream invocation (success or failure). Optional:
+	// when nil, no per-call records are emitted. Implementations MUST be
+	// non-blocking; see the CallRecorder interface contract.
+	CallRecorder CallRecorder
 }
 
 // NewClient returns a configured client with sensible defaults.
@@ -124,9 +143,7 @@ func NewClient(apiKey, defaultModel string) *Client {
 		AppURL:        os.Getenv("OPENROUTER_APP_URL"),
 		AppTitle:      os.Getenv("OPENROUTER_APP_TITLE"),
 		BaseURL:       "https://openrouter.ai/api/v1",
-		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		HTTPClient: newResilientHTTPClient(120 * time.Second),
 		TokenLedger: NewTokenLedger(),
 	}
 }
@@ -136,14 +153,72 @@ func (c *Client) String() string {
 	return fmt.Sprintf("Client{model: %s, base: %s}", c.DefaultModel, c.BaseURL)
 }
 
+// emitCallRecord assembles a CallRecord from the request/response pair and
+// hands it to the configured CallRecorder. Safe to call from a deferred
+// function — handles nil recorder, nil request, and partial responses.
+func (c *Client) emitCallRecord(ctx context.Context, req *cpn.LLMRequest, resolvedModel string, streamed bool, startedAt time.Time, resp cpn.LLMResponse, callErr error) {
+	if c.CallRecorder == nil || req == nil {
+		return
+	}
+
+	endpointStr := "chat"
+	if req.Endpoint == cpn.EndpointMessages {
+		endpointStr = "messages"
+	}
+
+	msgs := make([]CallMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		if m == nil {
+			continue
+		}
+		msgs = append(msgs, CallMessage{Role: m.Role, Content: m.Content})
+	}
+
+	rec := CallRecord{
+		SessionID:           req.SessionID,
+		ModelRequested:      req.Model,
+		ModelResolved:       resolvedModel,
+		Endpoint:            endpointStr,
+		Streamed:            streamed,
+		RequestMessages:     msgs,
+		ResponseText:        resp.Content,
+		InputTokens:         resp.InputTokens,
+		OutputTokens:        resp.OutputTokens,
+		CacheReadTokens:     resp.CacheReadTokens,
+		CacheCreationTokens: resp.CacheCreationTokens,
+		ReasoningTokens:     resp.ReasoningTokens,
+		CostUSD:             resp.CostUSD,
+		FinishReason:        resp.StopReason,
+		Duration:            time.Since(startedAt),
+		CreatedAt:           time.Now(),
+	}
+	if callErr != nil {
+		rec.Error = callErr.Error()
+	}
+	// Trace fields, when set by the caller, carry the CPN node identity.
+	if req.Trace != nil {
+		rec.TransitionID = req.Trace.SpanName
+		rec.CPNID = req.Trace.TraceID
+	}
+
+	c.CallRecorder.RecordCall(ctx, rec)
+}
+
 // Complete sends a request to the LLM and returns the response.
 // Routes to /chat/completions (EndpointChat, default) or /messages (EndpointMessages).
-func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResponse, error) {
+func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (llmResp cpn.LLMResponse, err error) {
 	resolvedModel := c.resolveModel(req.Model)
+	startedAt := time.Now()
 
 	// Build a shallow copy with the resolved model to avoid mutating the caller's request.
 	resolved := *req
 	resolved.Model = resolvedModel
+
+	// Per-call audit emission. Always fires (success or failure) so we keep
+	// a complete trail of every LLM invocation.
+	defer func() {
+		c.emitCallRecord(ctx, req, resolvedModel, false, startedAt, llmResp, err)
+	}()
 
 	var body []byte
 	var endpoint string
@@ -189,7 +264,6 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
 	}
 
-	var llmResp cpn.LLMResponse
 	switch resolved.Endpoint {
 	case cpn.EndpointMessages:
 		llmResp, err = parseMessagesResponse(resp.Body)
@@ -219,13 +293,18 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 // CompleteStream sends a streaming request to the LLM, invoking onChunk
 // for each content delta as it arrives, and returns the complete accumulated response.
 // Uses a 10-minute timeout for long-running streaming connections (CON-004).
-func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChunk func(chunk string)) (cpn.LLMResponse, error) {
+func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChunk func(chunk string)) (llmResp cpn.LLMResponse, err error) {
 	resolvedModel := c.resolveModel(req.Model)
+	startedAt := time.Now()
 
 	// Build a shallow copy with the resolved model and streaming enabled.
 	resolved := *req
 	resolved.Model = resolvedModel
 	resolved.Stream = true
+
+	defer func() {
+		c.emitCallRecord(ctx, req, resolvedModel, true, startedAt, llmResp, err)
+	}()
 
 	var body []byte
 	var endpoint string
@@ -277,7 +356,6 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 	}
 
 	sh := NewStreamHandler()
-	var llmResp cpn.LLMResponse
 	switch resolved.Endpoint {
 	case cpn.EndpointMessages:
 		llmResp, err = sh.ParseAnthropicSSEWithCallback(resp.Body, onChunk)
@@ -748,17 +826,29 @@ type openRouterToolFunction struct {
 }
 
 type openRouterUsage struct {
-	PromptTokens        int                  `json:"prompt_tokens"`
-	CompletionTokens    int                  `json:"completion_tokens"`
-	TotalCost           float64              `json:"total_cost"`
-	Cost                float64              `json:"cost"`
-	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	Cost                    float64                  `json:"cost"`
+	CostDetails             *costDetails             `json:"cost_details"`
+	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details"`
 }
 
-// promptTokensDetails holds cache metrics from the chat/completions endpoint.
+// promptTokensDetails holds cache + audio metrics from the chat/completions endpoint.
 type promptTokensDetails struct {
 	CachedTokens     int `json:"cached_tokens"`
 	CacheWriteTokens int `json:"cache_write_tokens"`
+	AudioTokens      int `json:"audio_tokens"`
+}
+
+// completionTokensDetails holds reasoning-token metrics for thinking-capable models.
+type completionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+// costDetails holds upstream cost breakdown for BYOK / passthrough providers.
+type costDetails struct {
+	UpstreamInferenceCost float64 `json:"upstream_inference_cost"`
 }
 
 // parseLLMResponse converts the chat/completions API response into an LLMResponse.
@@ -782,15 +872,15 @@ func parseLLMResponse(apiResp openRouterResponse) cpn.LLMResponse {
 	if apiResp.Usage != nil {
 		resp.InputTokens = apiResp.Usage.PromptTokens
 		resp.OutputTokens = apiResp.Usage.CompletionTokens
-		// OpenRouter uses "cost" at top-level; fall back to "total_cost" for compat.
 		resp.CostUSD = apiResp.Usage.Cost
-		if resp.CostUSD == 0 {
-			resp.CostUSD = apiResp.Usage.TotalCost
-		}
 		// Cache tokens from prompt_tokens_details (chat/completions format).
 		if apiResp.Usage.PromptTokensDetails != nil {
 			resp.CacheReadTokens = apiResp.Usage.PromptTokensDetails.CachedTokens
 			resp.CacheCreationTokens = apiResp.Usage.PromptTokensDetails.CacheWriteTokens
+		}
+		// Reasoning tokens from completion_tokens_details (thinking-capable models).
+		if apiResp.Usage.CompletionTokensDetails != nil {
+			resp.ReasoningTokens = apiResp.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 	}
 
