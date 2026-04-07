@@ -87,7 +87,7 @@ func handleJSONRPC(w http.ResponseWriter, r *http.Request, executor *BRAEExecuto
 			writeJSONRPCError(w, req.ID, CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
-		resp := executor.HandleSendMessage(r.Context(), req.ID, params, userID)
+		resp := executor.HandleSendMessage(r.Context(), req.ID, &params, userID)
 		writeJSONResponse(w, resp)
 
 	case MethodStreamMessage:
@@ -96,7 +96,7 @@ func handleJSONRPC(w http.ResponseWriter, r *http.Request, executor *BRAEExecuto
 			writeJSONRPCError(w, req.ID, CodeInvalidParams, "invalid params: "+err.Error())
 			return
 		}
-		handleStreamSSE(w, r, req.ID, params, userID, executor)
+		handleStreamSSE(w, r, req.ID, &params, userID, executor)
 
 	case MethodGetTask:
 		var params GetTaskRequest
@@ -131,7 +131,7 @@ func handleJSONRPC(w http.ResponseWriter, r *http.Request, executor *BRAEExecuto
 }
 
 // handleStreamSSE sets up SSE headers and streams A2A events.
-func handleStreamSSE(w http.ResponseWriter, r *http.Request, reqID json.RawMessage, params SendMessageRequest, userID string, executor *BRAEExecutor) {
+func handleStreamSSE(w http.ResponseWriter, r *http.Request, reqID json.RawMessage, params *SendMessageRequest, userID string, executor *BRAEExecutor) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSONRPCError(w, reqID, CodeInternalError, "streaming not supported")

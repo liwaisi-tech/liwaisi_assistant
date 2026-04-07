@@ -154,7 +154,7 @@ func TestHandleSendMessage_EmptyMessage(t *testing.T) {
 		Message: Message{Role: RoleUser, Parts: nil},
 	}
 
-	resp := exec.HandleSendMessage(ctx, reqID, req, "user-1")
+	resp := exec.HandleSendMessage(ctx, reqID, &req, "user-1")
 	if resp.Error == nil {
 		t.Fatal("expected error for empty message")
 	}

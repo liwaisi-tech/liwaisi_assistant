@@ -76,8 +76,8 @@ func buildModelRegistry(getEnv func(string) string) map[string]string {
 // [input_rate, output_rate] per 1M tokens.
 var modelCostTable = map[string][2]float64{
 	// Anthropic
-	"anthropic/claude-opus-4.6":    {15.00, 75.00},
-	"anthropic/claude-sonnet-4-6":  {3.00, 15.00},
+	"anthropic/claude-opus-4.6":   {15.00, 75.00},
+	"anthropic/claude-sonnet-4-6": {3.00, 15.00},
 	// Google
 	"google/gemini-3.1-pro-preview":        {1.25, 10.00},
 	"google/gemini-3-flash-preview":        {0.15, 0.60},
@@ -85,8 +85,8 @@ var modelCostTable = map[string][2]float64{
 	"google/gemma-4-26b-a4b-it":            {0.10, 0.20},
 	"google/gemma-3n-e4b-it":               {0.02, 0.04},
 	// Others
-	"minimax/minimax-m2.7":    {0.50, 2.00},
-	"moonshotai/kimi-k2.5":    {0.60, 2.40},
+	"minimax/minimax-m2.7": {0.50, 2.00},
+	"moonshotai/kimi-k2.5": {0.60, 2.40},
 }
 
 // ── Client ─────────────────────────────────────────────────────────

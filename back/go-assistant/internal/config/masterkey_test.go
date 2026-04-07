@@ -70,7 +70,7 @@ func TestLoadOrGenerateMasterKey_SelfHealsLooseParentDir(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatalf("chmod dir: %v", err)
 	}
-	defer os.Chmod(dir, 0o700) //nolint:errcheck
+	defer os.Chmod(dir, 0o700) //nolint:errcheck // best-effort cleanup; t.TempDir handles removal
 
 	if _, err := LoadOrGenerateMasterKey(path); err != nil {
 		t.Fatalf("expected self-heal to succeed, got: %v", err)

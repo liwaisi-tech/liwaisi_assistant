@@ -98,11 +98,11 @@ const (
 
 // Task represents an A2A task — a unit of work mapped to a CPN session execution.
 type Task struct {
-	ID        string      `json:"id"`
-	ContextID string      `json:"contextId"`
-	Status    TaskStatus  `json:"status"`
-	History   []Message   `json:"history,omitempty"`
-	Artifacts []Artifact  `json:"artifacts,omitempty"`
+	ID        string         `json:"id"`
+	ContextID string         `json:"contextId"`
+	Status    TaskStatus     `json:"status"`
+	History   []Message      `json:"history,omitempty"`
+	Artifacts []Artifact     `json:"artifacts,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
@@ -185,17 +185,17 @@ type CancelTaskRequest struct {
 
 // AgentCard is the JSON metadata document describing an agent's capabilities.
 type AgentCard struct {
-	Name                 string              `json:"name"`
-	Description          string              `json:"description"`
-	Version              string              `json:"version"`
-	Provider             AgentProvider       `json:"provider"`
-	SupportedInterfaces  []AgentInterface    `json:"supportedInterfaces"`
-	Capabilities         AgentCapabilities   `json:"capabilities"`
-	SecuritySchemes      map[string]any      `json:"securitySchemes"`
-	SecurityRequirements [][]string          `json:"securityRequirements"`
-	DefaultInputModes    []string            `json:"defaultInputModes"`
-	DefaultOutputModes   []string            `json:"defaultOutputModes"`
-	Skills               []AgentSkill        `json:"skills"`
+	Name                 string            `json:"name"`
+	Description          string            `json:"description"`
+	Version              string            `json:"version"`
+	Provider             AgentProvider     `json:"provider"`
+	SupportedInterfaces  []AgentInterface  `json:"supportedInterfaces"`
+	Capabilities         AgentCapabilities `json:"capabilities"`
+	SecuritySchemes      map[string]any    `json:"securitySchemes"`
+	SecurityRequirements [][]string        `json:"securityRequirements"`
+	DefaultInputModes    []string          `json:"defaultInputModes"`
+	DefaultOutputModes   []string          `json:"defaultOutputModes"`
+	Skills               []AgentSkill      `json:"skills"`
 }
 
 // AgentProvider describes the organization behind the agent.

@@ -64,7 +64,8 @@ func TestCPNMessageToA2A(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := m.CPNMessageToA2A(tt.msg)
+			msg := tt.msg
+			got := m.CPNMessageToA2A(&msg)
 			if got.Role != tt.expectedRole {
 				t.Errorf("role = %q, want %q", got.Role, tt.expectedRole)
 			}
@@ -143,10 +144,10 @@ func TestCPNEventToA2AEvent_StreamChunk(t *testing.T) {
 	m := NewMapper()
 
 	tests := []struct {
-		name      string
-		chunk     cpn.StreamChunk
-		wantText  string
-		wantLast  bool
+		name       string
+		chunk      cpn.StreamChunk
+		wantText   string
+		wantLast   bool
 		wantAppend bool
 	}{
 		{
@@ -168,7 +169,7 @@ func TestCPNEventToA2AEvent_StreamChunk(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			evt := cpn.Event{Type: cpn.EventStreamChunk, Payload: tt.chunk}
-			result := m.CPNEventToA2AEvent("task-1", "ctx-1", evt)
+			result := m.CPNEventToA2AEvent("task-1", "ctx-1", &evt)
 			if result == nil {
 				t.Fatal("expected non-nil result")
 			}
@@ -205,7 +206,7 @@ func TestCPNEventToA2AEvent_HITLRequested(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	result := m.CPNEventToA2AEvent("task-1", "ctx-1", evt)
+	result := m.CPNEventToA2AEvent("task-1", "ctx-1", &evt)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -233,7 +234,7 @@ func TestCPNEventToA2AEvent_HITLResolved(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	result := m.CPNEventToA2AEvent("task-1", "ctx-1", evt)
+	result := m.CPNEventToA2AEvent("task-1", "ctx-1", &evt)
 	statusEvt, ok := result.(*TaskStatusUpdateEvent)
 	if !ok {
 		t.Fatalf("expected *TaskStatusUpdateEvent, got %T", result)
@@ -247,7 +248,7 @@ func TestCPNEventToA2AEvent_Unhandled(t *testing.T) {
 	m := NewMapper()
 
 	evt := cpn.Event{Type: cpn.EventTokenDeposited}
-	result := m.CPNEventToA2AEvent("task-1", "ctx-1", evt)
+	result := m.CPNEventToA2AEvent("task-1", "ctx-1", &evt)
 	if result != nil {
 		t.Errorf("expected nil for unhandled event type, got %T", result)
 	}

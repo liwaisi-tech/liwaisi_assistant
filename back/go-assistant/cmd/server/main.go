@@ -230,7 +230,7 @@ func main() {
 		// For HITL requests, also emit an A2UI review card as a stream chunk.
 		// The agent drives the UI: the backend decides what interface to show.
 		//
-		// When the transition already published its own A2UI surface (signalled
+		// When the transition already published its own A2UI surface (signaled
 		// via HITLRequestedPayload{CustomSurface:true}), the default card is
 		// suppressed — emitting both would concatenate two "$$a2ui:" chunks
 		// into one streaming assistant message, breaking JSON.parse on the
@@ -285,9 +285,8 @@ func main() {
 		// Composite handler: A2A paths handled by a2aMux, rest by httpapi.
 		restHandler := topHandler
 		topHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case r.URL.Path == "/.well-known/agent-card.json",
-				r.URL.Path == "/a2a":
+			switch r.URL.Path {
+			case "/.well-known/agent-card.json", "/a2a":
 				a2aMux.ServeHTTP(w, r)
 			default:
 				restHandler.ServeHTTP(w, r)
