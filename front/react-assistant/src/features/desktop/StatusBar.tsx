@@ -66,7 +66,7 @@ export function StatusBar({ sessionState, isConnected, activeApp = 'chat', perso
               color: 'var(--text-primary)',
             }}
           >
-            Liwaisi<span style={{ color: 'var(--accent)', marginLeft: '4px' }}>OS</span>
+            brae<span style={{ color: 'var(--accent)', marginLeft: '4px' }}>OS</span>
           </h1>
         </div>
       </div>

@@ -8,15 +8,15 @@
     "signIn": "Sign In"
   },
   "hero": {
-    "logoAlt": "Liwaisi",
-    "title": "AI that works like <accent>your best team</accent>",
-    "subtitle": "Transparent, auditable, and always under your control. Powered by Coloured Petri Nets. Built for rural innovation.",
+    "logoAlt": "brae",
+    "title": "brae — <accent>Being a Real AI Engineer</accent>",
+    "subtitle": "A new kind of agentic engine. Not another chatbot, not another wrapper — a transparent, auditable runtime powered by Coloured Petri Nets. brae engineers outcomes you can trust.",
     "earlyAccessNote": "Join our early access program. B2B only — we'll reach out personally."
   },
   "whatIs": {
-    "eyebrow": "What is Liwaisi Assistant?",
-    "title": "An AI operating system where <accent>every decision is visible</accent>",
-    "description": "Unlike black-box AI, Liwaisi Assistant uses a Coloured Petri Net engine to orchestrate AI workflows with mathematical precision. Every token of data, every transition, every decision — visible and auditable in real time. Your team stays in control at every step.",
+    "eyebrow": "What is brae?",
+    "title": "A new kind of agentic engine where <accent>every decision is visible</accent>",
+    "description": "brae — Being a Real AI Engineer — isn't a chatbot and isn't a prompt wrapper. It's an agentic runtime built on a Coloured Petri Net engine that orchestrates AI workflows with mathematical precision. Every token of data, every transition, every decision — visible and auditable in real time. Your team stays in control at every step.",
     "pillars": {
       "transparent": {
         "title": "Transparent",
@@ -125,8 +125,8 @@
   },
   "footerCta": {
     "eyebrow": "Early Access",
-    "title": "Ready to see AI <accent>you can trust</accent>?",
-    "description": "We work directly with each partner to build AI workflows tailored to your needs. No black boxes. No surprises.",
+    "title": "Ready to run an <accent>agentic engine you can trust</accent>?",
+    "description": "brae is built with each partner directly. Real engineering, real workflows, real accountability. No black boxes. No surprises.",
     "alreadyHaveAccess": "Already have access?",
     "signIn": "Sign in",
     "stats": {
@@ -164,9 +164,9 @@
     "youtubeAriaLabel": "Visit Liwaisi Tech YouTube channel"
   },
   "signInModal": {
-    "ariaLabel": "Sign in to Liwaisi Assistant",
+    "ariaLabel": "Sign in to brae",
     "closeAriaLabel": "Close sign-in dialog",
-    "title": "Welcome to Liwaisi",
+    "title": "Welcome to brae",
     "subtitle": "Sign in to access your AI command center",
     "dataPrivacy": "We only request basic profile info. Your data stays yours.",
     "divider": "or join waitlist",

@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "Liwaisi Assistant",
+    "title": "brae",
     "newConversation": "Nueva conversacion",
     "signOut": "Cerrar sesion"
   },
@@ -36,8 +36,8 @@
     "hint": "Presiona Enter para enviar, Shift+Enter para nueva linea"
   },
   "messageList": {
-    "welcomeTitle": "Liwaisi",
-    "welcomeSubtitle": "Tu espacio de trabajo impulsado por IA",
+    "welcomeTitle": "brae",
+    "welcomeSubtitle": "Being a Real AI Engineer",
     "suggestions": {
       "explainCpn": "Explicar la arquitectura CPN",
       "helpGoCode": "Ayudame a escribir codigo Go",
