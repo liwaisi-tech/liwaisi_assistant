@@ -19,20 +19,34 @@ var _ cpn.LLMClient = (*Client)(nil)
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
-// defaultModelRegistry holds the default model for each task role.
+// DefaultModelRegistry holds the default model for each task role.
 // Using the cheapest model that can do the job operationalizes Axiom A11.
-// Override any entry via its environment variable (see modelEnvVars).
-var defaultModelRegistry = map[string]string{
-	"classifier":   "google/gemini-2.0-flash-001",
-	"structured":   "anthropic/claude-haiku-4-5-20251001",
+// Override any entry via its environment variable (see ModelEnvVars).
+var DefaultModelRegistry = map[string]string{
+	"classifier":   "google/gemma-3n-e4b-it",
+	"structured":   "anthropic/claude-sonnet-4-6",
 	"reasoning":    "anthropic/claude-sonnet-4-6",
-	"long-context": "google/gemini-2.0-pro-001",
-	"summarize":    "meta-llama/llama-3.3-8b-instruct",
-	"thinking":     "anthropic/claude-opus-4-6",
+	"long-context": "google/gemini-3.1-pro-preview",
+	"summarize":    "google/gemma-4-26b-a4b-it",
+	"thinking":     "anthropic/claude-opus-4.6",
 }
 
-// modelEnvVars maps each registry key to the environment variable that overrides it.
-var modelEnvVars = map[string]string{
+// AvailableModels lists all models offered to users for selection.
+// Ordered by provider then capability tier.
+var AvailableModels = []string{
+	"anthropic/claude-opus-4.6",
+	"anthropic/claude-sonnet-4-6",
+	"google/gemini-3.1-pro-preview",
+	"google/gemini-3-flash-preview",
+	"google/gemini-3.1-flash-lite-preview",
+	"google/gemma-4-26b-a4b-it",
+	"google/gemma-3n-e4b-it",
+	"minimax/minimax-m2.7",
+	"moonshotai/kimi-k2.5",
+}
+
+// ModelEnvVars maps each registry key to the environment variable that overrides it.
+var ModelEnvVars = map[string]string{
 	"classifier":   "MODEL_CLASSIFIER",
 	"structured":   "MODEL_STRUCTURED",
 	"reasoning":    "MODEL_REASONING",
@@ -45,9 +59,9 @@ var modelEnvVars = map[string]string{
 // with fallback to defaults. The getEnv parameter enables testing without
 // manipulating real environment variables.
 func buildModelRegistry(getEnv func(string) string) map[string]string {
-	registry := make(map[string]string, len(defaultModelRegistry))
-	for key, defaultModel := range defaultModelRegistry {
-		if envVar, ok := modelEnvVars[key]; ok {
+	registry := make(map[string]string, len(DefaultModelRegistry))
+	for key, defaultModel := range DefaultModelRegistry {
+		if envVar, ok := ModelEnvVars[key]; ok {
 			if v := getEnv(envVar); v != "" {
 				registry[key] = v
 				continue
@@ -61,12 +75,18 @@ func buildModelRegistry(getEnv func(string) string) map[string]string {
 // modelCostTable holds per-model pricing in USD per 1M tokens.
 // [input_rate, output_rate] per 1M tokens.
 var modelCostTable = map[string][2]float64{
-	"google/gemini-2.0-flash-001":         {0.10, 0.40},
-	"anthropic/claude-haiku-4-5-20251001": {1.00, 5.00},
-	"anthropic/claude-sonnet-4-6":         {3.00, 15.00},
-	"google/gemini-2.0-pro-001":           {1.25, 5.00},
-	"meta-llama/llama-3.3-8b-instruct":    {0.05, 0.08},
-	"anthropic/claude-opus-4-6":           {15.00, 75.00},
+	// Anthropic
+	"anthropic/claude-opus-4.6":    {15.00, 75.00},
+	"anthropic/claude-sonnet-4-6":  {3.00, 15.00},
+	// Google
+	"google/gemini-3.1-pro-preview":        {1.25, 10.00},
+	"google/gemini-3-flash-preview":        {0.15, 0.60},
+	"google/gemini-3.1-flash-lite-preview": {0.075, 0.30},
+	"google/gemma-4-26b-a4b-it":            {0.10, 0.20},
+	"google/gemma-3n-e4b-it":               {0.02, 0.04},
+	// Others
+	"minimax/minimax-m2.7":    {0.50, 2.00},
+	"moonshotai/kimi-k2.5":    {0.60, 2.40},
 }
 
 // ── Client ─────────────────────────────────────────────────────────

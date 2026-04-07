@@ -1,0 +1,62 @@
+{
+  "progress": {
+    "step1": "Bienvenida",
+    "step2": "Idioma",
+    "step3": "Modelo",
+    "step4": "Personalidad",
+    "step5": "Listo"
+  },
+  "skip": "Saltar configuracion",
+  "back": "Atras",
+  "next": "Siguiente",
+  "welcome": {
+    "title": "Bienvenido a brae",
+    "description": "Configuremos tu experiencia en aproximadamente 1 minuto.",
+    "cta": "Comenzar"
+  },
+  "language": {
+    "title": "Elige tu idioma",
+    "description": "Selecciona tu idioma preferido. Puedes cambiarlo en cualquier momento.",
+    "en": {
+      "name": "English",
+      "greeting": "Hello! How can I help you today?"
+    },
+    "es": {
+      "name": "Espanol",
+      "greeting": "Hola! En que puedo ayudarte hoy?"
+    }
+  },
+  "model": {
+    "title": "Preferencia de modelo IA",
+    "description": "Elige el modelo de IA predeterminado para tus conversaciones.",
+    "advanced": "Avanzado: Ajustes por rol",
+    "keepDefaults": "Mantener los valores recomendados"
+  },
+  "personality": {
+    "title": "Elige el estilo de tu IA",
+    "description": "Selecciona como debe comportarse tu asistente. Puedes personalizarlo despues.",
+    "balanced": {
+      "name": "Equilibrado",
+      "description": "Claro, amable y enfocado en la privacidad. El predeterminado recomendado."
+    },
+    "creative": {
+      "name": "Creativo",
+      "description": "Explorador, audaz y lleno de ideas. Ideal para lluvia de ideas."
+    },
+    "precise": {
+      "name": "Preciso",
+      "description": "Riguroso, estructurado y metodico. Perfecto para trabajo tecnico."
+    },
+    "custom": "Personalizar despues"
+  },
+  "ready": {
+    "title": "Todo listo!",
+    "description": "Tus preferencias han sido guardadas. Comencemos a conversar.",
+    "summary": "Tus elecciones",
+    "language_label": "Idioma",
+    "model_label": "Modelo predeterminado",
+    "personality_label": "Estilo de IA",
+    "cta": "Comenzar a conversar",
+    "saving": "Guardando tus preferencias..."
+  }
+}

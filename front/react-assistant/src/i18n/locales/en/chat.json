@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "Liwaisi Assistant",
+    "title": "brae",
     "newConversation": "New conversation",
     "signOut": "Sign out"
   },
@@ -36,8 +36,8 @@
     "hint": "Press Enter to send, Shift+Enter for newline"
   },
   "messageList": {
-    "welcomeTitle": "Liwaisi",
-    "welcomeSubtitle": "Your AI-powered workspace",
+    "welcomeTitle": "brae",
+    "welcomeSubtitle": "Being a Real AI Engineer",
     "suggestions": {
       "explainCpn": "Explain CPN architecture",
       "helpGoCode": "Help me write Go code",
@@ -63,5 +63,9 @@
   },
   "streaming": {
     "thinking": "Assistant is thinking"
+  },
+  "a2ui": {
+    "unknownComponent": "Unsupported component: {{type}}",
+    "loading": "Loading interactive content..."
   }
 }

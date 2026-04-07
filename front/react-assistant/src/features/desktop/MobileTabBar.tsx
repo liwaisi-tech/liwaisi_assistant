@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
 
 interface MobileTabBarProps {
   activeApp: ActiveApp;

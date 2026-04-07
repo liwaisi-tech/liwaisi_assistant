@@ -30,7 +30,7 @@ export interface SendMessageRequest {
 }
 
 export interface ResolveHITLRequest {
-  action: 'approve' | 'reject' | 'revise';
+  action: 'approve' | 'reject' | 'revise' | 'submit';
   content?: string;
 }
 

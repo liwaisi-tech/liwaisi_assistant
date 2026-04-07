@@ -5,6 +5,7 @@
     "monitor": "Monitor",
     "tools": "Herramientas",
     "identity": "Identidad",
+    "admin": "Admin",
     "settings": "Configuracion"
   },
   "commandPalette": {
@@ -31,14 +32,15 @@
     }
   },
   "statusBar": {
-    "title": "Liwaisi",
+    "title": "brae",
     "titleSuffix": "OS",
     "appLabels": {
       "chat": "Chat",
       "flows": "Flujos",
       "monitor": "Monitor",
       "personality": "Identidad",
-      "tools": "Herramientas"
+      "tools": "Herramientas",
+      "admin": "Admin"
     },
     "signOut": "Cerrar sesion"
   },

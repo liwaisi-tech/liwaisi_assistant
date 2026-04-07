@@ -124,6 +124,10 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*UserRecord, error)
 	// GetByEmail retrieves a user by email. Returns ErrUserNotFound if absent.
 	GetByEmail(ctx context.Context, email string) (*UserRecord, error)
+	// UpdatePreferences persists user preference settings.
+	UpdatePreferences(ctx context.Context, userID string, prefs *UserPreferences) error
+	// CompleteOnboarding marks the user's onboarding as completed.
+	CompleteOnboarding(ctx context.Context, userID string) error
 }
 
 // WaitlistRepository manages early-access email collection.

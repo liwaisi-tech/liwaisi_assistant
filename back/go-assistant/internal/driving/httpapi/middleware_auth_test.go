@@ -38,7 +38,7 @@ func echoHandler() http.Handler {
 func TestAuthMiddleware_NilVerifier_DevMode(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.AuthMiddleware(nil, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(nil, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestAuthMiddleware_ValidBearerToken(t *testing.T) {
 		},
 	}
 
-	handler := httpapi.AuthMiddleware(verifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(verifier, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -94,7 +94,7 @@ func TestAuthMiddleware_ValidQueryParamToken(t *testing.T) {
 		},
 	}
 
-	handler := httpapi.AuthMiddleware(verifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(verifier, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/abc/events?token=valid-token", nil)
 	rec := httptest.NewRecorder()
@@ -115,7 +115,7 @@ func TestAuthMiddleware_MissingToken(t *testing.T) {
 	t.Parallel()
 
 	verifier := &mockVerifier{}
-	handler := httpapi.AuthMiddleware(verifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(verifier, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	rec := httptest.NewRecorder()
@@ -138,7 +138,7 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	verifier := &mockVerifier{
 		err: errors.New("invalid token"),
 	}
-	handler := httpapi.AuthMiddleware(verifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(verifier, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer bad-token")
@@ -156,7 +156,7 @@ func TestAuthMiddleware_BearerPrefixRequired(t *testing.T) {
 	verifier := &mockVerifier{
 		user: &auth.AuthenticatedUser{Sub: "ignored"},
 	}
-	handler := httpapi.AuthMiddleware(verifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(verifier, nil, nil)(echoHandler())
 
 	// Authorization header without "Bearer " prefix.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
@@ -179,7 +179,7 @@ func TestAuthMiddleware_HeaderTakesPrecedenceOverQuery(t *testing.T) {
 	// Wrap to count calls.
 	countingVerifier := &countingMockVerifier{inner: verifier, count: &callCount}
 
-	handler := httpapi.AuthMiddleware(countingVerifier, nil)(echoHandler())
+	handler := httpapi.AuthMiddleware(countingVerifier, nil, nil)(echoHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions?token=query-token", nil)
 	req.Header.Set("Authorization", "Bearer header-token")

@@ -185,7 +185,7 @@ body {
 .markdown-body p { margin: 0.5em 0; }
 
 /* -- Inline code -- */
-.markdown-body code:not(pre code) {
+.markdown-body code:not(pre code):not(.code-block-wrapper code) {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.8em;
   background: var(--bg-input);
@@ -195,8 +195,13 @@ body {
   color: #7dd3fc;
 }
 
-/* -- Code blocks -- */
-.markdown-body pre {
+/* -- Code blocks --
+ * The single styled box lives on `.code-block-wrapper`. We deliberately do
+ * NOT style `.markdown-body pre` because that selector would also match the
+ * inner <pre> emitted by react-syntax-highlighter, producing a double box.
+ * `PreBlock` overrides react-markdown's default <pre> with this wrapper.
+ */
+.code-block-wrapper {
   position: relative;
   background: var(--bg-deep);
   border: 1px solid var(--border-dim);
@@ -210,7 +215,17 @@ body {
     0 0 8px -2px var(--accent-glow);
 }
 
-.markdown-body pre code {
+.code-block-wrapper .code-block-pre,
+.code-block-wrapper pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.code-block-wrapper code {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.8125rem;
   line-height: 1.6;
@@ -218,11 +233,6 @@ body {
   border: none;
   padding: 0;
   color: var(--text-primary);
-}
-
-/* Code block wrapper (positioned relative for badge + copy button) */
-.code-block-wrapper {
-  position: relative;
 }
 
 /* -- Language badge -- */

@@ -20,7 +20,7 @@ type ChatAction =
   | { type: 'SET_SENDING' }
   | { type: 'SET_ERROR'; error: string }
   | { type: 'CLEAR_ERROR' }
-  | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string }
+  | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string; suppressBubble?: boolean }
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
   | { type: 'RESET' };
 
@@ -127,20 +127,22 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sessionState: 'waiting',
-        messages: [
-          ...state.messages,
-          {
-            id: `hitl-${action.transitionId}-${Date.now()}`,
-            role: 'assistant',
-            content: action.prompt,
-            isStreaming: false,
-            cpnId: action.cpnId,
-            cpnRole: action.cpnRole,
-            timestamp: new Date(),
-            hitlTransitionId: action.transitionId,
-            hitlActions: ['approve', 'reject'],
-          },
-        ],
+        messages: action.suppressBubble
+          ? state.messages
+          : [
+              ...state.messages,
+              {
+                id: `hitl-${action.transitionId}-${Date.now()}`,
+                role: 'assistant',
+                content: action.prompt,
+                isStreaming: false,
+                cpnId: action.cpnId,
+                cpnRole: action.cpnRole,
+                timestamp: new Date(),
+                hitlTransitionId: action.transitionId,
+                hitlActions: ['approve', 'reject'],
+              },
+            ],
       };
 
     case 'HITL_RESOLVED':
@@ -249,6 +251,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
   const onHITLRequested = useCallback((data: CPNEventData) => {
     let planContent = '';
     let prompt = 'Please review and confirm.';
+    let customSurface = false;
 
     if (typeof data.Payload === 'string') {
       prompt = data.Payload;
@@ -256,6 +259,12 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
       const p = data.Payload as Record<string, unknown>;
       if (typeof p.prompt === 'string') prompt = p.prompt;
       if (typeof p.content === 'string') planContent = p.content;
+      // Backend signals via HITLRequestedPayload.CustomSurface that the
+      // transition already pushed its own A2UI surface (e.g. questionnaire)
+      // through the stream_chunk path. In that case we must NOT create an
+      // extra prompt bubble — the surface already contains everything the
+      // user needs to see and act on.
+      if (p.custom_surface === true) customSurface = true;
     }
 
     if (planContent) {
@@ -277,6 +286,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
       prompt,
       cpnId: data.CPNID,
       cpnRole: data.CPNRole,
+      suppressBubble: customSurface,
     });
   }, []);
 
@@ -294,11 +304,14 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
   });
 
   const handleResolveHITL = useCallback(
-    async (transitionId: string, action: HITLAction) => {
+    async (transitionId: string, action: HITLAction, content?: string) => {
       if (!sessionId) return;
       dispatch({ type: 'HITL_RESOLVED', transitionId, action });
       try {
-        await apiResolveHITL(sessionId, transitionId, { action });
+        await apiResolveHITL(sessionId, transitionId, {
+          action,
+          ...((action === 'revise' || action === 'submit') && content ? { content } : {}),
+        });
       } catch (err) {
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
       }

@@ -1,0 +1,31 @@
+{
+  "title": "Configuracion de plataforma",
+  "subtitle": "Gestionar secretos y configuraciones de la plataforma",
+  "setupRequired": "Configuracion requerida: faltan algunas configuraciones obligatorias.",
+  "refresh": "Actualizar",
+  "categories": {
+    "llm": "Configuracion LLM",
+    "auth": "Autenticacion",
+    "server": "Configuracion del servidor",
+    "models": "Modelos personalizados"
+  },
+  "source": {
+    "env": "ENV",
+    "db": "DB",
+    "default": "DEFAULT"
+  },
+  "field": {
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "reveal": "Mostrar valor",
+    "hide": "Ocultar valor",
+    "locked": "Definido por variable de entorno — tiene precedencia sobre el valor en BD",
+    "saving": "Guardando...",
+    "saved": "Guardado",
+    "deleted": "Eliminado",
+    "error": "Error al guardar"
+  },
+  "loading": "Cargando configuracion...",
+  "error": "Error al cargar la configuracion",
+  "retry": "Reintentar"
+}

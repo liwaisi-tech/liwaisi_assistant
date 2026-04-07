@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useChatList } from './useChatList';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
 
 /**
  * Manages navigation state and coordinates chat session lifecycle.

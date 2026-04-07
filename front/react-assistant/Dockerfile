@@ -23,6 +23,9 @@ FROM nginx:1.27-alpine
 # Remove default config
 RUN rm /etc/nginx/conf.d/default.conf
 
+# Move PID file to /run (writable as tmpfs with read_only container)
+RUN sed -i 's|/var/run/nginx.pid|/run/nginx.pid|' /etc/nginx/nginx.conf
+
 # Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 

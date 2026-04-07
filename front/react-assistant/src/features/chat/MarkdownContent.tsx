@@ -6,7 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Components } from 'react-markdown';
-import { CodeBlock } from './CodeBlock.tsx';
+import { CodeBlock, PreBlock } from './CodeBlock.tsx';
 
 // --- Module-level constants (rerender-memo / rerender-no-inline-components) ---
 // Stable references prevent react-markdown from re-initializing its
@@ -74,6 +74,7 @@ function DisabledImage() {
 
 const markdownComponents: Components = {
   code: CodeBlock,
+  pre: PreBlock,
   a: CustomLink,
   table: ScrollableTable,
   img: DisabledImage,

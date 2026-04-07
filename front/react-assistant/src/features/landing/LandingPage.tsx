@@ -121,7 +121,7 @@ function LandingNav({ onSignIn }: { onSignIn: () => void }) {
     >
       <div className="max-w-6xl mx-auto px-4 sm:px-8 h-14 flex items-center justify-between">
         <a href="#hero" className="shrink-0">
-          <img src="/liwaisi_logo_dark_bg.svg" alt="Liwaisi" className="h-6 w-auto" />
+          <img src="/liwaisi_logo_dark_bg.svg" alt="brae" className="h-6 w-auto" />
         </a>
 
         <div className="flex items-center gap-6">

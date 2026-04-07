@@ -8,15 +8,15 @@
     "signIn": "Iniciar sesión"
   },
   "hero": {
-    "logoAlt": "Liwaisi",
-    "title": "IA que trabaja como <accent>tu mejor equipo</accent>",
-    "subtitle": "Transparente, auditable y siempre bajo tu control. Impulsada por Coloured Petri Nets. Construida para la innovación rural.",
+    "logoAlt": "brae",
+    "title": "brae — <accent>Being a Real AI Engineer</accent>",
+    "subtitle": "Una nueva clase de motor agentico. Ni un chatbot mas, ni otro wrapper de prompts: un runtime transparente y auditable impulsado por Coloured Petri Nets. brae ingenieria resultados en los que puedes confiar.",
     "earlyAccessNote": "Únete a nuestro programa de acceso anticipado. Solo B2B; te contactaremos personalmente."
   },
   "whatIs": {
-    "eyebrow": "¿Qué es Liwaisi Assistant?",
-    "title": "Un sistema operativo de IA donde <accent>cada decisión es visible</accent>",
-    "description": "A diferencia de la IA de caja negra, Liwaisi Assistant usa un motor de Coloured Petri Net para orquestar flujos de trabajo de IA con precisión matemática. Cada token de datos, cada transición, cada decisión: visible y auditable en tiempo real. Tu equipo mantiene el control en cada paso.",
+    "eyebrow": "¿Qué es brae?",
+    "title": "Una nueva clase de motor agentico donde <accent>cada decisión es visible</accent>",
+    "description": "brae — Being a Real AI Engineer — no es un chatbot ni un wrapper de prompts. Es un runtime agentico construido sobre un motor de Coloured Petri Nets que orquesta flujos de trabajo de IA con precisión matemática. Cada token de datos, cada transición, cada decisión: visible y auditable en tiempo real. Tu equipo mantiene el control en cada paso.",
     "pillars": {
       "transparent": {
         "title": "Transparente",
@@ -125,8 +125,8 @@
   },
   "footerCta": {
     "eyebrow": "Acceso anticipado",
-    "title": "¿Listo para ver IA <accent>en la que puedes confiar</accent>?",
-    "description": "Trabajamos directamente con cada socio para construir flujos de trabajo de IA adaptados a tus necesidades. Sin cajas negras. Sin sorpresas.",
+    "title": "¿Listo para correr un <accent>motor agentico en el que puedes confiar</accent>?",
+    "description": "brae se construye directamente con cada socio. Ingeniería real, flujos reales, responsabilidad real. Sin cajas negras. Sin sorpresas.",
     "alreadyHaveAccess": "¿Ya tienes acceso?",
     "signIn": "Iniciar sesión",
     "stats": {
@@ -164,9 +164,9 @@
     "youtubeAriaLabel": "Visitar el canal de YouTube de Liwaisi Tech"
   },
   "signInModal": {
-    "ariaLabel": "Iniciar sesión en Liwaisi Assistant",
+    "ariaLabel": "Iniciar sesión en brae",
     "closeAriaLabel": "Cerrar diálogo de inicio de sesión",
-    "title": "Bienvenido a Liwaisi",
+    "title": "Bienvenido a brae",
     "subtitle": "Inicia sesión para acceder a tu centro de comando de IA",
     "dataPrivacy": "Solo solicitamos información básica del perfil. Tus datos son tuyos.",
     "divider": "o únete a la lista de espera",

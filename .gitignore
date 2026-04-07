@@ -3,3 +3,7 @@ skills-lock.json
 .claude/
 .handle-issue-state.json
 node_modules/
+
+# SOPS / age
+*.age.key
+keys.txt

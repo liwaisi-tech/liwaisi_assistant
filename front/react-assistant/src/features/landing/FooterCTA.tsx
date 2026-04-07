@@ -174,7 +174,7 @@ export function FooterCTA({ onSignIn }: FooterCTAProps) {
               <div className="flex items-center gap-3 mb-4">
                 <img
                   src="/liwaisi_logo_dark_bg.svg"
-                  alt="Liwaisi"
+                  alt="Liwaisi Tech"
                   className="h-8 w-auto"
                 />
                 <span

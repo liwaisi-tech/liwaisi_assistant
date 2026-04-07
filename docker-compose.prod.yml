@@ -1,0 +1,41 @@
+# Production overlay — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Applies security hardening on top of the base docker-compose.yml:
+#   - Ports bound to 127.0.0.1 (only reachable via host nginx)
+#   - Read-only filesystems, dropped capabilities, no privilege escalation
+#   - Frontend on port 3000 (host nginx handles 80/443 with TLS)
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  backend:
+    ports:
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+
+  frontend:
+    ports:
+      - "127.0.0.1:3000:80"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /run
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
