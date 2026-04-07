@@ -469,14 +469,10 @@ no meta-questions, sensible "recommended", user's language.`)
 	tClarify := cpn.NewTransition("t-clarify", cpn.NodeKindHITL,
 		[]string{"p-questions"}, []string{"p-clarified"})
 	tClarify.HITLConfig = &cpn.HITLConfig{
-		Prompt:       "Answer the questionnaire to clarify your request.",
-		RevisionLoop: false,
-		A2UIPayloadBuilder: func(consumed []cpn.Token) (any, error) {
-			return buildClarifyA2UIPayload(consumed)
-		},
-		OutputBuilder: func(consumed []cpn.Token, resp cpn.HITLResponse) (cpn.Token, error) {
-			return buildClarifiedToken(consumed, resp)
-		},
+		Prompt:             "Answer the questionnaire to clarify your request.",
+		RevisionLoop:       false,
+		A2UIPayloadBuilder: buildClarifyA2UIPayload,
+		OutputBuilder:      buildClarifiedToken,
 	}
 
 	// t-review: HITL gate — waits for user approval.
@@ -544,8 +540,8 @@ type questionnaireOption struct {
 // firstQuestionnaireFromTokens decodes the first ColorJSON / string-payload
 // token in consumed as a questionnaireSpec.
 func firstQuestionnaireFromTokens(consumed []cpn.Token) (questionnaireSpec, error) {
-	for _, tok := range consumed {
-		s, ok := tok.Payload.(string)
+	for i := range consumed {
+		s, ok := consumed[i].Payload.(string)
 		if !ok {
 			continue
 		}

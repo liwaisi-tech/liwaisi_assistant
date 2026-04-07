@@ -27,5 +27,10 @@
   },
   "loading": "Cargando configuracion...",
   "error": "Error al cargar la configuracion",
+  "errors": {
+    "forbidden": "No tienes acceso de administrador.",
+    "unavailable": "El servicio de administracion no esta disponible.",
+    "generic": "No se pudo cargar la configuracion."
+  },
   "retry": "Reintentar"
 }

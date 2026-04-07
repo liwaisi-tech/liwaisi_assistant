@@ -49,8 +49,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("GET /api/v1/models", h.HandleGetModels)
 
 	// Admin config (admin-only, except status which is public)
-	if h.AdminEmail != "" {
-		adminAuth := AdminMiddleware(h.AdminEmail)
+	if len(h.AdminEmails) > 0 {
+		adminAuth := AdminMiddleware(h.AdminEmails)
 		mux.Handle("GET /api/v1/admin/config", adminAuth(http.HandlerFunc(h.HandleListConfig)))
 		mux.Handle("PUT /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleSetConfig)))
 		mux.Handle("DELETE /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleDeleteConfig)))

@@ -44,7 +44,7 @@ func (m *Mapper) StateToA2A(state cpn.State) string {
 }
 
 // CPNMessageToA2A converts a CPN Message to an A2A Message.
-func (m *Mapper) CPNMessageToA2A(msg cpn.Message) Message {
+func (m *Mapper) CPNMessageToA2A(msg *cpn.Message) Message {
 	role := RoleUser
 	if msg.Role == cpn.RoleAssistant || msg.Role == cpn.RoleObserver {
 		role = RoleAgent
@@ -88,7 +88,7 @@ func (m *Mapper) TokenPayloadToPart(payload any) Part {
 //
 // Per REQ-009: EventStreamChunk -> TaskArtifactUpdateEvent with append=true.
 // Per REQ-010: EventHITLRequested -> TaskStatusUpdateEvent with INPUT_REQUIRED.
-func (m *Mapper) CPNEventToA2AEvent(taskID, contextID string, evt cpn.Event) any {
+func (m *Mapper) CPNEventToA2AEvent(taskID, contextID string, evt *cpn.Event) any {
 	switch evt.Type {
 	case cpn.EventStreamChunk:
 		chunk, ok := evt.Payload.(cpn.StreamChunk)
@@ -164,9 +164,10 @@ func (m *Mapper) SessionInfoToTask(sessionID string, state cpn.State, createdAt 
 	a2aState := m.StateToA2A(state)
 
 	// Build history from session messages.
-	var history []Message
+	history := make([]Message, 0, len(messages))
 	var artifactParts []Part
-	for _, msg := range messages {
+	for i := range messages {
+		msg := &messages[i]
 		a2aMsg := m.CPNMessageToA2A(msg)
 		history = append(history, a2aMsg)
 		if msg.Role == cpn.RoleAssistant {

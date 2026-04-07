@@ -188,12 +188,18 @@ func main() {
 	serverOpts = append(serverOpts, httpapi.WithRateLimiting(httpapi.DefaultRateLimitConfig()))
 
 	// ── Admin config ───────────────────────────────────────────────────
-	adminEmail := envOr("ADMIN_EMAIL", "dev@localhost")
 	if configProvider != nil {
 		serverOpts = append(serverOpts, httpapi.WithConfigProvider(configProvider))
 	}
-	serverOpts = append(serverOpts, httpapi.WithAdminEmail(adminEmail))
-	logger.Info("admin email configured", slog.String("admin", adminEmail))
+	adminEmails := resolveAdminEmails(logger)
+	serverOpts = append(serverOpts, httpapi.WithAdminEmails(adminEmails))
+	logger.Info("admin emails configured", slog.Int("count", len(adminEmails)))
+
+	// ── Audit repo ─────────────────────────────────────────────────────
+	if store != nil {
+		auditRepo := storepostgres.NewAuditRepository(store.Pool())
+		serverOpts = append(serverOpts, httpapi.WithAuditRepo(auditRepo))
+	}
 
 	// ── Driving adapter (HTTP server) ───────────────────────────────────
 	if store != nil {
@@ -224,7 +230,7 @@ func main() {
 		// For HITL requests, also emit an A2UI review card as a stream chunk.
 		// The agent drives the UI: the backend decides what interface to show.
 		//
-		// When the transition already published its own A2UI surface (signalled
+		// When the transition already published its own A2UI surface (signaled
 		// via HITLRequestedPayload{CustomSurface:true}), the default card is
 		// suppressed — emitting both would concatenate two "$$a2ui:" chunks
 		// into one streaming assistant message, breaking JSON.parse on the
@@ -279,9 +285,8 @@ func main() {
 		// Composite handler: A2A paths handled by a2aMux, rest by httpapi.
 		restHandler := topHandler
 		topHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case r.URL.Path == "/.well-known/agent-card.json",
-				r.URL.Path == "/a2a":
+			switch r.URL.Path {
+			case "/.well-known/agent-card.json", "/a2a":
 				a2aMux.ServeHTTP(w, r)
 			default:
 				restHandler.ServeHTTP(w, r)
@@ -364,6 +369,46 @@ func (a *tokenLedgerAdapter) Get(sessionID string) *app.TokenUsage {
 		Calls:        rec.Calls,
 		TotalCostUSD: rec.TotalCostUSD,
 	}
+}
+
+// resolveAdminEmails reads ADMIN_EMAILS (or legacy ADMIN_EMAIL), parses it,
+// and validates per the truth table in spec §4.3. Fails fatally on the
+// forbidden non-dev cases. Logs a warning when dev defaults are in play.
+func resolveAdminEmails(logger *slog.Logger) []string {
+	devMode := strings.EqualFold(os.Getenv("APP_ENV"), "dev")
+
+	raw := os.Getenv("ADMIN_EMAILS")
+	if raw == "" {
+		raw = os.Getenv("ADMIN_EMAIL") // legacy fallback
+	}
+
+	emails := httpapi.ParseAdminEmails(raw)
+
+	if len(emails) == 0 {
+		if devMode {
+			logger.Warn("ADMIN_EMAILS unset; defaulting to dev@localhost (DEV ONLY)")
+			return []string{"dev@localhost"}
+		}
+		logger.Error("ADMIN_EMAILS is required outside dev mode")
+		os.Exit(1)
+	}
+
+	hasForbidden := false
+	for _, e := range emails {
+		if e == "" || e == "dev@localhost" {
+			hasForbidden = true
+			break
+		}
+	}
+	if hasForbidden {
+		if devMode {
+			logger.Warn("ADMIN_EMAILS contains dev@localhost (DEV ONLY)")
+			return emails
+		}
+		logger.Error("ADMIN_EMAILS contains a forbidden entry (empty or dev@localhost) outside dev mode")
+		os.Exit(1)
+	}
+	return emails
 }
 
 // envOr returns the environment variable value or the default.

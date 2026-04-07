@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { setTokenGetter, getUserProfile } from '../services/api';
+import { setTokenGetter, getUserProfile, ApiError } from '../services/api';
 
 interface User {
   email: string;
@@ -13,6 +13,8 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isAdmin: boolean;
+  notAllowed: boolean;
+  dismissNotAllowed: () => void;
   logout: () => void;
   getToken: () => string | null;
 }
@@ -43,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(() => {
     return localStorage.getItem('liwaisi_token');
   });
+  const [notAllowed, setNotAllowed] = useState(false);
   const initRef = useRef(false);
   const tokenRef = useRef<string | null>(token);
 
@@ -68,10 +71,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('liwaisi_user', JSON.stringify(updated));
         return updated;
       });
-    } catch {
-      // Profile fetch failure is non-fatal for admin status.
+    } catch (err) {
+      // 403 from the backend means the email is not in the allowlist.
+      // Force logout and surface an "invitation required" message.
+      if (err instanceof ApiError && err.status === 403) {
+        setNotAllowed(true);
+        if (user?.email) {
+          localStorage.removeItem(`liwaisi_session_${user.email}`);
+          localStorage.removeItem(`liwaisi_active_session_${user.email}`);
+        }
+        setUser(null);
+        setToken(null);
+        tokenRef.current = null;
+        localStorage.removeItem('liwaisi_user');
+        localStorage.removeItem('liwaisi_token');
+        window.google?.accounts.id.disableAutoSelect();
+        return;
+      }
+      // Other failures are non-fatal for admin status.
     }
-  }, []);
+  }, [user?.email]);
 
   // On mount, if we already have a token, refresh admin status.
   useEffect(() => {
@@ -96,7 +115,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('liwaisi_user', JSON.stringify(userData));
     localStorage.setItem('liwaisi_token', response.credential);
 
-    // Fetch admin status asynchronously after login.
+    // Validate against backend allowlist + fetch admin status.
+    setNotAllowed(false);
     setTimeout(() => fetchAdminStatus(), 100);
   }, [fetchAdminStatus]);
 
@@ -134,6 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     if (user?.email) {
       localStorage.removeItem(`liwaisi_session_${user.email}`);
+      localStorage.removeItem(`liwaisi_active_session_${user.email}`);
     }
     setUser(null);
     setToken(null);
@@ -156,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isAdmin: user?.is_admin ?? false, logout, getToken }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isAdmin: user?.is_admin ?? false, notAllowed, dismissNotAllowed: () => setNotAllowed(false), logout, getToken }}>
       {children}
     </AuthContext.Provider>
   );

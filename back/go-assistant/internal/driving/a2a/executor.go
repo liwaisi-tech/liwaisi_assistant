@@ -32,7 +32,7 @@ func NewBRAEExecutor(service *app.SessionService, mapper *Mapper, logger *slog.L
 // HandleSendMessage processes a synchronous message/send request.
 // It creates a session (or reuses one from the task ID), sends the user message,
 // waits for CPN completion, and returns a Task with artifacts.
-func (e *BRAEExecutor) HandleSendMessage(ctx context.Context, reqID json.RawMessage, req SendMessageRequest, userID string) *JSONRPCResponse {
+func (e *BRAEExecutor) HandleSendMessage(ctx context.Context, reqID json.RawMessage, req *SendMessageRequest, userID string) *JSONRPCResponse {
 	// Extract text content from the request message (validate before session creation).
 	content := extractTextContent(req.Message)
 	if content == "" {
@@ -80,7 +80,7 @@ func (e *BRAEExecutor) HandleSendMessage(ctx context.Context, reqID json.RawMess
 
 // HandleStreamMessage processes a message/stream request, yielding SSE events
 // via the flush callback as the CPN executes.
-func (e *BRAEExecutor) HandleStreamMessage(ctx context.Context, reqID json.RawMessage, req SendMessageRequest, userID string, flush func([]byte)) {
+func (e *BRAEExecutor) HandleStreamMessage(ctx context.Context, reqID json.RawMessage, req *SendMessageRequest, userID string, flush func([]byte)) {
 	// Validate content before session creation.
 	content := extractTextContent(req.Message)
 	if content == "" {
@@ -122,7 +122,7 @@ func (e *BRAEExecutor) HandleStreamMessage(ctx context.Context, reqID json.RawMe
 	}
 
 	for chunk := range streamCh {
-		evt := e.mapper.CPNEventToA2AEvent(taskID, contextID, cpn.Event{
+		evt := e.mapper.CPNEventToA2AEvent(taskID, contextID, &cpn.Event{
 			Type:    cpn.EventStreamChunk,
 			Payload: chunk,
 		})
@@ -172,10 +172,8 @@ func (e *BRAEExecutor) HandleGetTask(ctx context.Context, reqID json.RawMessage,
 // HandleListTasks returns a list of tasks for the authenticated user.
 func (e *BRAEExecutor) HandleListTasks(ctx context.Context, reqID json.RawMessage, req ListTasksRequest, userID string) *JSONRPCResponse {
 	// Use SessionService.ListSessions with pagination.
-	limit := req.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
+	// (Limit is currently advisory; ListSessions handles its own paging.)
+	_ = req.Limit
 
 	// ListSessions requires persistence. If not available, return empty list.
 	page, err := e.service.ListSessions(ctx, userID, nil)
@@ -254,7 +252,7 @@ func (e *BRAEExecutor) HandleCancelTask(ctx context.Context, reqID json.RawMessa
 }
 
 // resolveSession creates a new session or reuses an existing one from the task ID.
-func (e *BRAEExecutor) resolveSession(ctx context.Context, req SendMessageRequest, userID string) (string, error) {
+func (e *BRAEExecutor) resolveSession(ctx context.Context, req *SendMessageRequest, userID string) (string, error) {
 	// If a task ID is provided, extract the session ID.
 	if req.TaskID != "" {
 		sessionID := parseSessionID(req.TaskID)

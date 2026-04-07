@@ -68,14 +68,14 @@ func (h *Handlers) HandleTestA2UI(w http.ResponseWriter, r *http.Request) {
 
 // a2uiComponent is a simple struct for building test A2UI payloads.
 type a2uiComponent struct {
-	Type     string            `json:"type"`
-	Props    map[string]any    `json:"props,omitempty"`
-	Children []a2uiComponent   `json:"children,omitempty"`
+	Type     string          `json:"type"`
+	Props    map[string]any  `json:"props,omitempty"`
+	Children []a2uiComponent `json:"children,omitempty"`
 }
 
 type a2uiPayload struct {
-	Components []a2uiComponent        `json:"components"`
-	Data       map[string]any         `json:"data,omitempty"`
+	Components []a2uiComponent `json:"components"`
+	Data       map[string]any  `json:"data,omitempty"`
 }
 
 func buildA2UIDemo(demo string) a2uiPayload {

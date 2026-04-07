@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -73,7 +75,27 @@ type Handlers struct {
 	WaitlistRepo    persist.WaitlistRepository
 	RateLimitCfg    *RateLimitConfig
 	ConfigProvider  *config.Provider
-	AdminEmail      string
+	AdminEmails     []string
+	AuditRepo       AuditLogger
+}
+
+// AuditLogger is the port for recording admin config mutations.
+type AuditLogger interface {
+	LogConfigChange(ctx context.Context, key, action, updatedBy string) error
+}
+
+// isAdminEmail reports whether email matches any configured admin (case-insensitive, trimmed).
+func (h *Handlers) isAdminEmail(email string) bool {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return false
+	}
+	for _, a := range h.AdminEmails {
+		if strings.EqualFold(strings.TrimSpace(a), email) {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleCreateSession creates a new session.

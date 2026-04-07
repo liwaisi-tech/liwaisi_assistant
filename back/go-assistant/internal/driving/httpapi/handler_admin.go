@@ -59,6 +59,12 @@ func (h *Handlers) HandleSetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.AuditRepo != nil {
+		if err := h.AuditRepo.LogConfigChange(r.Context(), key, "set", updatedBy); err != nil {
+			h.Logger.Error("audit log set failed", "key", key, "error", err)
+		}
+	}
+
 	h.Logger.Info("config updated", "key", key, "by", updatedBy)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
@@ -94,6 +100,12 @@ func (h *Handlers) HandleDeleteConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.AuditRepo != nil {
+		if err := h.AuditRepo.LogConfigChange(r.Context(), key, "delete", updatedBy); err != nil {
+			h.Logger.Error("audit log delete failed", "key", key, "error", err)
+		}
+	}
+
 	h.Logger.Info("config deleted", "key", key, "by", updatedBy)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":  true,
@@ -103,18 +115,11 @@ func (h *Handlers) HandleDeleteConfig(w http.ResponseWriter, r *http.Request) {
 
 // HandleConfigStatus returns platform readiness status.
 // GET /api/v1/admin/config/status (public, no auth required)
+// Per REQ-001 the response body is exactly {"ready": <bool>}.
 func (h *Handlers) HandleConfigStatus(w http.ResponseWriter, r *http.Request) {
-	if h.ConfigProvider == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ready":            true,
-			"missing_required": []string{},
-		})
-		return
+	ready := true
+	if h.ConfigProvider != nil {
+		ready = len(h.ConfigProvider.MissingRequired()) == 0
 	}
-
-	missing := h.ConfigProvider.MissingRequired()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ready":            len(missing) == 0,
-		"missing_required": missing,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ready": ready})
 }
