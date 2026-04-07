@@ -57,8 +57,10 @@ func TestLoadOrGenerateMasterKey_RejectsLooseFilePerms(t *testing.T) {
 	}
 }
 
-// AC-005: parent dir 0755 rejected.
-func TestLoadOrGenerateMasterKey_RejectsLooseParentDir(t *testing.T) {
+// AC-005: parent dir 0755 is self-healed to 0700 when the process owns it
+// (the normal Docker named-volume case). The load succeeds and the parent is
+// tightened as a side effect.
+func TestLoadOrGenerateMasterKey_SelfHealsLooseParentDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix perms")
 	}
@@ -70,12 +72,15 @@ func TestLoadOrGenerateMasterKey_RejectsLooseParentDir(t *testing.T) {
 	}
 	defer os.Chmod(dir, 0o700) //nolint:errcheck
 
-	_, err := LoadOrGenerateMasterKey(path)
-	if err == nil {
-		t.Fatal("expected error for loose parent")
+	if _, err := LoadOrGenerateMasterKey(path); err != nil {
+		t.Fatalf("expected self-heal to succeed, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "parent") {
-		t.Fatalf("error should mention parent dir: %v", err)
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("parent dir mode after self-heal = %#o, want 0700", perm)
 	}
 }
 

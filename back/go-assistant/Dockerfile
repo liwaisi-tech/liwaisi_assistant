@@ -32,7 +32,7 @@ COPY --from=builder /liwaisi-server /usr/local/bin/liwaisi-server
 COPY --from=builder /build/store/postgres/migrations /app/migrations
 
 # Ensure secrets directory exists and is writable by app user
-RUN mkdir -p /data/secrets && chown app:app /data/secrets
+RUN mkdir -p /data/secrets && chown app:app /data/secrets && chmod 0700 /data/secrets
 
 USER app
 
