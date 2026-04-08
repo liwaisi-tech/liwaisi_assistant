@@ -39,6 +39,7 @@ type UserPreferencesJSON struct {
 // UpdatePreferencesRequest is the body for PUT /api/v1/user/preferences.
 type UpdatePreferencesRequest struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 }
@@ -137,8 +138,22 @@ func (h *Handlers) HandleUpdatePreferences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Validate regional variant: empty is allowed and is resolved to the
+	// language default server-side (mirrors HandleCompleteOnboarding); non-empty
+	// must be in the supported set.
+	variant := req.RegionalVariant
+	if variant == "" {
+		if req.PreferredLanguage != "" {
+			variant = prompts.DefaultVariant(req.PreferredLanguage)
+		}
+	} else if !prompts.IsSupported(variant) {
+		writeError(w, http.StatusBadRequest, "regional_variant must be one of: es-CO, es-MX, es-AR, es-ES, en-GB, en-US, en-AU")
+		return
+	}
+
 	prefs := &persist.UserPreferences{
 		PreferredLanguage: req.PreferredLanguage,
+		RegionalVariant:   variant,
 		PreferredModel:    req.PreferredModel,
 		ModelOverrides:    req.ModelOverrides,
 	}

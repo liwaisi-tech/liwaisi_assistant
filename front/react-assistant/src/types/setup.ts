@@ -10,8 +10,16 @@ export interface UserProfile {
 
 export interface UserPreferences {
   preferred_language: string;
+  regional_variant?: string;
   preferred_model: string;
   model_overrides: Record<string, string>;
+}
+
+export interface UpdatePreferencesPayload {
+  preferred_language?: string;
+  regional_variant?: string;
+  preferred_model?: string;
+  model_overrides?: Record<string, string>;
 }
 
 export interface ModelRole {

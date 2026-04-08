@@ -23,6 +23,7 @@ import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
 import { PersonalityPanel } from '../personality/PersonalityPanel';
 import { ToolBrowser } from '../tools/ToolBrowser';
 import { AdminSecretsPanel } from '../admin/AdminSecretsPanel';
+import { SettingsPage } from '../settings/SettingsPage';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface DesktopLayoutProps {
@@ -166,6 +167,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   const handleAdminNav = useCallback(() => {
     navigateAndClearPanel('admin');
+  }, [navigateAndClearPanel]);
+
+  const handleUserSettingsNav = useCallback(() => {
+    navigateAndClearPanel('settings');
   }, [navigateAndClearPanel]);
 
   // ── Command Palette actions ─────────────────────────────────────────────
@@ -337,7 +342,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   return (
     <div className="scan-lines flex flex-col h-dvh relative" style={{ backgroundColor: 'var(--bg-deep)' }}>
-      <StatusBar sessionState={sessionState} isConnected={isConnected} activeApp={activeApp} />
+      <StatusBar sessionState={sessionState} isConnected={isConnected} activeApp={activeApp} onOpenSettings={handleUserSettingsNav} />
 
       <div className="flex flex-1 min-h-0">
         {/* Navigation Rail -- hidden on mobile */}
@@ -403,6 +408,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             {activeApp === 'tools' && <ToolBrowser />}
 
             {activeApp === 'admin' && <AdminSecretsPanel />}
+
+            {activeApp === 'settings' && <SettingsPage />}
           </div>
 
           {/* Adaptive Right Panel -- only in chat mode, desktop only */}

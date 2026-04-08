@@ -18,6 +18,7 @@ export function ModelStep({
   onSelectModel,
   onSetOverrides,
 }: ModelStepProps) {
+  const hasOverrides = Object.keys(modelOverrides).length > 0;
   const [roles, setRoles] = useState<ModelRole[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -88,6 +89,26 @@ export function ModelStep({
         <>
           {/* Default model selection */}
           <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider border"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: hasOverrides ? 'var(--accent)' : 'var(--text-secondary)',
+                  borderColor: hasOverrides ? 'var(--accent)' : 'var(--border-dim)',
+                  backgroundColor: 'transparent',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: hasOverrides ? 'var(--accent)' : 'var(--text-secondary)',
+                    boxShadow: hasOverrides ? '0 0 6px var(--accent-glow)' : 'none',
+                  }}
+                />
+                {hasOverrides ? t('model.modeAdvanced') : t('model.modeSimple')}
+              </span>
+            </div>
             <select
               value={selectedModel || defaultModel}
               onChange={(e) => onSelectModel(e.target.value)}
@@ -134,7 +155,21 @@ export function ModelStep({
               </button>
 
               {showAdvanced && (
-                <div className="flex flex-col gap-3 pl-4">
+                <div className="flex flex-col gap-3 pl-4 max-h-[40vh] overflow-y-auto pr-2">
+                  {hasOverrides && (
+                    <button
+                      onClick={() => onSetOverrides({})}
+                      className="self-start px-3 py-1 rounded-lg text-[11px] font-medium transition-colors duration-200 cursor-pointer border"
+                      style={{
+                        color: 'var(--text-secondary)',
+                        borderColor: 'var(--border-dim)',
+                        backgroundColor: 'transparent',
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      {t('model.resetToSingle')}
+                    </button>
+                  )}
                   {roles.map((role) => (
                     <div key={role.key} className="flex flex-col gap-1">
                       <label

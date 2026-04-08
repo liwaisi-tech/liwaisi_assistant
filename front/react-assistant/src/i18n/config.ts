@@ -14,6 +14,7 @@ import personalityEn from './locales/en/personality.json';
 import toolsEn from './locales/en/tools.json';
 import setupEn from './locales/en/setup.json';
 import adminEn from './locales/en/admin.json';
+import settingsEn from './locales/en/settings.json';
 
 import commonEs from './locales/es/common.json';
 import landingEs from './locales/es/landing.json';
@@ -26,6 +27,7 @@ import personalityEs from './locales/es/personality.json';
 import toolsEs from './locales/es/tools.json';
 import setupEs from './locales/es/setup.json';
 import adminEs from './locales/es/admin.json';
+import settingsEs from './locales/es/settings.json';
 
 export interface LanguageMeta {
   code: string;
@@ -53,6 +55,7 @@ export const NAMESPACES = [
   'tools',
   'setup',
   'admin',
+  'settings',
 ] as const;
 
 export type Namespace = (typeof NAMESPACES)[number];
@@ -80,6 +83,7 @@ i18n
         tools: toolsEn,
         setup: setupEn,
         admin: adminEn,
+        settings: settingsEn,
       },
       es: {
         common: commonEs,
@@ -93,6 +97,7 @@ i18n
         tools: toolsEs,
         setup: setupEs,
         admin: adminEs,
+        settings: settingsEs,
       },
     },
     defaultNS: 'common',

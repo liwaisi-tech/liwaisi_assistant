@@ -68,7 +68,10 @@
     "description": "Elige el modelo de IA predeterminado para tus conversaciones.",
     "advanced": "Avanzado: ajustes por rol",
     "appliesToAll": "Este modelo se encarga de todas las tareas. Personaliza los modelos por tarea más abajo si quieres un control más fino.",
-    "keepDefaults": "Mantener los valores recomendados"
+    "keepDefaults": "Mantener los valores recomendados",
+    "modeSimple": "Modo simple",
+    "modeAdvanced": "Modo avanzado",
+    "resetToSingle": "Restablecer a modelo único"
   },
   "personality": {
     "title": "Elige el estilo de tu IA",

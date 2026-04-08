@@ -40,7 +40,8 @@
       "monitor": "Monitor",
       "personality": "Identity",
       "tools": "Tools",
-      "admin": "Admin"
+      "admin": "Admin",
+      "settings": "Settings"
     },
     "signOut": "Sign out"
   },

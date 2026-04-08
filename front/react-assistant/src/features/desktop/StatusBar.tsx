@@ -12,8 +12,9 @@ interface PersonalityBadge {
 interface StatusBarProps {
   sessionState: SessionState;
   isConnected: boolean;
-  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
+  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin' | 'settings';
   personalityPrinciples?: PersonalityBadge[];
+  onOpenSettings?: () => void;
 }
 
 const stateClassName: Record<SessionState, string> = {
@@ -30,8 +31,8 @@ const principleColors: Record<string, string> = {
   etica: 'text-emerald-400',
 };
 
-export function StatusBar({ sessionState, isConnected, activeApp = 'chat', personalityPrinciples }: StatusBarProps) {
-  const { t } = useTranslation(['desktop', 'common']);
+export function StatusBar({ sessionState, isConnected, activeApp = 'chat', personalityPrinciples, onOpenSettings }: StatusBarProps) {
+  const { t } = useTranslation(['desktop', 'common', 'settings']);
   const stateClass = stateClassName[sessionState];
   const stateLabel = t(`common:status.${sessionState}`);
   const appLabel = t(`desktop:statusBar.appLabels.${activeApp}`);
@@ -146,6 +147,18 @@ export function StatusBar({ sessionState, isConnected, activeApp = 'chat', perso
             <span className="text-[11px] hidden sm:inline" style={{ color: 'var(--text-secondary)' }}>
               {user.name}
             </span>
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="text-[10px] px-2 py-1 rounded transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                aria-label={t('settings:title')}
+              >
+                {t('settings:title')}
+              </button>
+            )}
             <button
               onClick={logout}
               className="text-[10px] px-2 py-1 rounded transition-colors"

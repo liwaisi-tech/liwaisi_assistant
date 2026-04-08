@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useTooltip } from '../../hooks/useTooltip';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin' | 'settings';
 
 interface NavigationRailProps {
   activeApp: ActiveApp;

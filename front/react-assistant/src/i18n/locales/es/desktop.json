@@ -40,7 +40,8 @@
       "monitor": "Monitor",
       "personality": "Identidad",
       "tools": "Herramientas",
-      "admin": "Admin"
+      "admin": "Admin",
+      "settings": "Configuración"
     },
     "signOut": "Cerrar sesión"
   },
