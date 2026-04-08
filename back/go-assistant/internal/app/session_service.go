@@ -12,6 +12,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
 
@@ -118,6 +119,8 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	root := s.topologyFactory(id)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
+	s.applyUserModelPreferences(ctx, root, userID)
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -590,6 +593,8 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 	root := s.topologyFactory(newID)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
+	s.applyUserModelPreferences(ctx, root, userID)
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -668,6 +673,57 @@ func (s *SessionService) SetEventCallback(fn func(string, cpn.Event)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onEvent = fn
+}
+
+// resolveRegionalVariant loads the user's BCP-47 regional variant from the
+// repository (cached on the root CPN by the caller). Falls back to the
+// language-default variant when the user is unknown, the field is empty, or
+// no user repository is wired (anonymous / pre-onboarding flows). The
+// returned value is always a supported BCP-47 tag, never empty (GUD-003).
+func (s *SessionService) resolveRegionalVariant(ctx context.Context, userID string) string {
+	if s.persist == nil || s.persist.Users == nil || userID == "" {
+		return prompts.DefaultVariant("")
+	}
+	rec, err := s.persist.Users.GetByID(ctx, userID)
+	if err != nil {
+		// Anonymous / pre-onboarding users are expected here; only log at debug.
+		return prompts.DefaultVariant("")
+	}
+	if prompts.IsSupported(rec.RegionalVariant) {
+		return rec.RegionalVariant
+	}
+	return prompts.DefaultVariant(rec.PreferredLanguage)
+}
+
+// applyUserModelPreferences rewrites LLMConfig.Model on every transition in
+// root using the user's persisted preferences. Best-effort: any error path
+// leaves the topology unchanged so role-key env fallback remains intact
+// (REQ-001..REQ-004, GUD-001, GUD-002, PAT-001).
+func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cpn.CPN, userID string) {
+	if s.persist == nil || s.persist.Users == nil || userID == "" {
+		return
+	}
+	rec, err := s.persist.Users.GetByID(ctx, userID)
+	if err != nil {
+		// Anonymous / pre-onboarding users are expected here; non-fatal.
+		return
+	}
+	if rec.PreferredModel == "" && len(rec.ModelOverrides) == 0 {
+		return
+	}
+	for _, t := range root.Transitions {
+		if t.LLMConfig == nil {
+			continue
+		}
+		roleKey := t.LLMConfig.Model // may be "" or a role key like "classifier"
+		if override, ok := rec.ModelOverrides[roleKey]; ok && override != "" {
+			t.LLMConfig.Model = override
+			continue
+		}
+		if rec.PreferredModel != "" {
+			t.LLMConfig.Model = rec.PreferredModel
+		}
+	}
 }
 
 // injectPersonality loads the user's personality and prefixes all LLM system prompts.

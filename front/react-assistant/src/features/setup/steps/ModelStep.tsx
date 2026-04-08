@@ -105,6 +105,9 @@ export function ModelStep({
                 </option>
               ))}
             </select>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {t('model.appliesToAll')}
+            </p>
           </div>
 
           {/* Advanced toggle */}
