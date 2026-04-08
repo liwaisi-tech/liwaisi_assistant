@@ -53,11 +53,13 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*persist.UserR
 	var overridesJSON []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, email, name, picture, created_at, updated_at,
-		        onboarding_completed_at, preferred_language, preferred_model, model_overrides
+		        onboarding_completed_at, preferred_language, preferred_model, model_overrides,
+		        COALESCE(regional_variant, '')
 		 FROM users WHERE id = $1`, id,
 	).Scan(
 		&u.ID, &u.Email, &u.Name, &u.Picture, &u.CreatedAt, &u.UpdatedAt,
 		&u.OnboardingCompletedAt, &u.PreferredLanguage, &u.PreferredModel, &overridesJSON,
+		&u.RegionalVariant,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -77,11 +79,13 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*persist
 	var overridesJSON []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, email, name, picture, created_at, updated_at,
-		        onboarding_completed_at, preferred_language, preferred_model, model_overrides
+		        onboarding_completed_at, preferred_language, preferred_model, model_overrides,
+		        COALESCE(regional_variant, '')
 		 FROM users WHERE email = $1`, email,
 	).Scan(
 		&u.ID, &u.Email, &u.Name, &u.Picture, &u.CreatedAt, &u.UpdatedAt,
 		&u.OnboardingCompletedAt, &u.PreferredLanguage, &u.PreferredModel, &overridesJSON,
+		&u.RegionalVariant,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -108,11 +112,21 @@ func (r *UserRepository) UpdatePreferences(ctx context.Context, userID string, p
 	if err != nil {
 		return fmt.Errorf("postgres user marshal overrides: %w", err)
 	}
+	// regional_variant is updated only when non-empty so the preferences PUT
+	// path does not clobber a value the user set during onboarding.
+	var variantParam any
+	if prefs.RegionalVariant != "" {
+		variantParam = prefs.RegionalVariant
+	}
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE users
-		 SET preferred_language = $2, preferred_model = $3, model_overrides = $4, updated_at = $5
+		 SET preferred_language = $2,
+		     preferred_model    = $3,
+		     model_overrides    = $4,
+		     updated_at         = $5,
+		     regional_variant   = COALESCE($6, regional_variant)
 		 WHERE id = $1`,
-		userID, prefs.PreferredLanguage, prefs.PreferredModel, overridesJSON, time.Now(),
+		userID, prefs.PreferredLanguage, prefs.PreferredModel, overridesJSON, time.Now(), variantParam,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres user update preferences: %w", err)

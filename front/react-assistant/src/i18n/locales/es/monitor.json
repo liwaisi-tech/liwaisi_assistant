@@ -1,14 +1,14 @@
 {
   "executionMonitor": {
-    "title": "Monitor de ejecucion",
-    "emptyWithSession": "Envia un mensaje para comenzar a monitorear la ejecucion CPN",
-    "emptyNoSession": "Sin sesion activa",
-    "selectExecution": "Selecciona una ejecucion de la lista"
+    "title": "Monitor de ejecución",
+    "emptyWithSession": "Envía un mensaje para comenzar a monitorear la ejecución CPN",
+    "emptyNoSession": "Sin sesión activa",
+    "selectExecution": "Selecciona una ejecución de la lista"
   },
   "executionList": {
     "title": "Ejecuciones ({{count}})",
-    "noExecutions": "Aun no hay ejecuciones",
-    "sendToStart": "Envia un mensaje para comenzar",
+    "noExecutions": "Aún no hay ejecuciones",
+    "sendToStart": "Envía un mensaje para comenzar",
     "loadingInput": "Cargando...",
     "runningDuration": "ejecutando..."
   },
@@ -21,20 +21,20 @@
     "firing": "Disparando...",
     "error": "ERROR",
     "cost": "Costo",
-    "duration": "Duracion",
+    "duration": "Duración",
     "inputTokens": "Tokens de entrada",
     "outputTokens": "Tokens de salida",
-    "llmConfig": "Configuracion LLM",
+    "llmConfig": "Configuración LLM",
     "systemPrompt": "Prompt del sistema",
     "model": "Modelo",
-    "maxTokens": "Tokens maximos",
+    "maxTokens": "Tokens máximos",
     "temperature": "Temperatura",
     "stream": "Streaming",
     "jsonMode": "Modo JSON",
     "defaultModel": "predeterminado"
   },
   "costAccumulator": {
-    "title": "Costo de ejecucion",
+    "title": "Costo de ejecución",
     "llm": "LLM",
     "transitions": "T"
   },
@@ -45,11 +45,11 @@
     "events": "EVENTOS"
   },
   "cpnBreadcrumb": {
-    "rootLabel": "CPN Raiz"
+    "rootLabel": "CPN raíz"
   },
   "timelineScrubber": {
-    "label": "Linea de tiempo",
-    "waiting": "Esperando eventos de ejecucion..."
+    "label": "Línea de tiempo",
+    "waiting": "Esperando eventos de ejecución..."
   },
   "routeLabels": {
     "direct": "DIRECTO",

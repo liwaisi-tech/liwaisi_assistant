@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react';
 import type { TFunction } from 'i18next';
 import { completeOnboarding } from '../../../services/api';
-import type { PersonalityPreset } from '../../../types/setup';
+import type { PersonalityPreset, RegionalVariant } from '../../../types/setup';
 
 interface ReadyStepProps {
   t: TFunction;
   language: string;
+  regionalVariant: RegionalVariant;
   model: string;
   modelOverrides: Record<string, string>;
   personalityPreset: PersonalityPreset;
@@ -15,6 +16,7 @@ interface ReadyStepProps {
 export function ReadyStep({
   t,
   language,
+  regionalVariant,
   model,
   modelOverrides,
   personalityPreset,
@@ -27,6 +29,7 @@ export function ReadyStep({
     try {
       await completeOnboarding({
         preferred_language: language,
+        regional_variant: regionalVariant,
         preferred_model: model,
         model_overrides: modelOverrides,
         personality_preset: personalityPreset,
@@ -36,7 +39,7 @@ export function ReadyStep({
       // If saving fails, still let the user proceed
       onComplete();
     }
-  }, [language, model, modelOverrides, personalityPreset, onComplete]);
+  }, [language, regionalVariant, model, modelOverrides, personalityPreset, onComplete]);
 
   const personalityLabel =
     personalityPreset && personalityPreset !== 'custom'
@@ -115,7 +118,25 @@ export function ReadyStep({
                 fontFamily: "'JetBrains Mono', monospace",
               }}
             >
-              {language === 'es' ? 'Espanol' : 'English'}
+              {language === 'es' ? 'Español' : 'English'}
+            </span>
+          </div>
+          <div
+            className="h-px w-full"
+            style={{ backgroundColor: 'var(--border-dim)' }}
+          />
+          <div className="flex justify-between items-center">
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {t('ready.region_label')}
+            </span>
+            <span
+              className="text-xs font-medium"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {regionalVariant}
             </span>
           </div>
           <div

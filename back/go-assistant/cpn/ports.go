@@ -206,6 +206,13 @@ type LLMConfig struct {
 	// consumed tokens. Used by classifier transitions that must classify
 	// each message independently, without bias from prior conversation.
 	SkipHistory bool
+
+	// SkipRegionalPreamble, when true, prevents fireLLM from prepending the
+	// per-session regional-variant preamble to this transition's SystemPrompt.
+	// Default (false) is opt-in: every LLM transition gets the preamble.
+	// Set to true on transitions where dialect hints add no value (e.g.
+	// structured-JSON planners that never read the user's tone).
+	SkipRegionalPreamble bool
 }
 
 // ── v1.2 Sub-Types ──────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package openrouter
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"os"
@@ -34,6 +35,12 @@ import (
 //   - Explicit short connect/TLS timeouts so a stall surfaces in seconds,
 //     not minutes.
 //   - Keep-alive + small idle pool so streaming SSE doesn't churn TCP.
+//   - HTTP/1.1 PINNED (no HTTP/2). Go's net/http HTTP/2 transport buffers
+//     SSE frames behind flow-control windows, so streaming deltas arrive in
+//     big clumps or only at end-of-stream instead of token-by-token. HTTP/1.1
+//     chunked transfer-encoding flushes each event immediately, which is
+//     what the UI actually needs. Setting TLSNextProto to an empty non-nil
+//     map disables the automatic h2 upgrade Go performs on TLS connections.
 func newResilientHTTPClient(totalTimeout time.Duration) *http.Client {
 	forceV4 := strings.EqualFold(os.Getenv("FORCE_IPV4"), "1") ||
 		strings.EqualFold(os.Getenv("FORCE_IPV4"), "true")
@@ -52,9 +59,21 @@ func newResilientHTTPClient(totalTimeout time.Duration) *http.Client {
 	}
 
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialContext,
-		ForceAttemptHTTP2:     true,
+		Proxy:             http.ProxyFromEnvironment,
+		DialContext:       dialContext,
+		ForceAttemptHTTP2: false,
+		// Empty (non-nil) TLSNextProto disables Go's automatic HTTP/2
+		// upgrade on TLS connections. We want HTTP/1.1 + chunked for SSE.
+		TLSNextProto: map[string]func(authority string, c *tls.Conn) http.RoundTripper{},
+		// DisableCompression=true stops the transport from advertising
+		// Accept-Encoding: gzip. Go's automatic gzip handling wraps the
+		// response body in a gzip.Reader whose DEFLATE window (~16 KB) must
+		// fill before any decompressed bytes reach bufio.Scanner — which
+		// means short SSE replies sit inside the decoder until EOF and then
+		// appear to the UI all at once. For streaming to be token-by-token
+		// the transport MUST speak identity encoding on this hop. The cost
+		// is a few % extra egress, negligible vs. broken streaming UX.
+		DisableCompression:    true,
 		MaxIdleConns:          50,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,

@@ -135,7 +135,10 @@ func TestFireLLM_ContextWindowAssembly(t *testing.T) {
 	if req.Messages[0].Role != "system" {
 		t.Errorf("expected first message role=system, got %q", req.Messages[0].Role)
 	}
-	if req.Messages[0].Content != "Classify the input." {
+	// fireLLM prepends the per-session regional-variant preamble at runtime
+	// (CON-003: it never mutates t.SystemPrompt). The static body must still
+	// appear at the end of the rendered system prompt.
+	if !strings.HasSuffix(req.Messages[0].Content, "Classify the input.") {
 		t.Errorf("unexpected system prompt: %q", req.Messages[0].Content)
 	}
 

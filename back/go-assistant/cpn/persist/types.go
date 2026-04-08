@@ -237,6 +237,12 @@ type UserRecord struct {
 	PreferredLanguage     string            // "en", "es"; default "en".
 	PreferredModel        string            // e.g. "anthropic/claude-sonnet-4-6".
 	ModelOverrides        map[string]string // role → model override.
+
+	// RegionalVariant is a BCP-47 tag (e.g. "es-CO") used to augment LLM
+	// system prompts with a per-user "user context" preamble. "" = unset;
+	// callers SHOULD resolve via prompts.DefaultVariant(PreferredLanguage).
+	// Migration 017 added the backing column.
+	RegionalVariant string
 }
 
 // UserPreferences is the subset of user settings modifiable via the preferences API.
@@ -244,6 +250,10 @@ type UserPreferences struct {
 	PreferredLanguage string            `json:"preferred_language"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides,omitempty"`
+	// RegionalVariant is a BCP-47 tag (e.g. "es-CO"). Empty string means
+	// "leave the persisted value unchanged" — repositories MUST NOT overwrite
+	// the column with NULL when this field is empty.
+	RegionalVariant string `json:"regional_variant,omitempty"`
 }
 
 // HITLPendingRequest is the persistence DTO for a pending human-in-the-loop request.

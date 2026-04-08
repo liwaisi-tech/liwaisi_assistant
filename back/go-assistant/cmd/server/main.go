@@ -85,6 +85,7 @@ func main() {
 				Ledger:       store.Ledger(),
 				Flows:        store.Flows(),
 				Intelligence: store.Intelligence(),
+				Users:        store.Users(),
 				FuncRegistry: registry,
 			}),
 		)
@@ -233,19 +234,22 @@ func main() {
 			}
 		}
 
-		// Emit the raw event for any SSE listeners (monitor, execution trace, etc.)
-		srv.Broker().PublishEvent(sessionID, &evt)
-
-		// For HITL requests, also emit an A2UI review card as a stream chunk.
-		// The agent drives the UI: the backend decides what interface to show.
+		// For HITL requests, the backend drives the UI by emitting an A2UI
+		// review card as a stream chunk. Because the surface is already
+		// server-owned, we must mark the event with CustomSurface:true
+		// BEFORE publishing it, so the frontend's onHITLRequested handler
+		// suppresses its own default bubble (otherwise the reducer creates
+		// a redundant empty assistant bubble alongside the review card).
 		//
-		// When the transition already published its own A2UI surface (signaled
-		// via HITLRequestedPayload{CustomSurface:true}), the default card is
-		// suppressed — emitting both would concatenate two "$$a2ui:" chunks
-		// into one streaming assistant message, breaking JSON.parse on the
+		// When the transition itself already published an A2UI surface
+		// (e.g. t-clarify via A2UIPayloadBuilder), it signals via
+		// HITLRequestedPayload{CustomSurface:true} and we skip emitting
+		// the default card — two "$$a2ui:" chunks would concatenate into
+		// one streaming assistant message, breaking JSON.parse on the
 		// frontend and falling through to raw markdown.
 		if evt.Type == cpn.EventHITLRequested {
 			prompt := "Please review and confirm."
+			transitionOwnsSurface := false
 			switch p := evt.Payload.(type) {
 			case string:
 				if p != "" {
@@ -253,29 +257,44 @@ func main() {
 				}
 			case cpn.HITLRequestedPayload:
 				if p.CustomSurface {
-					return // transition owns the surface; skip default card
+					transitionOwnsSurface = true
 				}
 				if p.Prompt != "" {
 					prompt = p.Prompt
 				}
 			}
-			a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
-			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
-				SessionID: sessionID,
-				CPNID:     evt.CPNID,
-				CPNRole:   "review",
-				Content:   a2uiPayload,
-				Done:      false,
-			})
-			// Done sentinel for this A2UI message.
-			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
-				SessionID: sessionID,
-				CPNID:     evt.CPNID,
-				CPNRole:   "review",
-				Content:   "",
-				Done:      true,
-			})
+
+			if !transitionOwnsSurface {
+				// Rewrite the payload so the frontend knows the surface
+				// is already on the wire and doesn't render a duplicate.
+				evt.Payload = cpn.HITLRequestedPayload{Prompt: prompt, CustomSurface: true}
+			}
+
+			srv.Broker().PublishEvent(sessionID, &evt)
+
+			if !transitionOwnsSurface {
+				a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
+				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+					SessionID: sessionID,
+					CPNID:     evt.CPNID,
+					CPNRole:   "review",
+					Content:   a2uiPayload,
+					Done:      false,
+				})
+				// Done sentinel for this A2UI message.
+				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+					SessionID: sessionID,
+					CPNID:     evt.CPNID,
+					CPNRole:   "review",
+					Content:   "",
+					Done:      true,
+				})
+			}
+			return
 		}
+
+		// Emit the raw event for any SSE listeners (monitor, execution trace, etc.)
+		srv.Broker().PublishEvent(sessionID, &evt)
 	})
 
 	// ── A2A protocol adapter (optional) ─────────────────────────────────

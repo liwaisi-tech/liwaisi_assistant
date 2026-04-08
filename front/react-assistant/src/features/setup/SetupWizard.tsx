@@ -1,8 +1,14 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNamespace } from '../../i18n/useNamespace';
-import type { PersonalityPreset } from '../../types/setup';
+import {
+  defaultVariantForLanguage,
+  type PersonalityPreset,
+  type RegionalVariant,
+} from '../../types/setup';
 import { WelcomeStep } from './steps/WelcomeStep';
 import { LanguageStep } from './steps/LanguageStep';
+import { RegionStep } from './steps/RegionStep';
 import { ModelStep } from './steps/ModelStep';
 import { PersonalityStep } from './steps/PersonalityStep';
 import { ReadyStep } from './steps/ReadyStep';
@@ -13,12 +19,14 @@ interface SetupWizardProps {
 
 interface WizardState {
   language: string;
+  regionalVariant: RegionalVariant;
   model: string;
   modelOverrides: Record<string, string>;
   personalityPreset: PersonalityPreset;
 }
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
+const READY_STEP = 5;
 
 const STEP_KEYS = [
   'step1',
@@ -26,16 +34,22 @@ const STEP_KEYS = [
   'step3',
   'step4',
   'step5',
+  'step6',
 ] as const;
 
 export function SetupWizard({ onComplete }: SetupWizardProps) {
   const { t } = useNamespace('setup');
+  const { i18n } = useTranslation();
   const [step, setStep] = useState(0);
-  const [state, setState] = useState<WizardState>({
-    language: 'en',
-    model: '',
-    modelOverrides: {},
-    personalityPreset: '',
+  const [state, setState] = useState<WizardState>(() => {
+    const lang = (i18n.resolvedLanguage || i18n.language || 'es').split('-')[0];
+    return {
+      language: lang,
+      regionalVariant: defaultVariantForLanguage(lang),
+      model: '',
+      modelOverrides: {},
+      personalityPreset: '',
+    };
   });
 
   const goNext = useCallback(() => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1)), []);
@@ -45,12 +59,37 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     onComplete();
   }, [onComplete]);
 
-  const updateState = useCallback(
-    <K extends keyof WizardState>(key: K, value: WizardState[K]) => {
-      setState((prev) => ({ ...prev, [key]: value }));
-    },
-    [],
-  );
+  const handleLanguageSelect = useCallback((lang: string) => {
+    setState((prev) =>
+      prev.language === lang
+        ? prev
+        : {
+            ...prev,
+            language: lang,
+            regionalVariant: defaultVariantForLanguage(lang),
+          },
+    );
+  }, []);
+
+  const handleVariantSelect = useCallback((variant: RegionalVariant) => {
+    setState((prev) =>
+      prev.regionalVariant === variant
+        ? prev
+        : { ...prev, regionalVariant: variant },
+    );
+  }, []);
+
+  const handleModelSelect = useCallback((model: string) => {
+    setState((prev) => ({ ...prev, model }));
+  }, []);
+
+  const handleOverridesSet = useCallback((overrides: Record<string, string>) => {
+    setState((prev) => ({ ...prev, modelOverrides: overrides }));
+  }, []);
+
+  const handlePersonalitySelect = useCallback((preset: PersonalityPreset) => {
+    setState((prev) => ({ ...prev, personalityPreset: preset }));
+  }, []);
 
   return (
     <div
@@ -128,29 +167,38 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
             <LanguageStep
               t={t}
               selectedLanguage={state.language}
-              onSelect={(lang) => updateState('language', lang)}
+              onSelect={handleLanguageSelect}
             />
           )}
           {step === 2 && (
+            <RegionStep
+              t={t}
+              language={state.language}
+              selectedVariant={state.regionalVariant}
+              onSelect={handleVariantSelect}
+            />
+          )}
+          {step === 3 && (
             <ModelStep
               t={t}
               selectedModel={state.model}
               modelOverrides={state.modelOverrides}
-              onSelectModel={(model) => updateState('model', model)}
-              onSetOverrides={(overrides) => updateState('modelOverrides', overrides)}
-            />
-          )}
-          {step === 3 && (
-            <PersonalityStep
-              t={t}
-              selected={state.personalityPreset}
-              onSelect={(preset) => updateState('personalityPreset', preset)}
+              onSelectModel={handleModelSelect}
+              onSetOverrides={handleOverridesSet}
             />
           )}
           {step === 4 && (
+            <PersonalityStep
+              t={t}
+              selected={state.personalityPreset}
+              onSelect={handlePersonalitySelect}
+            />
+          )}
+          {step === 5 && (
             <ReadyStep
               t={t}
               language={state.language}
+              regionalVariant={state.regionalVariant}
               model={state.model}
               modelOverrides={state.modelOverrides}
               personalityPreset={state.personalityPreset}
@@ -162,7 +210,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
         {/* Navigation */}
         <div className="flex items-center justify-between px-6 sm:px-10 pb-6 pt-2">
           <div>
-            {step > 0 && step < 4 && (
+            {step > 0 && step < READY_STEP && (
               <button
                 onClick={goBack}
                 className="px-4 py-2 rounded-lg text-xs font-medium transition-colors duration-200 cursor-pointer"
@@ -178,7 +226,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
           </div>
 
           <div className="flex items-center gap-4">
-            {step < 4 && (
+            {step < READY_STEP && (
               <button
                 onClick={handleSkip}
                 className="text-xs cursor-pointer transition-colors duration-200"
@@ -187,7 +235,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 {t('skip')}
               </button>
             )}
-            {step > 0 && step < 4 && (
+            {step > 0 && step < READY_STEP && (
               <button
                 onClick={goNext}
                 className="px-6 py-2 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer hover:shadow-lg"

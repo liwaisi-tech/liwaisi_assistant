@@ -48,6 +48,7 @@ func fireSubNet(ctx context.Context, t *Transition, parent *CPN, consumed []Toke
 	child.ID = childID
 	child.Depth = parent.Depth + 1
 	child.SessionID = parent.SessionID
+	child.RegionalVariant = parent.RegionalVariant
 
 	// REQ-003: Create buffered event bus and wire it.
 	bus := make(chan Event, SubNetEventBusCapacity)

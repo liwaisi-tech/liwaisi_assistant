@@ -15,6 +15,7 @@ type PersistDeps struct {
 	Ledger       persist.LedgerRepository
 	Flows        persist.FlowRepository
 	Intelligence persist.IntelligenceRepository
+	Users        persist.UserRepository
 	FuncRegistry *persist.FuncRegistry
 }
 

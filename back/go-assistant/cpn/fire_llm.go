@@ -5,7 +5,27 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 )
+
+// renderSystemPrompt returns the per-invocation system prompt for an LLM
+// transition. It prepends the session's regional-variant preamble to the
+// transition's static SystemPrompt without mutating the transition (CON-003).
+// Returns the original prompt unchanged when SkipRegionalPreamble is set.
+func renderSystemPrompt(t *Transition, c *CPN) string {
+	if t.LLMConfig != nil && t.LLMConfig.SkipRegionalPreamble {
+		return t.SystemPrompt
+	}
+	preamble := prompts.PreambleFor(c.RegionalVariant)
+	if preamble == "" {
+		return t.SystemPrompt
+	}
+	if t.SystemPrompt == "" {
+		return preamble
+	}
+	return preamble + "\n\n" + t.SystemPrompt
+}
 
 // MaxToolCallIterations caps the agentic loop to prevent infinite cycles.
 const MaxToolCallIterations = 10
@@ -43,7 +63,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	historySnapshot := make([]*Message, len(c.History))
 	copy(historySnapshot, c.History)
 	c.mu.RUnlock()
-	cw := BuildContext(t.SystemPrompt, historySnapshot, ctxWindowSize)
+	cw := BuildContext(renderSystemPrompt(t, c), historySnapshot, ctxWindowSize)
 
 	// Assemble messages: system prompt + context window messages + consumed tokens.
 	messages := make([]*LLMMessage, 0, 1+len(cw.Messages)+1)
@@ -136,6 +156,12 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		return nil, 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
 	totalCostUSD += resp.CostUSD
+	// Record the actually executed model id (after role→model resolution) so
+	// the executor can expose it on the transition_completed event and the UI
+	// can show the real model that ran rather than the authored role alias.
+	if meta := metaFromCtx(ctx); meta != nil && resp.Model != "" {
+		meta.executedModel = resp.Model
+	}
 
 	// Step 4: Tool-call loop.
 	var content string
@@ -455,6 +481,9 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			return "", loopCost, fmt.Errorf("transition %s: LLM re-call (iteration %d): %w", t.ID, i+1, err)
 		}
 		loopCost += newResp.CostUSD
+		if meta := metaFromCtx(ctx); meta != nil && newResp.Model != "" {
+			meta.executedModel = newResp.Model
+		}
 		resp = &newResp
 
 		// If no more tool calls, return the content.

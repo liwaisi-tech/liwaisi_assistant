@@ -6,7 +6,7 @@
     "tools": "Herramientas",
     "identity": "Identidad",
     "admin": "Admin",
-    "settings": "Configuracion"
+    "settings": "Configuración"
   },
   "commandPalette": {
     "ariaLabel": "Paleta de comandos",
@@ -15,7 +15,7 @@
     "resultsAriaLabel": "Resultados de comandos",
     "noResults": "No se encontraron resultados",
     "categories": {
-      "navigation": "Navegacion",
+      "navigation": "Navegación",
       "chat": "Chat",
       "view": "Vista"
     },
@@ -28,7 +28,7 @@
       "newChat": "Nuevo chat",
       "toggleChatSidebar": "Alternar barra lateral de chats",
       "openFlowsPanel": "Abrir panel de flujos",
-      "openMonitorPanel": "Abrir panel de monitor"
+      "openMonitorPanel": "Abrir panel del monitor"
     }
   },
   "statusBar": {
@@ -42,7 +42,7 @@
       "tools": "Herramientas",
       "admin": "Admin"
     },
-    "signOut": "Cerrar sesion"
+    "signOut": "Cerrar sesión"
   },
   "mobileTabBar": {
     "chat": "Chat",
@@ -59,10 +59,10 @@
     "flows": "Flujos",
     "monitor": "Monitor",
     "audio": "Audio",
-    "code": "Codigo",
+    "code": "Código",
     "calendar": "Calendario",
     "notes": "Notas",
-    "settings": "Configuracion",
-    "comingSoon": "Proximamente"
+    "settings": "Configuración",
+    "comingSoon": "Próximamente"
   }
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
 
@@ -28,6 +29,7 @@ type UserProfileResponse struct {
 // UserPreferencesJSON is the JSON representation of user preferences.
 type UserPreferencesJSON struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 }
@@ -44,6 +46,7 @@ type UpdatePreferencesRequest struct {
 // CompleteOnboardingRequest is the body for POST /api/v1/user/onboarding/complete.
 type CompleteOnboardingRequest struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 	PersonalityPreset string            `json:"personality_preset"`
@@ -99,6 +102,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 		Picture: rec.Picture,
 		Preferences: UserPreferencesJSON{
 			PreferredLanguage: rec.PreferredLanguage,
+			RegionalVariant:   rec.RegionalVariant,
 			PreferredModel:    rec.PreferredModel,
 			ModelOverrides:    overrides,
 		},
@@ -173,10 +177,22 @@ func (h *Handlers) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reque
 	if lang == "" {
 		lang = "en"
 	}
+
+	// Validate regional variant: empty is allowed (resolved to language default
+	// before persisting); non-empty must be in the supported set (SEC-002).
+	variant := req.RegionalVariant
+	if variant == "" {
+		variant = prompts.DefaultVariant(lang)
+	} else if !prompts.IsSupported(variant) {
+		writeError(w, http.StatusBadRequest, "regional_variant must be one of: es-CO, es-MX, es-AR, es-ES, en-GB, en-US, en-AU")
+		return
+	}
+
 	prefs := &persist.UserPreferences{
 		PreferredLanguage: lang,
 		PreferredModel:    req.PreferredModel,
 		ModelOverrides:    req.ModelOverrides,
+		RegionalVariant:   variant,
 	}
 	if err := h.UserRepo.UpdatePreferences(r.Context(), user.Sub, prefs); err != nil {
 		h.Logger.Error("save onboarding preferences", "user_id", user.Sub, "error", err)

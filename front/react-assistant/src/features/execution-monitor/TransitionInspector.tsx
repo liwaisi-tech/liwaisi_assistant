@@ -127,7 +127,10 @@ export function TransitionInspector({
       {/* Config */}
       {transition.llmConfig && (
         <Section title={t('transitionInspector.llmConfig')} color="var(--text-muted)">
-          <ConfigRow label={t('transitionInspector.model')} value={transition.llmConfig.model || t('transitionInspector.defaultModel')} />
+          <ConfigRow
+            label={t('transitionInspector.model')}
+            value={completedPayload?.executed_model || transition.llmConfig.model || t('transitionInspector.defaultModel')}
+          />
           {transition.llmConfig.maxTokens && <ConfigRow label={t('transitionInspector.maxTokens')} value={String(transition.llmConfig.maxTokens)} />}
           {transition.llmConfig.temperature != null && <ConfigRow label={t('transitionInspector.temperature')} value={String(transition.llmConfig.temperature)} />}
           {transition.llmConfig.streamOutput && <ConfigRow label={t('transitionInspector.stream')} value="true" />}

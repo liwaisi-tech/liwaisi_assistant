@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
 
@@ -12,6 +12,12 @@ interface MessageInputProps {
 export function MessageInput({ onSend, disabled, sessionState, error }: MessageInputProps) {
   const { t } = useTranslation('chat');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!disabled) {
+      textareaRef.current?.focus();
+    }
+  }, [disabled]);
 
   const handleSend = useCallback(() => {
     const value = textareaRef.current?.value.trim();

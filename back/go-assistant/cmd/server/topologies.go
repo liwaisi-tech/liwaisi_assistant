@@ -17,6 +17,20 @@ import (
 // needs_clarification=false. Overridable via CLASSIFIER_CONFIDENCE_THRESHOLD.
 const defaultClassifierConfidenceThreshold = 0.7
 
+// braeIdentity is the product identity preamble injected into every
+// user-facing LLM system prompt. The agent's name is "brae" — lowercase,
+// always — an acronym of "Being a Real AI Engineer". Created by Liwaisi Tech.
+// This block is intentionally short so it costs few tokens and is prepended,
+// not appended, so the model reads it first.
+const braeIdentity = `YOU ARE brae.
+- Your name is "brae" (lowercase, ALWAYS — never "Brae", never "BRAE", never capitalized even at the start of a sentence).
+- "brae" stands for "Being a Real AI Engineer". You are an AI engineer, not a generic chat assistant.
+- You were built by Liwaisi Tech. When asked who you are, who made you, or what you are, identify as brae, built by Liwaisi Tech.
+- NEVER refer to yourself as "an AI assistant", "a helpful assistant", "Liwaisi Assistant", "the assistant", "a language model", or any other name. You are brae.
+- Speak in first person as brae. Be direct, practical, and engineer-minded — you think like a senior engineer who ships.
+`
+
+
 // classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each
 // call. Invalid or unset values fall back to defaultClassifierConfidenceThreshold.
 // Parsed lazily to keep tests and env tweaks simple.
@@ -165,7 +179,7 @@ func defaultTopologyFactory(sessionID string) *cpn.CPN {
 	}
 	tLLM := cpn.NewTransition("t-llm", cpn.NodeKindLLM,
 		[]string{"p-input"}, []string{"p-output"})
-	tLLM.SystemPrompt = envOr("PROMPT_DIRECT", "You are a helpful assistant. Be concise.")
+	tLLM.SystemPrompt = envOr("PROMPT_DIRECT", braeIdentity+"\nRespond naturally and concisely.")
 	tLLM.LLMConfig = &cpn.LLMConfig{
 		MaxTokens:    envInt("MAX_TOKENS_DIRECT", 4096),
 		Temperature:  0.7,
@@ -203,7 +217,7 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 
 	tPlan := cpn.NewTransition("t-plan", cpn.NodeKindLLM,
 		[]string{"p-input"}, []string{"p-plan"})
-	tPlan.SystemPrompt = envOr("PROMPT_PLAN", "You are a helpful assistant. Analyze the user's request and present a clear, concise plan. "+
+	tPlan.SystemPrompt = envOr("PROMPT_PLAN", braeIdentity+"\nAnalyze the user's request and present a clear, concise plan. "+
 		"Format the plan as a numbered list of steps. End with: \"Would you like me to proceed?\"")
 	tPlan.LLMConfig = &cpn.LLMConfig{
 		MaxTokens:    envInt("MAX_TOKENS_PLAN", 4096),
@@ -221,7 +235,7 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 		[]string{"p-reviewed"}, []string{"p-output"})
 	// See unified topology for the full PROMPT_EXECUTE rationale (advisory vs
 	// producible plans). Both topologies share the env override.
-	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", "You are a helpful assistant. The user approved the following plan. "+
+	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", braeIdentity+"\nThe user approved the following plan. "+
 		"Execute it thoroughly and provide the final result.")
 	tExecute.LLMConfig = &cpn.LLMConfig{
 		MaxTokens:    envInt("MAX_TOKENS_EXECUTE", 8192),
@@ -285,6 +299,8 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 
 The message may be in any human language. Classify identically regardless of language. Do not translate the message.
 
+A "USER CONTEXT — REGIONAL REGISTER" preamble may be prepended to this prompt at runtime. When present, use the listed idiom glosses to resolve ambiguous imperatives in the user's regional register (e.g., a verb that looks like a command in standard usage but is conversational in that variant). Do not enumerate the idioms in your output; let them inform the conversation/task decision in Step 1.
+
 Schema (all keys required):
 {"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...],"confidence":0.0}
 
@@ -297,10 +313,12 @@ Detect meta-questions by SEMANTICS, not by keyword. Any phrasing in any language
 
 Step 1. Intent.
 - "conversation": greetings, small talk, thanks, acknowledgements, emotional reactions, single factual questions answerable in one short paragraph, follow-up questions about something already said, opinion questions, and ALL meta-questions (see Step 0).
-- "task": the user explicitly asks the assistant to PRODUCE a multi-step deliverable — build, design, plan, implement, write a document or code, analyze a dataset, research a topic in depth, refactor, teach a multi-step procedure, or otherwise hand back a structured artifact.
-- When ambiguous, prefer "conversation". The task pipeline is expensive and produces poor output on under-specified inputs; a conversational reply can always offer to escalate. Misrouting smalltalk into the planner is a much worse failure than the reverse.
-- Do NOT classify a message as "task" merely because you don't immediately know the answer. "I don't know" is a valid conversational reply.
-- A short question (under ~15 words) with no imperative verb is almost always "conversation".
+- "task": the user explicitly asks the assistant to PRODUCE a multi-step deliverable — build, design, plan, implement, write a document or code, analyze a dataset, research a topic in depth, refactor, teach a multi-step procedure, or otherwise hand back a structured artifact that a reasonable person would review before shipping.
+- When ambiguous, prefer "conversation". The task pipeline is expensive, adds a human-review gate, and produces poor output on under-specified inputs; a conversational reply can always offer to escalate. Misrouting a one-shot reply into the planner is a much worse failure than the reverse.
+- Do NOT classify a message as "task" merely because you don't immediately know the answer, or merely because the message contains an imperative verb. Imperatives are common in casual speech ("tell me...", "say...", "count...", "repeat...", "define...", "translate this phrase...", "give me an example...", "try streaming"). The grammatical mood is NOT the signal.
+- The real test is the EXPECTED OUTPUT SHAPE. Ask: "Could a competent assistant satisfy this in a single short turn of free-form text, with no planning, no structure, and nothing a human would want to review before it ships?" If yes → "conversation". If the user is asking for something a senior practitioner would outline, draft in sections, or iterate on → "task".
+- Requests framed as probes, demos, warm-ups, or curiosity checks ("test X", "show me what you can do", "try Y") are conversation even when phrased as commands — they want a quick live reply, not a deliverable.
+- "I don't know" is a valid conversational reply.
 
 Step 2. If intent == "task", judge specification-completeness.
 A task is FULLY SPECIFIED if a senior practitioner in the relevant field could produce a concrete, non-generic plan without making more than ONE significant assumption about an unnamed parameter. Otherwise it is UNDER-SPECIFIED.
@@ -333,7 +351,8 @@ Output contract: respond with ONLY the JSON object. The first character of your 
 	// t-direct: fires for conversation intent — direct streaming response.
 	tDirect := cpn.NewTransition("t-direct", cpn.NodeKindLLM,
 		[]string{"p-classified"}, []string{"p-output"})
-	tDirect.SystemPrompt = envOr("PROMPT_DIRECT", `You are a helpful, friendly assistant. Respond naturally and concisely.
+	tDirect.SystemPrompt = envOr("PROMPT_DIRECT", braeIdentity+`
+Respond naturally and concisely. Be warm but engineer-minded — direct, practical, no fluff.
 
 `+langRule)
 	tDirect.LLMConfig = &cpn.LLMConfig{
@@ -354,13 +373,15 @@ Output contract: respond with ONLY the JSON object. The first character of your 
 Audience disambiguation rule (CRITICAL):
 A plan step may include questions intended for THIRD PARTIES the user must contact (e.g. survey questions for preview users, interview questions for stakeholders, screening questions for candidates). When a step contains such questions, you MUST label that block with a heading translated into the user's language meaning "Questions to send to [the third party]". Place the third-party questions as a sub-list under that heading. Never mix them inline with the step text. The user is approving a plan, not answering more questions — every question mark in your output must be unambiguously addressed to a third party (under a labeled block) or be the final "would you like me to proceed?" sentence.`
 
-	planDirectSystemPrompt := envOr("PROMPT_PLAN_DIRECT", `You are a helpful assistant producing an actionable plan.
+	planDirectSystemPrompt := envOr("PROMPT_PLAN_DIRECT", braeIdentity+`
+You are producing an actionable plan.
 
 The user's request (in conversation history) has already been judged fully specified by an upstream classifier. Your job is to deliver the plan, not to gather more information.
 
 `+planSharedRules)
 
-	planClarifiedSystemPrompt := envOr("PROMPT_PLAN_CLARIFIED", `You are a helpful assistant producing an actionable plan.
+	planClarifiedSystemPrompt := envOr("PROMPT_PLAN_CLARIFIED", braeIdentity+`
+You are producing an actionable plan.
 
 The user's original request is in the conversation history. The CURRENT user message contains their answers to a clarification questionnaire you previously asked. You now have enough information — your job is to deliver the plan, not to gather more.
 
@@ -481,6 +502,9 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 		RequireJSON:  true,
 		StreamOutput: false,
 		SkipHistory:  false,
+		// JSON questionnaire generator: schema is rigid and the regional
+		// register adds no signal — opt out to save tokens (CON-004).
+		SkipRegionalPreamble: true,
 	}
 	tAsk.Guard = guardNeedsClarification
 
@@ -516,7 +540,8 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 	// behave correctly in each case.
 	tExecute := cpn.NewTransition("t-execute", cpn.NodeKindLLM,
 		[]string{"p-reviewed"}, []string{"p-output"})
-	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", `The user just approved the plan shown above. Decide whether the plan is PRODUCIBLE by you right now, or ADVISORY (requires the human to take real-world actions you cannot perform).
+	tExecute.SystemPrompt = envOr("PROMPT_EXECUTE", braeIdentity+`
+The user just approved the plan shown above. Decide whether the plan is PRODUCIBLE by you right now, or ADVISORY (requires the human to take real-world actions you cannot perform).
 
 DECISION RULE:
 - PRODUCIBLE = every step is something a language model can deliver as text in this reply (code, drafts, summaries, translations, calculations, structured data, copy).

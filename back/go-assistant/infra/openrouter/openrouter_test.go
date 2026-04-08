@@ -335,7 +335,7 @@ func TestOpenRouterClient_Complete_AppHeaders(t *testing.T) {
 		successHandler(w, r)
 	})
 	client.AppURL = "https://liwaisi.example.com"
-	client.AppTitle = "Liwaisi Assistant"
+	client.AppTitle = "brae"
 
 	_, err := client.Complete(context.Background(), &cpn.LLMRequest{
 		Model:     "test-model",
@@ -348,8 +348,8 @@ func TestOpenRouterClient_Complete_AppHeaders(t *testing.T) {
 	if gotReferer != "https://liwaisi.example.com" {
 		t.Errorf("HTTP-Referer = %q, want %q", gotReferer, "https://liwaisi.example.com")
 	}
-	if gotTitle != "Liwaisi Assistant" {
-		t.Errorf("X-Title = %q, want %q", gotTitle, "Liwaisi Assistant")
+	if gotTitle != "brae" {
+		t.Errorf("X-Title = %q, want %q", gotTitle, "brae")
 	}
 }
 

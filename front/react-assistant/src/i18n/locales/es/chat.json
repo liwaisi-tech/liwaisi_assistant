@@ -1,26 +1,26 @@
 {
   "header": {
     "title": "brae",
-    "newConversation": "Nueva conversacion",
-    "signOut": "Cerrar sesion"
+    "newConversation": "Nueva conversación",
+    "signOut": "Cerrar sesión"
   },
   "sidebar": {
     "title": "Chats",
     "newChat": "Nuevo chat",
     "newButton": "Nuevo",
-    "noConversations": "Aun no hay conversaciones",
-    "noMessagesYet": "Sin mensajes aun",
-    "defaultTitle": "Nuevo Chat",
+    "noConversations": "Aún no hay conversaciones",
+    "noMessagesYet": "Sin mensajes aún",
+    "defaultTitle": "Nuevo chat",
     "chatActions": "Acciones del chat",
     "rename": "Renombrar",
     "fork": "Bifurcar",
     "delete": "Eliminar",
-    "confirmDelete": "Confirmar eliminacion",
+    "confirmDelete": "Confirmar eliminación",
     "collapseSidebar": "Contraer barra lateral",
     "expandSidebar": "Expandir barra lateral"
   },
   "messageBubble": {
-    "openCpnMonitor": "Abrir monitor de ejecucion CPN",
+    "openCpnMonitor": "Abrir monitor de ejecución CPN",
     "cpnButton": "CPN",
     "looksGood": "Se ve bien",
     "cancel": "Cancelar",
@@ -33,36 +33,36 @@
     "placeholderDisabled": "Esperando respuesta...",
     "sendAriaLabel": "Enviar mensaje",
     "inputAriaLabel": "Entrada de mensaje",
-    "hint": "Presiona Enter para enviar, Shift+Enter para nueva linea"
+    "hint": "Presiona Enter para enviar, Shift+Enter para nueva línea"
   },
   "messageList": {
     "welcomeTitle": "brae",
     "welcomeSubtitle": "Being a Real AI Engineer",
     "suggestions": {
       "explainCpn": "Explicar la arquitectura CPN",
-      "helpGoCode": "Ayudame a escribir codigo Go",
+      "helpGoCode": "Ayúdame a escribir código Go",
       "analyzeData": "Analizar mis datos",
       "summarizeDoc": "Resumir un documento"
     },
     "suggestionAriaLabel": "Enviar: {{suggestion}}"
   },
   "confirmClear": {
-    "title": "Iniciar nueva conversacion?",
-    "description": "Esto limpiara la conversacion actual. Esta accion no se puede deshacer."
+    "title": "¿Iniciar nueva conversación?",
+    "description": "Esto limpiará la conversación actual. Esta acción no se puede deshacer."
   },
   "forkDialog": {
-    "title": "Bifurcar conversacion",
-    "description": "Selecciona el punto de bifurcacion. Los mensajes hasta este punto seran copiados.",
-    "roleYou": "Tu",
+    "title": "Bifurcar conversación",
+    "description": "Selecciona el punto de bifurcación. Los mensajes hasta este punto serán copiados.",
+    "roleYou": "Tú",
     "roleAi": "IA",
-    "forkPointAriaLabel": "Selector de punto de bifurcacion",
-    "messagesCopied_one": "{{count}} mensaje sera copiado.",
-    "messagesCopied_other": "{{count}} mensajes seran copiados.",
+    "forkPointAriaLabel": "Selector de punto de bifurcación",
+    "messagesCopied_one": "{{count}} mensaje será copiado.",
+    "messagesCopied_other": "{{count}} mensajes serán copiados.",
     "costResets": "El costo se reinicia a",
     "costZero": "$0.00"
   },
   "streaming": {
-    "thinking": "El asistente esta pensando"
+    "thinking": "brae está pensando"
   },
   "a2ui": {
     "unknownComponent": "Componente no soportado: {{type}}",

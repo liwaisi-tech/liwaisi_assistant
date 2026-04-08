@@ -62,7 +62,7 @@
     "costZero": "$0.00"
   },
   "streaming": {
-    "thinking": "Assistant is thinking"
+    "thinking": "brae is thinking"
   },
   "a2ui": {
     "unknownComponent": "Unsupported component: {{type}}",

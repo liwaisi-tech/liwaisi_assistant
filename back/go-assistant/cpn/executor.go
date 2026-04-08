@@ -21,6 +21,24 @@ type fireResult struct {
 	err          error
 }
 
+// fireMetaKey is the context key used to thread per-firing metadata (e.g. the
+// actual executed LLM model id) from fire* functions back to the executor.
+type fireMetaKey struct{}
+
+// fireMeta carries metadata captured during a single transition firing.
+// It is allocated fresh per firing and attached to the ctx passed to dispatch.
+// Fields are only written by the firing goroutine, so no locking is needed.
+type fireMeta struct {
+	executedModel string
+}
+
+func metaFromCtx(ctx context.Context) *fireMeta {
+	if m, ok := ctx.Value(fireMetaKey{}).(*fireMeta); ok {
+		return m
+	}
+	return nil
+}
+
 // Run executes the CPN until completion, deadlock, timeout, or error.
 //
 // Algorithm:
@@ -143,17 +161,20 @@ func (c *CPN) Run(ctx context.Context) error {
 			go func(t *Transition, consumed []Token) {
 				defer wg.Done()
 				start := time.Now()
+				meta := &fireMeta{}
+				fireCtx := context.WithValue(ctx, fireMetaKey{}, meta)
 				// REQ-008: fireWithRetry integrates Block 4 retry.
-				outputSnaps, costUSD, err := fireWithRetry(ctx, t.Retry, t.CircuitBreaker(), func() ([]TokenSnapshot, float64, error) {
-					return dispatch(ctx, t, c, consumed)
+				outputSnaps, costUSD, err := fireWithRetry(fireCtx, t.Retry, t.CircuitBreaker(), func() ([]TokenSnapshot, float64, error) {
+					return dispatch(fireCtx, t, c, consumed)
 				})
 				elapsed := time.Since(start)
 
 				// Emit transition_completed (CON-002: inside fire goroutine).
 				payload := TransitionCompletedPayload{
-					OutputTokens: outputSnaps,
-					CostUSD:      costUSD,
-					DurationMs:   elapsed.Milliseconds(),
+					OutputTokens:  outputSnaps,
+					CostUSD:       costUSD,
+					DurationMs:    elapsed.Milliseconds(),
+					ExecutedModel: meta.executedModel,
 				}
 				if err != nil {
 					payload.Error = err.Error()

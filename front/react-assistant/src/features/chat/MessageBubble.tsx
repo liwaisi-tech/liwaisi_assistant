@@ -50,6 +50,10 @@ export const MessageBubble = memo(function MessageBubble({
   const isUser = role === 'user';
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseText, setReviseText] = useState('');
+  // Transition id captured from the A2UI "Request Changes" button. Needed
+  // because A2UI-rendered review cards carry the id on the button component,
+  // not on the MessageBubble's hitlTransitionId prop.
+  const [reviseTransitionId, setReviseTransitionId] = useState<string | null>(null);
 
   // Build A2UI payload — either from backend A2UI content or wrapping text
   const payload = useMemo<A2UIPayload | null>(() => {
@@ -61,6 +65,7 @@ export const MessageBubble = memo(function MessageBubble({
   const handleA2UIAction = useCallback(
     (action: A2UIAction) => {
       if (action.type === 'hitl:revise') {
+        setReviseTransitionId(action.componentId ?? hitlTransitionId ?? null);
         setReviseMode(true);
         return;
       }
@@ -74,15 +79,17 @@ export const MessageBubble = memo(function MessageBubble({
         onHITLAction?.(action.componentId, hitlAction);
       }
     },
-    [onHITLAction],
+    [onHITLAction, hitlTransitionId],
   );
 
   const handleReviseSubmit = useCallback(() => {
-    if (!reviseText.trim() || !hitlTransitionId) return;
-    onHITLAction?.(hitlTransitionId, 'revise', reviseText.trim());
+    const transitionId = reviseTransitionId ?? hitlTransitionId;
+    if (!reviseText.trim() || !transitionId) return;
+    onHITLAction?.(transitionId, 'revise', reviseText.trim());
     setReviseMode(false);
     setReviseText('');
-  }, [reviseText, hitlTransitionId, onHITLAction]);
+    setReviseTransitionId(null);
+  }, [reviseText, reviseTransitionId, hitlTransitionId, onHITLAction]);
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -169,7 +176,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {t('messageBubble.sendChanges', 'Send Changes')}
               </button>
               <button
-                onClick={() => { setReviseMode(false); setReviseText(''); }}
+                onClick={() => { setReviseMode(false); setReviseText(''); setReviseTransitionId(null); }}
                 className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
                 style={{
                   backgroundColor: 'rgba(255, 255, 255, 0.05)',

@@ -333,6 +333,14 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	// Force identity encoding on the streaming hop. Transport.DisableCompression
+	// already stops Go from advertising gzip, but an explicit header is the
+	// authoritative signal to any CDN/edge (Cloudflare fronts OpenRouter) that
+	// MUST NOT compress this response — gzip.Reader's DEFLATE window would
+	// hold short SSE payloads until EOF and break token-by-token streaming.
+	httpReq.Header.Set("Accept-Encoding", "identity")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
 	if c.AppURL != "" {
 		httpReq.Header.Set("HTTP-Referer", c.AppURL)
 	}
