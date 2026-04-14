@@ -129,4 +129,57 @@ describe('MessageBubble', () => {
     );
     expect(screen.getByText('You approved this')).toBeInTheDocument();
   });
+
+  // ── parsePayload contract (REQ-011 / REQ-012 / AC-008..010 / CON-003) ─────
+
+  it('should route to A2UI renderer when content has leading whitespace before the marker (AC-008 / REQ-011)', async () => {
+    const content =
+      '\n  \t$$a2ui:' +
+      JSON.stringify({ components: [{ type: 'text', props: { content: 'hi' } }] });
+    render(
+      <MessageBubble {...baseProps} role="assistant" content={content} />,
+      { wrapper },
+    );
+    await waitFor(() => {
+      // A2UI text component renders its props.content verbatim (no whitespace prefix)
+      expect(screen.getByTestId('markdown-content')).toHaveTextContent('hi');
+      // Crucially: the raw JSON / marker is NOT visible
+      expect(screen.queryByText(/\$\$a2ui:/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('should route to MarkdownContent when marker is inline (not at offset 0 after trim) (AC-009 / REQ-012)', async () => {
+    const content = 'Here is the marker $$a2ui: inline';
+    render(
+      <MessageBubble {...baseProps} role="assistant" content={content} />,
+      { wrapper },
+    );
+    await waitFor(() => {
+      // Entire content passes through verbatim to MarkdownContent
+      expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
+    });
+  });
+
+  it('should route to MarkdownContent when A2UI JSON fails to parse (REQ-012)', async () => {
+    const content = '$$a2ui:{not valid json';
+    render(
+      <MessageBubble {...baseProps} role="assistant" content={content} />,
+      { wrapper },
+    );
+    await waitFor(() => {
+      // Fall-through preserves ORIGINAL content byte-identical
+      expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
+    });
+  });
+
+  it('should route LaTeX display-math content to MarkdownContent untouched (AC-010 / CON-003)', async () => {
+    const content = '$$x^2 + y^2 = z^2$$';
+    render(
+      <MessageBubble {...baseProps} role="assistant" content={content} />,
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
+    });
+  });
 });

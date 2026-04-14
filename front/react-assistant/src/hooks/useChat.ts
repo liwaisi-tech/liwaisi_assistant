@@ -4,14 +4,15 @@ import type { StreamChunkData, CPNEventData } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
+import { A2UI_MARKER } from '../features/chat/a2ui/constants';
 
-interface ChatState {
+export interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
 }
 
-type ChatAction =
+export type ChatAction =
   | { type: 'SESSION_LOADED'; messages: ChatMessage[]; state: SessionState }
   | { type: 'STREAM_CHUNK'; data: StreamChunkData }
   | { type: 'USER_MESSAGE'; content: string; id: string }
@@ -24,7 +25,7 @@ type ChatAction =
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
   | { type: 'RESET' };
 
-function chatReducer(state: ChatState, action: ChatAction): ChatState {
+export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SESSION_LOADED':
       return {
@@ -56,7 +57,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'STREAM_CHUNK': {
       const { data } = action;
 
-      // Done sentinel — no content, just signals response complete
+      // 1. Done sentinel — no content, just signals response complete
       if (data.Done && !data.Content) {
         return {
           ...state,
@@ -67,6 +68,58 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         };
       }
 
+      const newBubble = (): ChatMessage => ({
+        id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'assistant',
+        content: data.Content,
+        isStreaming: !data.Done,
+        cpnId: data.CPNID,
+        cpnRole: data.CPNRole,
+        timestamp: new Date(),
+      });
+
+      // 2. A2UI boundary (REQ-008/009): any chunk starting with the marker
+      // opens a brand-new assistant bubble. Every currently-streaming
+      // assistant message is closed first so a mid-flight LLM bubble does
+      // not swallow the marker.
+      if (data.Content.startsWith(A2UI_MARKER)) {
+        return {
+          ...state,
+          sessionState: data.Done ? 'idle' : 'running',
+          messages: [
+            ...state.messages.map((m) =>
+              m.role === 'assistant' && m.isStreaming
+                ? { ...m, isStreaming: false }
+                : m
+            ),
+            newBubble(),
+          ],
+        };
+      }
+
+      // 3. Post-A2UI guard (REQ-010): if a streaming assistant bubble on the
+      // same CPNID is already holding a complete A2UI payload, a follow-on
+      // non-marker chunk MUST NOT be concatenated onto it. Close the A2UI
+      // bubble and start a fresh plain bubble.
+      const a2uiIdx = state.messages.findIndex(
+        (m) =>
+          m.role === 'assistant' &&
+          m.isStreaming &&
+          m.cpnId === data.CPNID &&
+          m.content.startsWith(A2UI_MARKER)
+      );
+      if (a2uiIdx >= 0) {
+        const updated = [...state.messages];
+        updated[a2uiIdx] = { ...updated[a2uiIdx], isStreaming: false };
+        updated.push(newBubble());
+        return {
+          ...state,
+          messages: updated,
+          sessionState: data.Done ? 'idle' : 'running',
+        };
+      }
+
+      // 4. Default append — existing behaviour.
       const existingIdx = state.messages.findIndex(
         (m) => m.role === 'assistant' && m.isStreaming && m.cpnId === data.CPNID
       );
@@ -83,18 +136,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
       return {
         ...state,
-        messages: [
-          ...state.messages,
-          {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: data.Content,
-            isStreaming: !data.Done,
-            cpnId: data.CPNID,
-            cpnRole: data.CPNRole,
-            timestamp: new Date(),
-          },
-        ],
+        messages: [...state.messages, newBubble()],
         sessionState: data.Done ? 'idle' : 'running',
       };
     }
@@ -164,7 +206,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
-const initialState: ChatState = {
+export const initialState: ChatState = {
   messages: [],
   sessionState: 'idle',
   error: null,

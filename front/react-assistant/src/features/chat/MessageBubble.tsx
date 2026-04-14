@@ -2,9 +2,8 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
 import type { A2UIPayload, A2UIAction } from './a2ui/types.ts';
+import { A2UI_MARKER } from './a2ui/constants.ts';
 import type { HITLAction } from '../../types/chat';
-
-const A2UI_MARKER = '$$a2ui:';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
@@ -22,15 +21,20 @@ interface MessageBubbleProps {
 
 /**
  * Parse A2UI payload from message content.
- * Returns the parsed payload if content starts with $$a2ui:, otherwise builds
- * a default text component payload for markdown rendering.
+ * Returns the parsed payload if content (after trimming leading ASCII
+ * whitespace) starts with $$a2ui:, otherwise builds a default text
+ * component payload for markdown rendering. REQ-011 / REQ-012.
+ *
+ * Fall-through preserves the ORIGINAL (untrimmed) content so that plain
+ * messages which legitimately begin with whitespace render unchanged.
  */
 function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
-  if (content.startsWith(A2UI_MARKER)) {
+  const trimmed = content.replace(/^\s+/, '');
+  if (trimmed.startsWith(A2UI_MARKER)) {
     try {
-      return JSON.parse(content.slice(A2UI_MARKER.length));
+      return JSON.parse(trimmed.slice(A2UI_MARKER.length));
     } catch {
-      // Malformed A2UI JSON — fall through to text rendering
+      // Malformed or partial A2UI JSON — fall through to text rendering
     }
   }
 
