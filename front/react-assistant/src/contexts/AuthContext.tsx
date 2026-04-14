@@ -121,8 +121,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [fetchAdminStatus]);
 
   useEffect(() => {
+    // Gate on actual completion, NOT on effect entry. The previous version
+    // set `initRef.current = true` before polling for window.google, which
+    // meant a re-render during the polling window cleared the interval AND
+    // skipped re-init on the next effect call — leaving GSI uninitialized
+    // and SignInModal.renderButton() failing with "client_id is missing".
     if (initRef.current) return;
-    initRef.current = true;
 
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -136,19 +140,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         callback: handleCredentialResponse,
         auto_select: false,
       });
+      initRef.current = true; // mark complete only after successful init
     };
 
     if (window.google?.accounts) {
       initGoogle();
-    } else {
-      const checkInterval = setInterval(() => {
-        if (window.google?.accounts) {
-          clearInterval(checkInterval);
-          initGoogle();
-        }
-      }, 100);
-      return () => clearInterval(checkInterval);
+      return;
     }
+
+    const checkInterval = setInterval(() => {
+      if (window.google?.accounts) {
+        clearInterval(checkInterval);
+        initGoogle();
+      }
+    }, 100);
+    return () => clearInterval(checkInterval);
   }, [handleCredentialResponse, user]);
 
   const logout = useCallback(() => {

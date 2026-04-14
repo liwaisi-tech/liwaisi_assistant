@@ -30,7 +30,6 @@ const braeIdentity = `YOU ARE brae.
 - Speak in first person as brae. Be direct, practical, and engineer-minded — you think like a senior engineer who ships.
 `
 
-
 // classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each
 // call. Invalid or unset values fall back to defaultClassifierConfidenceThreshold.
 // Parsed lazily to keep tests and env tweaks simple.
@@ -501,14 +500,21 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 		Temperature:  0.3,
 		RequireJSON:  true,
 		StreamOutput: false,
-		// SkipHistory=true mirrors the t-classify precedent at ~line 348:
-		// t-ask's raw JSON is routing metadata consumed only by
-		// t-clarify's A2UIPayloadBuilder (buildClarifyA2UIPayload) and
-		// buildClarifiedToken, never by downstream conversational
-		// transitions. Persisting it would surface the raw questionnaire
-		// JSON above the $$a2ui: interactive bubble on rehydration. See
-		// spec-process-bugfix-a2ui-hitl-rehydration REQ-016 / INV-004.
-		SkipHistory: true,
+		// Dual-flag configuration (REQ-104, spec-process-bugfix-a2ui-rehydration-completion.md):
+		//   SkipHistory:       false → t-ask MUST read the user's message from
+		//                              c.History on the input side. Its consumed
+		//                              p-classified token is metadata-only, so
+		//                              flipping this true would blind the LLM to
+		//                              the user's words (v1.1 regression).
+		//   SkipOutputHistory: true  → t-ask's raw JSON questionnaire is routing
+		//                              metadata consumed downstream by
+		//                              t-clarify's A2UIPayloadBuilder via the
+		//                              token pipeline, never via c.History.
+		//                              Persisting it pollutes the transcript and
+		//                              renders as a raw JSON bubble above the
+		//                              $$a2ui: surface on rehydration (INV-101).
+		SkipHistory:       false,
+		SkipOutputHistory: true,
 		// JSON questionnaire generator: schema is rigid and the regional
 		// register adds no signal — opt out to save tokens (CON-004).
 		SkipRegionalPreamble: true,

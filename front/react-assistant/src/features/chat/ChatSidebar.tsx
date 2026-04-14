@@ -3,6 +3,7 @@ import type { SessionListItem } from '../../types/api';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
+import { displayPreview } from './a2ui/previewDisplay';
 
 function timeAgo(dateStr: string, t: TFunction): string {
   const now = Date.now();
@@ -184,7 +185,9 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
           className="flex-1 min-w-0 truncate text-[11px]"
           style={{ color: 'var(--text-muted)' }}
         >
-          {chat.last_message_preview || t('chat:sidebar.noMessagesYet')}
+          {chat.last_message_preview
+            ? displayPreview(chat.last_message_preview, t)
+            : t('chat:sidebar.noMessagesYet')}
         </span>
         <span
           className="flex-none text-[10px]"

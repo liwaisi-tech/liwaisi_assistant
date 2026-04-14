@@ -211,9 +211,14 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	}
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
-	// Skip when SkipHistory is true — classifier output is routing metadata,
-	// not conversational content that downstream transitions need in history.
-	if !t.LLMConfig.SkipHistory {
+	// Suppressed when EITHER:
+	//   - SkipHistory: the transition reads no history AND its output has no
+	//     conversational value (e.g. t-classify routing metadata), OR
+	//   - SkipOutputHistory: the transition DOES read history (input side) but
+	//     its output is routing metadata that must not pollute the transcript
+	//     (e.g. t-ask raw questionnaire JSON consumed by t-clarify via tokens).
+	// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107.
+	if !t.LLMConfig.SkipHistory && !t.LLMConfig.SkipOutputHistory {
 		c.mu.Lock()
 		if len(userTokens) > 0 {
 			c.History = append(c.History, &Message{

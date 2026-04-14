@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react';
-import type { SessionState } from '../types/api';
+import type { BackendSessionState, SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
@@ -7,13 +7,23 @@ import { useSSE, type SSEConnectionState } from './useSSE';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
 
 export interface ChatState {
+  // Tracks the session whose stream we are willing to apply. STREAM_CHUNK
+  // actions whose SessionID does not match are dropped so a late chunk from
+  // a previous chat cannot bleed into the current chat's DOM (REQ-302/AC-302).
+  // Null means we have not yet been told about a session — chunks are still
+  // accepted in that window for backwards-compat.
+  sessionId: string | null;
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
 }
 
 export type ChatAction =
-  | { type: 'SESSION_LOADED'; messages: ChatMessage[]; state: SessionState }
+  // SESSION_LOADED carries the sessionId so the reducer can begin filtering
+  // STREAM_CHUNK actions for that session (REQ-302). The state field carries
+  // the backend rehydration vocabulary; the reducer maps it onto the
+  // reducer-internal SessionState via mapBackendStateToReducerState.
+  | { type: 'SESSION_LOADED'; sessionId: string; messages: ChatMessage[]; state: BackendSessionState }
   | { type: 'STREAM_CHUNK'; data: StreamChunkData }
   | { type: 'USER_MESSAGE'; content: string; id: string }
   | { type: 'SESSION_COMPLETED' }
@@ -25,13 +35,46 @@ export type ChatAction =
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
   | { type: 'RESET' };
 
+// mapBackendStateToReducerState translates the rehydration-oriented vocabulary
+// returned by GET /api/v1/sessions/{id} into the reducer-internal SessionState.
+// Visual behavior is identical to a fresh 'running' state — the existing
+// "thinking…" indicator (MessageList.showThinking) covers both the live and
+// rehydrated cases without needing a dedicated 'generating' value.
+//   running       → 'running'   (REQ-401: CPN running, indicator visible while no chunks)
+//   hitl_pending  → 'idle'      (REQ-403: A2UI surface IS the affordance — no spinner)
+//   terminal      → 'idle'      (REQ-404: completed/failed are terminal, composer enabled)
+//   idle          → 'idle'
+// See spec-process-bugfix-a2ui-rehydration-completion.md changelog 1.1
+// for the rationale on collapsing the originally-proposed 'generating' state.
+function mapBackendStateToReducerState(s: BackendSessionState): SessionState {
+  if (s === 'running') return 'running';
+  return 'idle';
+}
+
+// narrowToBackendState collapses the wire-level SessionState | BackendSessionState
+// union onto the reducer's expected BackendSessionState. Any legacy/list
+// vocabulary (waiting/completed/failed) is treated as 'idle' for rehydration —
+// the affordance the user needs is read from the persisted message list, not
+// from the legacy state value.
+function narrowToBackendState(s: SessionState | BackendSessionState): BackendSessionState {
+  if (s === 'running' || s === 'hitl_pending' || s === 'terminal' || s === 'idle') {
+    return s;
+  }
+  return 'idle';
+}
+
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SESSION_LOADED':
       return {
         ...state,
-        messages: action.messages,
-        sessionState: action.state,
+        sessionId: action.sessionId,
+        // REQ-303: rehydrated messages MUST never carry a stale streaming
+        // flag into the DOM. Force isStreaming=false on every entry.
+        messages: action.messages.map((m) =>
+          m.isStreaming ? { ...m, isStreaming: false } : m
+        ),
+        sessionState: mapBackendStateToReducerState(action.state),
         error: null,
       };
 
@@ -56,6 +99,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
     case 'STREAM_CHUNK': {
       const { data } = action;
+
+      // 0. Session-id race defence (REQ-302 / AC-302). Drop chunks that
+      // belong to a session other than the one the user is viewing. This
+      // closes the window between chat-switch dispatch and SSE abort. The
+      // null-sessionId branch keeps backwards-compat for callers that
+      // dispatch chunks before SESSION_LOADED has set the id.
+      if (state.sessionId !== null && data.SessionID !== state.sessionId) {
+        return state;
+      }
 
       // 1. Done sentinel — no content, just signals response complete
       if (data.Done && !data.Content) {
@@ -207,6 +259,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 }
 
 export const initialState: ChatState = {
+  sessionId: null,
   messages: [],
   sessionState: 'idle',
   error: null,
@@ -266,12 +319,22 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           cpnId: m.cpn_id,
           timestamp: new Date(m.timestamp),
         }));
-        dispatch({ type: 'SESSION_LOADED', messages, state: session.state });
+        dispatch({
+          type: 'SESSION_LOADED',
+          sessionId: sessionId!,
+          messages,
+          // GET /sessions/{id} returns BackendSessionState (REQ-404), but the
+          // shared SessionResponse interface widens it to SessionState |
+          // BackendSessionState. Narrow defensively at the seam: any legacy
+          // SessionState value (waiting/completed/failed) maps to 'idle' from
+          // the reducer's perspective.
+          state: narrowToBackendState(session.state),
+        });
       } catch (err) {
         if (cancelled) return;
         // New session with no messages yet is fine
         if (err instanceof ApiError && err.status === 404) {
-          dispatch({ type: 'SESSION_LOADED', messages: [], state: 'idle' });
+          dispatch({ type: 'SESSION_LOADED', sessionId: sessionId!, messages: [], state: 'idle' });
         } else {
           dispatch({ type: 'SET_ERROR', error: (err as Error).message });
         }

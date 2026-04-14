@@ -229,19 +229,32 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 		limit = 100
 	}
 
+	// Fetch the last 10 message contents (newest-first) per session so the
+	// shared persist.RenderablePreview helper can skip raw-routing-JSON or
+	// unparseable A2UI rows and pick the first user-renderable summary
+	// (REQ-202, INV-302, spec-process-bugfix-a2ui-rehydration-completion.md).
+	const previewLookback = 10
 	query := `
 		SELECT s.id, COALESCE(s.title, ''), s.state, s.last_activity_at, s.created_at,
 		       COALESCE(s.forked_from_session_id, ''),
 		       COALESCE(tl.total_cost_usd, 0),
 		       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-		       COALESCE((SELECT content FROM messages m2 WHERE m2.session_id = s.id ORDER BY m2.timestamp DESC LIMIT 1), '')
+		       COALESCE(
+		         (SELECT array_agg(content ORDER BY ts DESC)
+		            FROM (SELECT content, timestamp AS ts
+		                    FROM messages m2
+		                   WHERE m2.session_id = s.id
+		                ORDER BY m2.timestamp DESC
+		                   LIMIT $3) recent),
+		         ARRAY[]::text[]
+		       )
 		FROM sessions s
 		LEFT JOIN token_ledger tl ON tl.session_id = s.id
 		WHERE s.user_id = $1 AND s.deleted_at IS NULL AND s.state != 'expired'
 		ORDER BY s.last_activity_at DESC
 		LIMIT $2`
 
-	rows, err := r.pool.Query(ctx, query, userID, limit+1)
+	rows, err := r.pool.Query(ctx, query, userID, limit+1, previewLookback)
 	if err != nil {
 		return nil, fmt.Errorf("postgres session listByUserID: %w", err)
 	}
@@ -251,17 +264,16 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 	for rows.Next() {
 		item := &persist.SessionListItem{}
 		var state string
+		var recent []string
 		if err := rows.Scan(
 			&item.ID, &item.Title, &state, &item.LastActivityAt, &item.CreatedAt,
 			&item.ForkedFromSessionID, &item.TotalCostUSD,
-			&item.MessageCount, &item.LastMessagePreview,
+			&item.MessageCount, &recent,
 		); err != nil {
 			return nil, fmt.Errorf("postgres session scan list item: %w", err)
 		}
 		item.State = persist.SessionState(state)
-		if len(item.LastMessagePreview) > 120 {
-			item.LastMessagePreview = item.LastMessagePreview[:120]
-		}
+		item.LastMessagePreview = persist.RenderablePreview(recent)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

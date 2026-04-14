@@ -205,7 +205,20 @@ type LLMConfig struct {
 	// conversation history. The LLM only sees its system prompt and the
 	// consumed tokens. Used by classifier transitions that must classify
 	// each message independently, without bias from prior conversation.
+	// Note: SkipHistory has dual semantics — it ALSO suppresses the
+	// post-call append of input/output to c.History (see fire_llm.go
+	// output guard). For transitions that need to READ history but
+	// must NOT pollute it on output, use SkipOutputHistory instead.
 	SkipHistory bool
+
+	// SkipOutputHistory, when true, suppresses the post-call append of
+	// the consumed-tokens "user" replay AND the LLM "assistant" output
+	// to c.History, without affecting the input-side context window.
+	// Used by transitions whose output is routing metadata consumed
+	// downstream via the CPN token pipeline (not via history) and which
+	// would otherwise pollute the conversation transcript on rehydration.
+	// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107.
+	SkipOutputHistory bool
 
 	// SkipRegionalPreamble, when true, prevents fireLLM from prepending the
 	// per-session regional-variant preamble to this transition's SystemPrompt.

@@ -1,6 +1,6 @@
 ---
 title: "Bug Fix — A2UI HITL Surface Survives Session Rehydration (Chat Switch / Logout-Login)"
-version: 1.1
+version: 1.2
 date_created: 2026-04-13
 last_updated: 2026-04-13
 owner: liwaisi-tech
@@ -10,17 +10,32 @@ supersedes: spec-process-bugfix-a2ui-chunk-boundary-and-persistence.md
 
 ## Changelog
 
-- **1.1 (2026-04-13)**: Live forensic investigation against the running Postgres
-  revealed that the `t-ask` LLM transition persists its raw JSON questionnaire
-  output to `c.History` (via `fire_llm.go:225`), which is what rehydrated clients
-  actually render. REQ-001 alone is therefore insufficient: without also
-  suppressing the `t-ask` history contribution, the garbage JSON row will remain
-  visible above the clean `$$a2ui:` row on reload. Added **REQ-016** requiring
-  `t-ask` to run with `SkipHistory: true`, mirroring the existing `t-classify`
-  precedent at `cmd/server/topologies.go:348`. Added **AC-016** and **INV-004**
-  to guard the invariant. Frontend REQ-008..012 landed in commit `baa59f5` and
-  fix the live-stream case; this revision narrows the remaining work to two
-  backend changes plus one backfill decision.
+- **1.2 (2026-04-13)**: **REQ-016 and REQ-017 WITHDRAWN and REVERTED in code.**
+  Flipping `t-ask.LLMConfig.SkipHistory` to `true` broke the clarify flow: the
+  LLM received no user input because `SkipHistory` has a dual semantic (both
+  input-side and output-side) at `cpn/fire_llm.go:56-60` and `:213-216`. Unlike
+  `t-classify` (whose consumed `p-user` token IS the user message), `t-ask`
+  consumes from `p-classified` (a metadata-only token) and reads the user's
+  original message from `c.History`. With `SkipHistory: true`, `BuildContext`
+  set `ctxWindowSize = 0`, so the LLM saw only its system prompt + the
+  classifier metadata and emitted a questionnaire whose `restated_goal` was
+  effectively "no user message provided". The A2UI surface then rendered that
+  garbage. The "mirrors t-classify" rationale from v1.1 was incorrect — the
+  two transitions share `SkipHistory`'s name but not its applicability, because
+  their input-token contents differ. Reverted at commit (pending).
+
+  INV-004 and AC-016/017 are suspended. The persistence concern (raw
+  questionnaire JSON surfacing on rehydration) remains real and is re-opened
+  as **REQ-018** (proposed): introduce a new `LLMConfig.SkipOutputHistory bool`
+  flag separate from `SkipHistory`, to suppress the output-side `c.History`
+  append without affecting the input-side read. Set on `t-ask` instead of
+  `SkipHistory`. Deferred to a follow-up pass once the running deployment is
+  stable.
+
+- **1.1 (2026-04-13)**: [WITHDRAWN — see 1.2] Added REQ-016/017 asserting
+  `t-ask.SkipHistory: true`, INV-004, AC-016/017. Reasoning was based on
+  incomplete reading of `SkipHistory` semantics.
+
 - **1.0 (2026-04-13)**: Initial spec, superseding
   `spec-process-bugfix-a2ui-chunk-boundary-and-persistence.md`.
 

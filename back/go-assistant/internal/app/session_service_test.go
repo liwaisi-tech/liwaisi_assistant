@@ -428,6 +428,163 @@ func hitlA2UITopologyFactory(sessionID string) *cpn.CPN {
 	return cpn.NewCPN("cpn-"+sessionID, "test-root", 0, cpn.ModeMAS, sessionID, places, transitions)
 }
 
+// askThenHITLA2UITopologyFactory builds a topology that mirrors the real
+// t-ask → t-clarify pipeline: an LLM transition (configured exactly like
+// t-ask, with SkipOutputHistory=true) feeds a JSON token into a HITL
+// transition that emits an A2UI surface. Used to lock in INV-101 of
+// spec-process-bugfix-a2ui-rehydration-completion.md: with the dual-flag
+// config in place, the CPN run MUST persist exactly one $$a2ui: row and
+// ZERO rows that look like the t-ask raw JSON.
+func askThenHITLA2UITopologyFactory(sessionID string) *cpn.CPN {
+	places := map[string]*cpn.Place{
+		"p-input":     cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
+		"p-questions": cpn.NewPlace("p-questions", cpn.ColorJSON, cpn.SpaceSurface),
+		"p-output":    cpn.NewPlace("p-output", cpn.ColorHuman, cpn.SpaceSurface),
+	}
+	tAsk := cpn.NewTransition("t-ask", cpn.NodeKindLLM,
+		[]string{"p-input"}, []string{"p-questions"})
+	tAsk.SystemPrompt = "Generate a clarifying questionnaire as JSON."
+	tAsk.LLMConfig = &cpn.LLMConfig{
+		Model:             "ask-test-model",
+		MaxTokens:         200,
+		RequireJSON:       true,
+		SkipHistory:       false,
+		SkipOutputHistory: true, // REQ-104: the bit being asserted by INV-101
+	}
+
+	tHITL := cpn.NewTransition("t-clarify", cpn.NodeKindHITL,
+		[]string{"p-questions"}, []string{"p-output"})
+	tHITL.HITLConfig = &cpn.HITLConfig{
+		Prompt: "Please answer",
+		A2UIPayloadBuilder: func(_ []cpn.Token) (any, error) {
+			return map[string]any{
+				"components": []any{
+					map[string]any{
+						"type": "questionnaire",
+						"props": map[string]any{
+							"componentId": "t-clarify",
+							"title":       "Cuéntame más",
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	transitions := map[string]*cpn.Transition{
+		"t-ask":     tAsk,
+		"t-clarify": tHITL,
+	}
+	return cpn.NewCPN("cpn-"+sessionID, "test-root", 0, cpn.ModeMAS, sessionID, places, transitions)
+}
+
+// TestSessionService_AskThenHITL_NoRawTAskRowPersisted is the end-to-end
+// guard for INV-101 of spec-process-bugfix-a2ui-rehydration-completion.md.
+// It drives a topology that mirrors the production t-ask → t-clarify path,
+// returns a realistic raw questionnaire JSON from the mock LLM, and asserts:
+//   - exactly ONE persisted assistant row whose content begins with "$$a2ui:".
+//   - ZERO persisted assistant rows whose content is the raw t-ask JSON
+//     (i.e. starts with `{"restated_goal"` or contains "questions").
+//   - the t-ask LLM saw the user's input on the input side (sanity guard
+//     against a regression of the v1.1 SkipHistory blinding bug).
+func TestSessionService_AskThenHITL_NoRawTAskRowPersisted(t *testing.T) {
+	t.Parallel()
+
+	const userMsg = "Quiero que me ayudes mañana tengo una feria de emprendimiento"
+	const askJSON = `{"restated_goal":"Necesitas ayuda para preparar la muestra","questions":[{"id":"q1","label":"¿Qué tipo de artículo?"}]}`
+
+	llmSawUser := false
+	llm := &mockLLMClient{
+		completeFunc: func(_ context.Context, req *cpn.LLMRequest) (cpn.LLMResponse, error) {
+			for _, m := range req.Messages {
+				if m.Role == "user" && strings.Contains(m.Content, "Quiero que me ayudes mañana") {
+					llmSawUser = true
+				}
+			}
+			return cpn.LLMResponse{Content: askJSON}, nil
+		},
+	}
+
+	svc := NewSessionService(
+		llm,
+		&mockCostProvider{cost: 0.0},
+		testLogger(),
+		askThenHITLA2UITopologyFactory,
+	)
+
+	hitlReady := make(chan struct{}, 1)
+	svc.SetEventCallback(func(_ string, evt cpn.Event) {
+		if evt.Type == cpn.EventHITLRequested {
+			select {
+			case hitlReady <- struct{}{}:
+			default:
+			}
+		}
+	})
+
+	info, err := svc.CreateSession(context.Background(), "user-ask-hitl", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := svc.SendMessage(context.Background(), info.ID, userMsg); err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	select {
+	case <-hitlReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for EventHITLRequested")
+	}
+
+	if err := svc.ResolveHITL(context.Background(), info.ID, "t-clarify", cpn.HITLResponse{
+		Action: cpn.HITLApprove,
+	}); err != nil {
+		t.Fatalf("resolve HITL: %v", err)
+	}
+
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for st.get() == cpn.StateRunning || st.get() == cpn.StateWaiting {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for CPN to finish, state=%s", st.get())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got, err := svc.GetSession(info.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+
+	a2uiRows := 0
+	rawAskRows := 0
+	for _, m := range got.Messages {
+		if m.Role != cpn.RoleAssistant {
+			continue
+		}
+		if strings.HasPrefix(m.Content, cpn.A2UIMarker) {
+			a2uiRows++
+			continue
+		}
+		if strings.Contains(m.Content, `"restated_goal"`) || strings.Contains(m.Content, `"questions"`) {
+			rawAskRows++
+		}
+	}
+
+	if a2uiRows != 1 {
+		t.Errorf("INV-101: expected exactly 1 $$a2ui: assistant row, got %d.\nmessages: %+v", a2uiRows, got.Messages)
+	}
+	if rawAskRows != 0 {
+		t.Errorf("INV-101: expected ZERO raw t-ask JSON assistant rows, got %d. SkipOutputHistory regression?\nmessages: %+v", rawAskRows, got.Messages)
+	}
+	if !llmSawUser {
+		t.Errorf("AC-102: t-ask LLM did not see the user message in its request — input-side regression of SkipHistory dual-flag")
+	}
+}
+
 // TestSessionService_HITLClarifyFlow_PersistsOnlyA2UIRow_NotTAskRaw asserts
 // INV-002 and INV-004 end-to-end: after SendMessage triggers fireHITL (which
 // emits the A2UI surface) and ResolveHITL unblocks the transition, the

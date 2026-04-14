@@ -412,12 +412,19 @@ func TestDefaultTopology_StillWorks(t *testing.T) {
 	}
 }
 
-// TestUnifiedTopology_TAskSkipsHistory asserts REQ-016 / INV-004: the
-// t-ask LLM transition MUST run with SkipHistory = true so its raw JSON
-// questionnaire output never pollutes conversational history and thus
-// never reaches rehydrated chats as a garbled bubble above the
-// interactive $$a2ui: surface emitted by t-clarify.
-func TestUnifiedTopology_TAskSkipsHistory(t *testing.T) {
+// TestUnifiedTopology_TAskDualFlagHistory asserts the dual-flag config
+// applied to t-ask per REQ-104 of
+// spec-process-bugfix-a2ui-rehydration-completion.md:
+//
+//	SkipHistory       = false  → input-side: t-ask MUST read the user's
+//	                             message from c.History.
+//	SkipOutputHistory = true   → output-side: t-ask's raw JSON
+//	                             questionnaire MUST NOT be appended to
+//	                             c.History (consumed downstream via tokens
+//	                             only). Prevents the raw JSON from rendering
+//	                             as a stray bubble above the $$a2ui:
+//	                             surface on rehydration (INV-101).
+func TestUnifiedTopology_TAskDualFlagHistory(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
 
 	tAsk, ok := c.Transitions["t-ask"]
@@ -427,7 +434,10 @@ func TestUnifiedTopology_TAskSkipsHistory(t *testing.T) {
 	if tAsk.LLMConfig == nil {
 		t.Fatal("t-ask LLMConfig is nil")
 	}
-	if !tAsk.LLMConfig.SkipHistory {
-		t.Error("t-ask LLMConfig.SkipHistory = false, want true (REQ-016)")
+	if tAsk.LLMConfig.SkipHistory {
+		t.Error("t-ask LLMConfig.SkipHistory = true would blind the transition to the user message in c.History (input-side regression)")
+	}
+	if !tAsk.LLMConfig.SkipOutputHistory {
+		t.Error("t-ask LLMConfig.SkipOutputHistory = false would re-pollute the transcript with raw JSON (REQ-104, INV-101)")
 	}
 }
