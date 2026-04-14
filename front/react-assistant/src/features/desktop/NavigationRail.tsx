@@ -1,5 +1,7 @@
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTooltip } from '../../hooks/useTooltip';
+import { UserMenu, type User } from './UserMenu';
 
 type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin' | 'settings';
 
@@ -12,6 +14,10 @@ interface NavigationRailProps {
   onToolsClick: () => void;
   onAdminClick?: () => void;
   sidebarContent?: React.ReactNode;
+  user?: User | null;
+  currentWorkspaceName?: string;
+  onOpenUserSettings?: () => void;
+  onLogout?: () => void;
 }
 
 interface NavItem {
@@ -147,6 +153,13 @@ function NavButton({
   );
 }
 
+function monogram(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export function NavigationRail({
   activeApp,
   isExpanded,
@@ -156,11 +169,19 @@ export function NavigationRail({
   onToolsClick,
   onAdminClick,
   sidebarContent,
+  user,
+  currentWorkspaceName = 'Liwaisi Tech',
+  onOpenUserSettings,
+  onLogout,
 }: NavigationRailProps) {
   const { t } = useTranslation('desktop');
   const settingsTooltip = useTooltip(200);
   const toolsTooltip = useTooltip(200);
   const adminTooltip = useTooltip(200);
+  const avatarTooltip = useTooltip(200);
+  const avatarRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarErrored, setAvatarErrored] = useState(false);
 
   return (
     <nav
@@ -368,6 +389,136 @@ export function NavigationRail({
           </div>
         )}
       </div>
+
+      {/* Avatar anchor — opens unified UserMenu */}
+      {user && (
+        <div
+          className="relative p-1 pb-2 pt-2"
+          style={{ borderTop: '1px solid var(--border-dim)', marginTop: 2 }}
+        >
+          <button
+            ref={avatarRef}
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            onMouseEnter={isExpanded ? undefined : avatarTooltip.onMouseEnter}
+            onMouseLeave={avatarTooltip.onMouseLeave}
+            className="w-full flex items-center gap-3 rounded-lg transition-colors duration-200"
+            style={{
+              padding: '6px 8px',
+              backgroundColor: menuOpen ? 'rgba(14, 165, 233, 0.12)' : 'transparent',
+              borderLeft: menuOpen ? '2px solid var(--accent)' : '2px solid transparent',
+            }}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-controls="user-menu-popover"
+            aria-label={t('userMenu.openLabel', { name: user.name, defaultValue: `${user.name} — abrir menú de cuenta` })}
+          >
+            <span
+              className="shrink-0 flex items-center justify-center overflow-hidden"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                border: '1px solid var(--border-dim)',
+                backgroundColor: 'var(--bg-input)',
+              }}
+            >
+              {user.picture && !avatarErrored ? (
+                <img
+                  src={user.picture}
+                  alt=""
+                  width={32}
+                  height={32}
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarErrored(true)}
+                  style={{ width: 32, height: 32, objectFit: 'cover' }}
+                />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 11,
+                    color: 'var(--accent)',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  {monogram(user.name)}
+                </span>
+              )}
+            </span>
+            {isExpanded && (
+              <span className="flex flex-col min-w-0 text-left">
+                <span
+                  className="text-xs font-medium whitespace-nowrap overflow-hidden text-ellipsis"
+                  style={{
+                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    color: 'var(--text-primary)',
+                  }}
+                  title={user.name}
+                >
+                  {user.name}
+                </span>
+                <span
+                  className="text-[10px] whitespace-nowrap overflow-hidden text-ellipsis"
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  {user.email}
+                </span>
+              </span>
+            )}
+          </button>
+
+          {/* Avatar tooltip — only when collapsed */}
+          {avatarTooltip.visible && !isExpanded && !menuOpen && (
+            <div
+              className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-medium z-50 pointer-events-none"
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-dim)',
+                color: 'var(--text-secondary)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.4), 0 0 8px -2px var(--accent-glow)',
+              }}
+            >
+              {user.name}
+              <div
+                className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 rotate-45"
+                style={{
+                  marginRight: '-4px',
+                  backgroundColor: 'var(--bg-surface)',
+                  borderLeft: '1px solid var(--border-dim)',
+                  borderBottom: '1px solid var(--border-dim)',
+                }}
+              />
+            </div>
+          )}
+
+          <UserMenu
+            open={menuOpen}
+            anchorRef={avatarRef}
+            user={user}
+            isAdmin={!!isAdmin}
+            currentWorkspaceName={currentWorkspaceName}
+            onClose={() => setMenuOpen(false)}
+            onOpenSettings={() => {
+              setMenuOpen(false);
+              onOpenUserSettings?.();
+            }}
+            onOpenAdmin={() => {
+              setMenuOpen(false);
+              onAdminClick?.();
+            }}
+            onLogout={() => {
+              setMenuOpen(false);
+              onLogout?.();
+            }}
+          />
+        </div>
+      )}
     </nav>
   );
 }

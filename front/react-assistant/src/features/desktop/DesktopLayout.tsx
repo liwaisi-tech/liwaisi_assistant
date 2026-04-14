@@ -34,7 +34,7 @@ interface DesktopLayoutProps {
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
   const { t } = useTranslation(['desktop', 'common']);
   const isMobile = useIsMobile();
-  const { isAdmin } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
 
   // Load namespaces for desktop layout
   useEffect(() => {
@@ -287,7 +287,44 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
       keywords: ['split', 'dual', 'execution'],
       handler: toggleMonitorPanel,
     },
-  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel]);
+    {
+      id: 'account-settings',
+      label: t('desktop:commandPalette.actions.openSettings'),
+      category: t('desktop:commandPalette.categories.account'),
+      shortcut: '\u2318,',
+      keywords: ['preferences', 'ajustes', 'configuración', 'settings'],
+      handler: () => navigateAndClearPanel('settings'),
+    },
+    {
+      id: 'account-language',
+      label: t('desktop:commandPalette.actions.changeLanguage'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['idioma', 'language', 'locale'],
+      handler: () => window.dispatchEvent(new CustomEvent('liwaisi:openLanguageSwitcher')),
+    },
+    {
+      id: 'account-workspace',
+      label: t('desktop:commandPalette.actions.switchWorkspace'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['workspace', 'org', 'equipo'],
+      handler: () => { /* workspace switching is a stub until multi-workspace lands */ },
+    },
+    {
+      id: 'account-billing',
+      label: t('desktop:commandPalette.actions.billing'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['billing', 'facturación', 'balance', 'créditos'],
+      handler: () => navigateAndClearPanel('settings'),
+    },
+    {
+      id: 'account-logout',
+      label: t('desktop:commandPalette.actions.logout'),
+      category: t('desktop:commandPalette.categories.account'),
+      shortcut: '\u2318\u21E7Q',
+      keywords: ['logout', 'salir', 'cerrar sesión', 'sign out'],
+      handler: () => logout(),
+    },
+  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel, logout]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
@@ -302,8 +339,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     { key: 'b', meta: true, handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); } },
     { key: 'f', meta: true, shift: true, handler: toggleFlowsPanel },
     { key: 'm', meta: true, shift: true, handler: toggleMonitorPanel },
+    { key: ',', meta: true, handler: () => navigateAndClearPanel('settings'), global: true },
+    { key: 'q', meta: true, shift: true, handler: () => logout(), global: true },
     { key: 'Escape', handler: () => { if (isPaletteOpen) { closePalette(); } else if (panel.panelContent) { panel.closePanel(); } } },
-  ], [activeApp, isPaletteOpen, panel.panelContent, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, togglePalette, closePalette, toggleFlowsPanel, toggleMonitorPanel]);
+  ], [activeApp, isPaletteOpen, panel.panelContent, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, togglePalette, closePalette, toggleFlowsPanel, toggleMonitorPanel, logout]);
 
   useKeyboardShortcuts(shortcuts);
 
@@ -354,7 +393,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   return (
     <div className="scan-lines flex flex-col h-dvh relative" style={{ backgroundColor: 'var(--bg-deep)' }}>
-      <StatusBar sessionState={sessionState} isConnected={isConnected} activeApp={activeApp} onOpenSettings={handleUserSettingsNav} />
+      <StatusBar sessionState={sessionState} isConnected={isConnected} activeApp={activeApp} />
 
       <div className="flex flex-1 min-h-0">
         {/* Navigation Rail -- hidden on mobile */}
@@ -368,6 +407,9 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             onToolsClick={handleToolsNav}
             onAdminClick={handleAdminNav}
             sidebarContent={sidebarContent}
+            user={user}
+            onOpenUserSettings={handleUserSettingsNav}
+            onLogout={logout}
           />
         )}
 

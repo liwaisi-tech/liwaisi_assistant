@@ -17,7 +17,8 @@
     "categories": {
       "navigation": "Navegación",
       "chat": "Chat",
-      "view": "Vista"
+      "view": "Vista",
+      "account": "Cuenta"
     },
     "actions": {
       "goToChat": "Ir a Chat",
@@ -28,8 +29,30 @@
       "newChat": "Nuevo chat",
       "toggleChatSidebar": "Alternar barra lateral de chats",
       "openFlowsPanel": "Abrir panel de flujos",
-      "openMonitorPanel": "Abrir panel del monitor"
+      "openMonitorPanel": "Abrir panel del monitor",
+      "openSettings": "Abrir ajustes",
+      "changeLanguage": "Cambiar idioma",
+      "switchWorkspace": "Cambiar workspace",
+      "billing": "Ir a facturación",
+      "logout": "Cerrar sesión"
     }
+  },
+  "userMenu": {
+    "openLabel": "Abrir menú de cuenta",
+    "workspace": {
+      "heading": "Workspace",
+      "switch": "Cambiar"
+    },
+    "preferences": {
+      "heading": "Preferencias",
+      "language": "Idioma",
+      "theme": "Tema",
+      "model": "Modelo"
+    },
+    "moreSettings": "Más ajustes",
+    "admin": "Admin",
+    "logout": "Cerrar sesión",
+    "logoutDescription": "Acción destructiva: cierra tu sesión"
   },
   "statusBar": {
     "title": "brae",
