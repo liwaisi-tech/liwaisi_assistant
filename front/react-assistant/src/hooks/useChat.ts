@@ -3,7 +3,7 @@ import type { SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
-import { useSSE } from './useSSE';
+import { useSSE, type SSEConnectionState } from './useSSE';
 
 interface ChatState {
   messages: ChatMessage[];
@@ -177,6 +177,12 @@ export interface UseChatOptions {
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
   onSessionCompleted?: () => void;
+  /**
+   * Fired when SSE reveals a ghost session id (REQ-102, AC-007). The caller
+   * is expected to delegate to `useChatList.recoverFromGhost` so recovery
+   * runs exactly once per ghost id.
+   */
+  onSessionNotFound?: (sessionId: string) => void;
 }
 
 export interface UseChatReturn {
@@ -184,6 +190,7 @@ export interface UseChatReturn {
   sessionState: SessionState;
   sessionId: string | null;
   isConnected: boolean;
+  connectionState: SSEConnectionState;
   sendMessage: (content: string) => Promise<void>;
   resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
   error: string | null;
@@ -290,7 +297,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     });
   }, []);
 
-  const { isConnected } = useSSE({
+  const { isConnected, connectionState } = useSSE({
     sessionId,
     onStreamChunk,
     onSessionCompleted,
@@ -301,6 +308,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     onSubNetStarted: options?.onSubNetStarted,
     onSubNetCompleted: options?.onSubNetCompleted,
     onSubNetFailed: options?.onSubNetFailed,
+    onSessionNotFound: options?.onSessionNotFound,
   });
 
   const handleResolveHITL = useCallback(
@@ -347,6 +355,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     sessionState: state.sessionState,
     sessionId,
     isConnected,
+    connectionState,
     sendMessage,
     resolveHITL: handleResolveHITL,
     error: state.error,

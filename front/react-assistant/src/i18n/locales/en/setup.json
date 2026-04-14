@@ -99,6 +99,7 @@
     "model_label": "Default model",
     "personality_label": "AI style",
     "cta": "Start Chatting",
-    "saving": "Saving your preferences..."
+    "saving": "Saving your preferences...",
+    "error": "We could not save your preferences. Please try again."
   }
 }

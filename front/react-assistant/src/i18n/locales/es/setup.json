@@ -99,6 +99,7 @@
     "model_label": "Modelo predeterminado",
     "personality_label": "Estilo de IA",
     "cta": "Comenzar a conversar",
-    "saving": "Guardando tus preferencias..."
+    "saving": "Guardando tus preferencias...",
+    "error": "No pudimos guardar tus preferencias. Inténtalo de nuevo."
   }
 }

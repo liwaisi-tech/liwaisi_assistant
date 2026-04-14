@@ -23,9 +23,11 @@ export function ReadyStep({
   onComplete,
 }: ReadyStepProps) {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleFinish = useCallback(async () => {
     setSaving(true);
+    setError(null);
     try {
       await completeOnboarding({
         preferred_language: language,
@@ -35,11 +37,13 @@ export function ReadyStep({
         personality_preset: personalityPreset,
       });
       onComplete();
-    } catch {
-      // If saving fails, still let the user proceed
-      onComplete();
+    } catch (e) {
+      // Surface the failure so the user can retry instead of silently
+      // proceeding with unsaved preferences.
+      setError(e instanceof Error ? e.message : t('ready.error'));
+      setSaving(false);
     }
-  }, [language, regionalVariant, model, modelOverrides, personalityPreset, onComplete]);
+  }, [language, regionalVariant, model, modelOverrides, personalityPreset, onComplete, t]);
 
   const personalityLabel =
     personalityPreset && personalityPreset !== 'custom'
@@ -177,6 +181,15 @@ export function ReadyStep({
           </div>
         </div>
       </div>
+
+      {error && (
+        <p
+          className="text-xs text-center"
+          style={{ color: '#ef4444', fontFamily: "'JetBrains Mono', monospace" }}
+        >
+          {error}
+        </p>
+      )}
 
       {/* CTA */}
       <button

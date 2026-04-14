@@ -67,5 +67,15 @@
   "a2ui": {
     "unknownComponent": "Componente no soportado: {{type}}",
     "loading": "Cargando contenido interactivo..."
+  },
+  "connection": {
+    "connected": "Conectado",
+    "reconnecting": "Reconectando\u2026",
+    "disconnected": "Desconectado"
+  },
+  "resumedNotice": {
+    "title": "Sesión reanudada",
+    "message": "Te reconectamos en un chat nuevo tras un reinicio del servidor. Tu borrador sigue aquí.",
+    "dismiss": "Cerrar aviso"
   }
 }

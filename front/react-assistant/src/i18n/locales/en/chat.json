@@ -67,5 +67,15 @@
   "a2ui": {
     "unknownComponent": "Unsupported component: {{type}}",
     "loading": "Loading interactive content..."
+  },
+  "connection": {
+    "connected": "Connected",
+    "reconnecting": "Reconnecting\u2026",
+    "disconnected": "Disconnected"
+  },
+  "resumedNotice": {
+    "title": "Session resumed",
+    "message": "We reconnected you to a fresh chat after a server restart. Your draft is still here.",
+    "dismiss": "Dismiss notice"
   }
 }

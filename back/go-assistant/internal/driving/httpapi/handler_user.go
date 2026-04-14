@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -158,6 +159,16 @@ func (h *Handlers) HandleUpdatePreferences(w http.ResponseWriter, r *http.Reques
 		ModelOverrides:    req.ModelOverrides,
 	}
 
+	// Ensure the user row exists before updating preferences. New users may
+	// reach this endpoint before any session has been created (the previous
+	// implicit upsert path), so UpdatePreferences would otherwise fail with
+	// ErrUserNotFound and silently drop the user's choices.
+	if err := h.ensureUserRow(r.Context(), user); err != nil {
+		h.Logger.Error("ensure user row", "user_id", user.Sub, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	if err := h.UserRepo.UpdatePreferences(r.Context(), user.Sub, prefs); err != nil {
 		h.Logger.Error("update preferences", "user_id", user.Sub, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -165,6 +176,23 @@ func (h *Handlers) HandleUpdatePreferences(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ensureUserRow upserts the authenticated user from token claims so that
+// subsequent UpdatePreferences / CompleteOnboarding calls find a row.
+func (h *Handlers) ensureUserRow(ctx context.Context, user *auth.AuthenticatedUser) error {
+	if h.UserRepo == nil || user == nil {
+		return nil
+	}
+	now := time.Now()
+	return h.UserRepo.Upsert(ctx, &persist.UserRecord{
+		ID:        user.Sub,
+		Email:     user.Email,
+		Name:      user.Name,
+		Picture:   user.Picture,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 // HandleCompleteOnboarding marks onboarding as complete and saves preferences + optional personality preset.
@@ -209,6 +237,16 @@ func (h *Handlers) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reque
 		ModelOverrides:    req.ModelOverrides,
 		RegionalVariant:   variant,
 	}
+
+	// Ensure the user row exists before updating preferences. Onboarding can
+	// run before any session has been created (the previous implicit upsert
+	// path), so UpdatePreferences would otherwise fail with ErrUserNotFound.
+	if err := h.ensureUserRow(r.Context(), user); err != nil {
+		h.Logger.Error("ensure user row", "user_id", user.Sub, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	if err := h.UserRepo.UpdatePreferences(r.Context(), user.Sub, prefs); err != nil {
 		h.Logger.Error("save onboarding preferences", "user_id", user.Sub, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

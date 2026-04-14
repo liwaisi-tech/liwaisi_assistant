@@ -153,6 +153,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     if (user?.email) {
+      // Clear the unified active-session key (REQ-106, §4.4). The prefix
+      // `liwaisi_active_session_` MUST match `STORAGE_KEY_PREFIX` in
+      // `useChatList.ts` — keeping them in sync is what prevents the
+      // ghost-session bug from resurfacing across logout/login.
       localStorage.removeItem(`liwaisi_session_${user.email}`);
       localStorage.removeItem(`liwaisi_active_session_${user.email}`);
     }

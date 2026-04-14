@@ -17,6 +17,7 @@ import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
 import { ChatSidebar } from '../chat/ChatSidebar';
 import { ForkDialog } from '../chat/ForkDialog';
+import { SessionResumedNotice } from '../chat/SessionResumedNotice';
 import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
 import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
@@ -60,9 +61,20 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   const monitorMgr = useMonitorManager(onSessionCompleted);
 
+  // Bridge SSE ghost-session detection (REQ-102/104) into the chat-list
+  // recovery path so a dead session id is replaced exactly once without
+  // requiring a manual refresh or logout.
+  const chatOptions = useMemo(
+    () => ({
+      ...monitorMgr.sseCallbacks,
+      onSessionNotFound: chatList.recoverFromGhost,
+    }),
+    [monitorMgr.sseCallbacks, chatList.recoverFromGhost],
+  );
+
   const { messages, sessionState, sessionId, isConnected, sendMessage, resolveHITL, error } = useChat(
     chatList.activeSessionId,
-    monitorMgr.sseCallbacks,
+    chatOptions,
   );
 
   // ── Coordination effects (bridge chat <-> monitor) ──────────────────────
@@ -365,6 +377,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
           <div className="flex-1 flex flex-col min-w-0">
             {activeApp === 'chat' && (
               <>
+                <SessionResumedNotice resumedAt={chatList.sessionResumedAt} />
                 <MessageList
                   messages={messages}
                   sessionState={sessionState}
