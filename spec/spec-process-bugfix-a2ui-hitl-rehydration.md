@@ -1,12 +1,28 @@
 ---
 title: "Bug Fix — A2UI HITL Surface Survives Session Rehydration (Chat Switch / Logout-Login)"
-version: 1.0
+version: 1.1
 date_created: 2026-04-13
 last_updated: 2026-04-13
 owner: liwaisi-tech
 tags: [process, bugfix, a2ui, hitl, rehydration, persistence, sse, cpn, frontend, backend]
 supersedes: spec-process-bugfix-a2ui-chunk-boundary-and-persistence.md
 ---
+
+## Changelog
+
+- **1.1 (2026-04-13)**: Live forensic investigation against the running Postgres
+  revealed that the `t-ask` LLM transition persists its raw JSON questionnaire
+  output to `c.History` (via `fire_llm.go:225`), which is what rehydrated clients
+  actually render. REQ-001 alone is therefore insufficient: without also
+  suppressing the `t-ask` history contribution, the garbage JSON row will remain
+  visible above the clean `$$a2ui:` row on reload. Added **REQ-016** requiring
+  `t-ask` to run with `SkipHistory: true`, mirroring the existing `t-classify`
+  precedent at `cmd/server/topologies.go:348`. Added **AC-016** and **INV-004**
+  to guard the invariant. Frontend REQ-008..012 landed in commit `baa59f5` and
+  fix the live-stream case; this revision narrows the remaining work to two
+  backend changes plus one backfill decision.
+- **1.0 (2026-04-13)**: Initial spec, superseding
+  `spec-process-bugfix-a2ui-chunk-boundary-and-persistence.md`.
 
 # Introduction
 
@@ -66,24 +82,25 @@ streaming and history replay produce identical DOM.
 
 **In scope**:
 - Backend: persist A2UI HITL surface to `c.History` at emission in
-  `cpn/hitl.go` so `persistAfterRun` promotes it to the `messages` table.
+  `cpn/hitl.go` so `persistAfterRun` promotes it to the `messages` table
+  (REQ-001).
+- Backend: flip `t-ask` LLM transition to `SkipHistory: true` in
+  `cmd/server/topologies.go` to stop persisting the raw questionnaire
+  JSON that currently pollutes rehydrated chats (REQ-016, added in v1.1).
 - Backend: extract the `$$a2ui:` literal to a package-level constant in
-  `cpn`.
+  `cpn` (REQ-005).
 - Backend: preserve the `$$a2ui:` prefix verbatim through the full
   persistence pipeline (in-memory `c.History` → `session.Messages` →
   `messages.content` column → `GET /api/v1/sessions/{id}` response →
   `MessageResponse.content`).
-- Frontend: treat `$$a2ui:` as a hard chunk boundary in the `STREAM_CHUNK`
-  reducer (`useChat.ts`) so the marker always lands at offset 0 of an
-  assistant bubble.
-- Frontend: tolerate leading ASCII whitespace in
-  `MessageBubble.parsePayload` marker detection.
-- Frontend: render persisted messages whose `content` starts with `$$a2ui:`
-  via the A2UI renderer on `SESSION_LOADED`, identically to live-stream
-  rendering.
+- Frontend (**landed in commit `baa59f5`, v1.1**): `$$a2ui:` chunk
+  boundary in the reducer, whitespace-tolerant marker detection, shared
+  constant module. Retained in this spec as the documented contract;
+  no further implementation required for the frontend slice.
 - Regression tests covering: chat switch, logout/login, page reload,
-  backend restart, happy-path live streaming, and non-A2UI markdown
-  (including `$$…$$` LaTeX math via `rehype-katex`).
+  backend restart, happy-path live streaming, non-A2UI markdown
+  (including `$$…$$` LaTeX math via `rehype-katex`), and INV-004
+  (exactly one `$$a2ui:` row, zero `t-ask` rows per clarify cycle).
 
 **Out of scope**:
 - Changing the `$$a2ui:` marker string.
@@ -228,6 +245,28 @@ and associated tests.
   messages, `sessionState: 'idle'`, no lingering streaming bubbles). On
   subsequent login and chat open, rehydration follows REQ-014.
 
+### Backend — Suppress `t-ask` raw JSON in history
+
+- **REQ-016**: The `t-ask` LLM transition (declared in
+  `back/go-assistant/cmd/server/topologies.go`, around line 498) MUST run
+  with `LLMConfig.SkipHistory = true`. The raw JSON questionnaire produced
+  by `t-ask` is routing metadata consumed by `t-clarify`'s
+  `A2UIPayloadBuilder` and `buildClarifiedToken` — it has no conversational
+  value for downstream transitions (`t-plan`, `t-execute`) because the
+  user's answers are merged into the downstream token via `OutputBuilder`.
+  Persisting the raw JSON (the current behaviour) causes it to render as a
+  fallback markdown bubble above the `$$a2ui:` surface on rehydration,
+  which is the user-visible defect this revision (1.1) closes.
+
+  The flip from `SkipHistory: false` (current, `topologies.go:504`) to
+  `SkipHistory: true` mirrors the established precedent at `t-classify`
+  (`topologies.go:346-348`), which runs `RequireJSON: true, SkipHistory:
+  true` for the same reason: its JSON output is routing-only.
+
+- **REQ-017**: The inline comment at `topologies.go:504-507` MUST be
+  updated to reflect REQ-016's rationale. The existing comment about
+  `SkipRegionalPreamble` remains accurate and stays.
+
 ### Invariants
 
 - **INV-001**: `$$a2ui:` prefix preservation. For any HITL A2UI surface
@@ -243,6 +282,13 @@ and associated tests.
   DOM. A bubble rendered from a live `stream_chunk` and a bubble rendered
   from a persisted `MessageResponse` with identical `content` MUST produce
   identical React output.
+- **INV-004**: For a single `t-clarify` HITL cycle, the `messages` table
+  MUST contain exactly ONE assistant row whose `cpn_id` is the HITL
+  transition (or its surrounding CPN), and whose `content` starts with
+  `$$a2ui:`. It MUST NOT contain any assistant row whose `cpn_id` is
+  `t-ask` (upstream JSON questionnaire generator), because `t-ask` runs
+  with `SkipHistory: true` per REQ-016. This invariant is the concrete
+  guarantee that rehydration does not surface the raw questionnaire JSON.
 
 ### Constraints
 
@@ -614,6 +660,25 @@ that the prefix MUST be preserved.
   `messages` array and `sessionState = 'idle'`, with no lingering
   streaming bubbles.
 
+### `t-ask` history suppression
+
+- **AC-016**: *No raw questionnaire JSON in history.* Given a session that
+  has completed the `t-classify` → `t-ask` → `t-clarify` path, When the
+  `messages` table is queried for that session's assistant rows, Then:
+  - Exactly ONE assistant row with `content LIKE '$$a2ui:%'` MUST exist
+    for the clarify turn (INV-004, REQ-001).
+  - Zero assistant rows with `cpn_id = 't-ask'` MUST exist (REQ-016).
+  - Zero assistant rows whose content begins with `{` and matches the
+    classifier JSON shape (e.g. contains top-level keys `restated_goal`
+    AND `questions`) MUST exist.
+- **AC-017**: *Downstream transitions unaffected.* Given `t-ask` runs with
+  `SkipHistory: true`, When the CPN proceeds through `t-clarify` and into
+  `t-plan` / `t-execute`, Then the downstream transitions MUST produce
+  plans and executions equivalent to the pre-change behaviour (the
+  user's answers are merged into the `ColorJSON` token by
+  `buildClarifiedToken` and flow to downstream places independently of
+  `c.History`).
+
 ## 6. Test Automation Strategy
 
 ### Test levels & locations
@@ -728,6 +793,41 @@ Rehydration, message splicing across reload, and certain LLM stream
 sequences can produce a leading newline before the marker. REQ-011 is
 small hardening that removes a class of accidental fallbacks at
 essentially zero cost.
+
+### Why `t-ask` must also be flipped to `SkipHistory: true` (REQ-016)
+
+The v1.0 spec assumed that appending `$$a2ui:` to `c.History` in `fireHITL`
+(REQ-001) would fully close the bug. Live forensic investigation against the
+running Postgres revealed an additional persistence seam: the upstream
+`t-ask` LLM transition runs with `RequireJSON: true, StreamOutput: false,
+SkipHistory: false` and its raw JSON questionnaire output is appended to
+`c.History` at `fire_llm.go:225`. That JSON then flows through
+`persistAfterRun` into the `messages` table (observed: a 2542-byte row with
+`cpn_id = t-ask` in the affected sessions).
+
+On a live session the frontend hides this ugliness because the subsequent
+`$$a2ui:` SSE chunk renders an interactive surface that visually "covers"
+the bubble the raw JSON would otherwise produce. On rehydration there is no
+SSE — only the DB content — and the raw JSON row renders through the
+markdown fallback path, producing the garbled output the user reported
+(plus `rehype-katex` collision artifacts because JSON contains `$$`, `{`,
+`}`, `_`).
+
+Simply appending `$$a2ui:` to `c.History` (REQ-001) creates the correct
+row but leaves the garbage `t-ask` row in place — the user would now see
+BOTH: a broken JSON bubble above a working questionnaire. REQ-016 closes
+the loop by preventing the `t-ask` row from ever being written, exactly
+mirroring the `t-classify` precedent (same `RequireJSON: true,
+SkipHistory: true` shape) that has been in production without incident.
+
+Safety of the flip: `t-ask`'s output is consumed by `t-clarify`'s
+`A2UIPayloadBuilder` and `buildClarifiedToken` via the CPN token pipeline
+(place `p-questions` → HITL → place `p-clarified`), not via `c.History`.
+Downstream prompts (`PROMPT_PLAN`, `PROMPT_EXECUTE`) operate on the
+`ColorJSON` token built by `buildClarifiedToken`, which already carries the
+classifier context plus the user's answers. No transition reads the raw
+questionnaire JSON from history. AC-017 codifies this as a testable
+invariant.
 
 ### Why this spec supersedes the predecessor
 

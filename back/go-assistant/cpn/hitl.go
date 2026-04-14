@@ -10,6 +10,14 @@ import (
 // DefaultMaxRevisions is the recommended cap for revision loop rounds.
 const DefaultMaxRevisions = 5
 
+// A2UIMarker is the protocol prefix that precedes a JSON A2UI surface
+// payload in a StreamChunk.Content. The frontend detects this prefix and
+// routes the chunk to the A2UI renderer instead of the markdown pipeline.
+// REQ-005 / spec-process-bugfix-a2ui-hitl-rehydration.md — the literal
+// MUST appear exactly once in the cpn package; every emission site and
+// every test assertion references this constant.
+const A2UIMarker = "$$a2ui:"
+
 // HITLRequestedPayload is the payload carried by EventHITLRequested when the
 // transition publishes its own A2UI surface (e.g. a questionnaire) via
 // HITLConfig.A2UIPayloadBuilder. The CustomSurface flag signals to the
@@ -92,6 +100,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	if cfg.A2UIPayloadBuilder != nil {
 		if payload, err := cfg.A2UIPayloadBuilder(consumed); err == nil && payload != nil {
 			if encoded, mErr := json.Marshal(payload); mErr == nil {
+				content := A2UIMarker + string(encoded)
 				c.StreamedOutput = true
 				c.emit(&Event{
 					Type:           EventStreamChunk,
@@ -101,7 +110,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 						SessionID: c.SessionID,
 						CPNID:     c.ID,
 						CPNRole:   c.Role,
-						Content:   "$$a2ui:" + string(encoded),
+						Content:   content,
 						Done:      false,
 					},
 				})
@@ -122,6 +131,28 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 						Done:      true,
 					},
 				})
+
+				// REQ-001 / REQ-002 / INV-002: persist the surface via
+				// c.History so the session-service history-sync path
+				// (internal/app/session_service.go lines ~293-307)
+				// promotes it into session.Messages and persistAfterRun
+				// writes it verbatim to the messages table. Append only
+				// on this success branch — failures above MUST NOT append
+				// (AC-012). fireHITL is invoked from the executor
+				// goroutine without holding c.mu (see executor.go
+				// dispatch), mirroring fire_llm.go which takes the lock
+				// around its own History append.
+				c.mu.Lock()
+				c.History = append(c.History, &Message{
+					Role:      RoleAssistant,
+					Content:   content,
+					CPNID:     c.ID,
+					CPNRole:   c.Role,
+					CPNDepth:  c.Depth,
+					Timestamp: time.Now(),
+				})
+				c.mu.Unlock()
+
 				customSurface = true
 			}
 		}

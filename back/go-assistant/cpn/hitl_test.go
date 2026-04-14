@@ -561,6 +561,223 @@ func TestFireHITL_StructuredSubmitWithOutputBuilder(t *testing.T) {
 	}
 }
 
+// ── A2UI Persistence (REQ-001/002/005, INV-002) ─────────────────────────────
+
+// hitlA2UITestCPN builds a CPN with a single HITL transition whose
+// A2UIPayloadBuilder is configurable per-test. The channel is pre-seeded
+// with an approval token on buffer so fireHITL unblocks immediately.
+func hitlA2UITestCPN(builder func(consumed []Token) (any, error)) (*CPN, chan Token) {
+	ch := make(chan Token, 1)
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorHuman, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "request"})
+	transitions := map[string]*Transition{
+		"T:HITL": {
+			ID: "T:HITL", Kind: NodeKindHITL,
+			InputPlaces: []string{"P:IN"}, OutputPlaces: []string{"P:OUT"},
+			HITLConfig: &HITLConfig{
+				Channel:            ch,
+				Prompt:             "Please approve",
+				A2UIPayloadBuilder: builder,
+			},
+		},
+	}
+	cpn := NewCPN("test-cpn", "worker", 0, ModeMAS, "sess-1", places, transitions)
+	return cpn, ch
+}
+
+func TestA2UIMarkerConstant_Value(t *testing.T) {
+	if A2UIMarker != "$$a2ui:" {
+		t.Fatalf("A2UIMarker = %q, want %q", A2UIMarker, "$$a2ui:")
+	}
+}
+
+func TestFireHITL_AppendsA2UIMarkerToHistory_OnSuccess(t *testing.T) {
+	builder := func(consumed []Token) (any, error) {
+		return map[string]any{
+			"components": []any{
+				map[string]any{
+					"type": "questionnaire",
+					"props": map[string]any{
+						"componentId": "T:HITL",
+					},
+				},
+			},
+		}, nil
+	}
+	c, ch := hitlA2UITestCPN(builder)
+	ec := &eventCollector{}
+	c.EventSink = ec.sink
+
+	// Capture pre-existing history length (fireHITL MUST only append one new row).
+	c.mu.RLock()
+	before := len(c.History)
+	c.mu.RUnlock()
+
+	ch <- approveToken()
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	after := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if got := len(after) - before; got != 1 {
+		t.Fatalf("expected exactly 1 new history entry, got %d (total=%d)", got, len(after))
+	}
+	m := after[before]
+	if m.Role != RoleAssistant {
+		t.Errorf("Role = %q, want %q", m.Role, RoleAssistant)
+	}
+	if !strings.HasPrefix(m.Content, A2UIMarker) {
+		t.Errorf("Content does not start with %q: %q", A2UIMarker, m.Content)
+	}
+	if m.CPNID != c.ID {
+		t.Errorf("CPNID = %q, want %q", m.CPNID, c.ID)
+	}
+	if m.CPNRole != c.Role {
+		t.Errorf("CPNRole = %q, want %q", m.CPNRole, c.Role)
+	}
+	if m.CPNDepth != c.Depth {
+		t.Errorf("CPNDepth = %d, want %d", m.CPNDepth, c.Depth)
+	}
+
+	// Byte-identical match: find the emitted StreamChunk and compare.
+	var emitted string
+	var sawChunk bool
+	for _, e := range ec.getEvents() {
+		if e.Type != EventStreamChunk {
+			continue
+		}
+		chunk, ok := e.Payload.(StreamChunk)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(chunk.Content, A2UIMarker) {
+			emitted = chunk.Content
+			sawChunk = true
+			break
+		}
+	}
+	if !sawChunk {
+		t.Fatal("expected an EventStreamChunk with A2UI prefix")
+	}
+	if m.Content != emitted {
+		t.Errorf("history content does not match emitted chunk:\nhistory:  %q\nemitted:  %q", m.Content, emitted)
+	}
+}
+
+func TestFireHITL_NoHistoryAppend_WhenBuilderReturnsNil(t *testing.T) {
+	builder := func(consumed []Token) (any, error) { return nil, nil }
+	c, ch := hitlA2UITestCPN(builder)
+
+	c.mu.RLock()
+	before := len(c.History)
+	c.mu.RUnlock()
+
+	ch <- approveToken()
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	after := len(c.History)
+	c.mu.RUnlock()
+	if after != before {
+		t.Errorf("history length changed: before=%d after=%d (expected no append)", before, after)
+	}
+}
+
+func TestFireHITL_NoHistoryAppend_WhenBuilderErrors(t *testing.T) {
+	builder := func(consumed []Token) (any, error) {
+		return map[string]any{"x": 1}, errors.New("boom")
+	}
+	c, ch := hitlA2UITestCPN(builder)
+
+	c.mu.RLock()
+	before := len(c.History)
+	c.mu.RUnlock()
+
+	ch <- approveToken()
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	after := len(c.History)
+	c.mu.RUnlock()
+	if after != before {
+		t.Errorf("history length changed: before=%d after=%d (expected no append)", before, after)
+	}
+}
+
+func TestFireHITL_NoHistoryAppend_WhenMarshalFails(t *testing.T) {
+	// channels cannot be JSON-marshaled; json.Marshal returns an error.
+	builder := func(consumed []Token) (any, error) {
+		return map[string]any{"bad": make(chan int)}, nil
+	}
+	c, ch := hitlA2UITestCPN(builder)
+
+	c.mu.RLock()
+	before := len(c.History)
+	c.mu.RUnlock()
+
+	ch <- approveToken()
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	after := len(c.History)
+	c.mu.RUnlock()
+	if after != before {
+		t.Errorf("history length changed: before=%d after=%d (expected no append)", before, after)
+	}
+}
+
+func TestFireHITL_DoneSentinel_StillEmittedAfterA2UI(t *testing.T) {
+	builder := func(consumed []Token) (any, error) {
+		return map[string]any{"components": []any{}}, nil
+	}
+	c, ch := hitlA2UITestCPN(builder)
+	ec := &eventCollector{}
+	c.EventSink = ec.sink
+
+	ch <- approveToken()
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var chunks []StreamChunk
+	for _, e := range ec.getEvents() {
+		if e.Type != EventStreamChunk {
+			continue
+		}
+		if chunk, ok := e.Payload.(StreamChunk); ok {
+			chunks = append(chunks, chunk)
+		}
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 StreamChunk events, got %d", len(chunks))
+	}
+	if !strings.HasPrefix(chunks[0].Content, A2UIMarker) {
+		t.Errorf("first chunk Content = %q, want prefix %q", chunks[0].Content, A2UIMarker)
+	}
+	if chunks[0].Done {
+		t.Error("first chunk Done = true, want false")
+	}
+	if chunks[1].Content != "" {
+		t.Errorf("second chunk Content = %q, want empty", chunks[1].Content)
+	}
+	if !chunks[1].Done {
+		t.Error("second chunk Done = false, want true (sentinel)")
+	}
+}
+
 // ── Goroutine Leak Detection ────────────────────────────────────────────────
 
 func TestFireHITL_NoGoroutineLeak(t *testing.T) {

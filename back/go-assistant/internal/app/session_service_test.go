@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
@@ -392,5 +394,125 @@ func TestStreamChannel_SessionNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got: %v", err)
+	}
+}
+
+// hitlA2UITopologyFactory builds a minimal session topology with a single HITL
+// transition whose A2UIPayloadBuilder emits a questionnaire-shaped payload.
+// Used to exercise the fireHITL → c.History → session.Messages persistence
+// pipeline end-to-end via SessionService.SendMessage + ResolveHITL, proving
+// INV-002 (single persistence site) and INV-004 (no t-ask raw JSON rows).
+func hitlA2UITopologyFactory(sessionID string) *cpn.CPN {
+	places := map[string]*cpn.Place{
+		"p-input":  cpn.NewPlace("p-input", cpn.ColorString, cpn.SpaceSurface),
+		"p-output": cpn.NewPlace("p-output", cpn.ColorHuman, cpn.SpaceSurface),
+	}
+	hitl := cpn.NewTransition("t-hitl", cpn.NodeKindHITL,
+		[]string{"p-input"}, []string{"p-output"})
+	hitl.HITLConfig = &cpn.HITLConfig{
+		Prompt: "Please answer",
+		A2UIPayloadBuilder: func(consumed []cpn.Token) (any, error) {
+			return map[string]any{
+				"components": []any{
+					map[string]any{
+						"type": "questionnaire",
+						"props": map[string]any{
+							"componentId": "t-hitl",
+						},
+					},
+				},
+			}, nil
+		},
+	}
+	transitions := map[string]*cpn.Transition{"t-hitl": hitl}
+	return cpn.NewCPN("cpn-"+sessionID, "test-root", 0, cpn.ModeMAS, sessionID, places, transitions)
+}
+
+// TestSessionService_HITLClarifyFlow_PersistsOnlyA2UIRow_NotTAskRaw asserts
+// INV-002 and INV-004 end-to-end: after SendMessage triggers fireHITL (which
+// emits the A2UI surface) and ResolveHITL unblocks the transition, the
+// session's persisted messages contain exactly ONE assistant row starting
+// with "$$a2ui:" and zero rows whose CPNID is "t-ask" (there is no t-ask
+// transition in this topology; REQ-016 is enforced separately in the
+// topology test).
+func TestSessionService_HITLClarifyFlow_PersistsOnlyA2UIRow_NotTAskRaw(t *testing.T) {
+	t.Parallel()
+	svc := NewSessionService(
+		&mockLLMClient{},
+		&mockCostProvider{cost: 0.0},
+		testLogger(),
+		hitlA2UITopologyFactory,
+	)
+
+	// Register an event callback that signals when the HITL transition
+	// has emitted EventHITLRequested (fireHITL has already taken the
+	// mu.Lock path to append the A2UI row by then, so subsequent
+	// assertions are race-free).
+	hitlReady := make(chan struct{}, 1)
+	svc.SetEventCallback(func(sessionID string, evt cpn.Event) {
+		if evt.Type == cpn.EventHITLRequested {
+			select {
+			case hitlReady <- struct{}{}:
+			default:
+			}
+		}
+	})
+
+	info, err := svc.CreateSession(context.Background(), "user-hitl-a2ui", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := svc.SendMessage(context.Background(), info.ID, "hola"); err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	select {
+	case <-hitlReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for EventHITLRequested")
+	}
+
+	// Resolve the HITL with an approve action.
+	if err := svc.ResolveHITL(context.Background(), info.ID, "t-hitl", cpn.HITLResponse{
+		Action: cpn.HITLApprove,
+	}); err != nil {
+		t.Fatalf("resolve HITL: %v", err)
+	}
+
+	// Wait for the CPN goroutine to drain and sync history.
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for st.get() == cpn.StateRunning || st.get() == cpn.StateWaiting {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for CPN to finish, state=%s", st.get())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got, err := svc.GetSession(info.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+
+	// INV-002 + AC-011: exactly one assistant row starts with the A2UI marker.
+	a2uiRows := 0
+	tAskRows := 0
+	for _, m := range got.Messages {
+		if m.Role == cpn.RoleAssistant && strings.HasPrefix(m.Content, cpn.A2UIMarker) {
+			a2uiRows++
+		}
+		if m.CPNID == "t-ask" {
+			tAskRows++
+		}
+	}
+	if a2uiRows != 1 {
+		t.Errorf("expected exactly 1 A2UI row (INV-002), got %d\nmessages: %+v", a2uiRows, got.Messages)
+	}
+	// INV-004: no t-ask raw JSON rows in the persisted history.
+	if tAskRows != 0 {
+		t.Errorf("expected zero t-ask rows (INV-004), got %d", tAskRows)
 	}
 }

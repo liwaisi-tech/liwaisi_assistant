@@ -501,7 +501,14 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 		Temperature:  0.3,
 		RequireJSON:  true,
 		StreamOutput: false,
-		SkipHistory:  false,
+		// SkipHistory=true mirrors the t-classify precedent at ~line 348:
+		// t-ask's raw JSON is routing metadata consumed only by
+		// t-clarify's A2UIPayloadBuilder (buildClarifyA2UIPayload) and
+		// buildClarifiedToken, never by downstream conversational
+		// transitions. Persisting it would surface the raw questionnaire
+		// JSON above the $$a2ui: interactive bubble on rehydration. See
+		// spec-process-bugfix-a2ui-hitl-rehydration REQ-016 / INV-004.
+		SkipHistory: true,
 		// JSON questionnaire generator: schema is rigid and the regional
 		// register adds no signal — opt out to save tokens (CON-004).
 		SkipRegionalPreamble: true,

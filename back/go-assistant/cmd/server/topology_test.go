@@ -411,3 +411,23 @@ func TestDefaultTopology_StillWorks(t *testing.T) {
 		t.Errorf("topology validation failed: %v", err)
 	}
 }
+
+// TestUnifiedTopology_TAskSkipsHistory asserts REQ-016 / INV-004: the
+// t-ask LLM transition MUST run with SkipHistory = true so its raw JSON
+// questionnaire output never pollutes conversational history and thus
+// never reaches rehydrated chats as a garbled bubble above the
+// interactive $$a2ui: surface emitted by t-clarify.
+func TestUnifiedTopology_TAskSkipsHistory(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	tAsk, ok := c.Transitions["t-ask"]
+	if !ok {
+		t.Fatal("missing t-ask transition in unified topology")
+	}
+	if tAsk.LLMConfig == nil {
+		t.Fatal("t-ask LLMConfig is nil")
+	}
+	if !tAsk.LLMConfig.SkipHistory {
+		t.Error("t-ask LLMConfig.SkipHistory = false, want true (REQ-016)")
+	}
+}
