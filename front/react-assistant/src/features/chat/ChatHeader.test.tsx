@@ -88,3 +88,33 @@ describe('ChatHeader connection indicator (REQ-112)', () => {
     expect(indicator).toHaveAttribute('data-state', 'disconnected-terminal');
   });
 });
+
+// AC-011 — pointer / focus affordance relies on the global CSS rule in
+// index.css (Tailwind v4 Preflight restore). These tests guard the semantic
+// contract the rule relies on: header controls must be native <button>
+// elements with no inline `cursor` override that would beat the global rule.
+describe('ChatHeader interactive affordance (AC-011)', () => {
+  it('renders the new-conversation control as a native <button> with type="button"', () => {
+    renderHeader();
+    const btn = screen.getByRole('button', { name: /new conversation/i });
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn).toHaveAttribute('type', 'button');
+  });
+
+  it('does not set an inline cursor override on the new-conversation button', () => {
+    renderHeader();
+    const btn = screen.getByRole('button', { name: /new conversation/i });
+    // No inline `style.cursor` means the global CSS rule decides — which
+    // resolves to `pointer` for enabled buttons per spec REQ-001.
+    expect((btn as HTMLButtonElement).style.cursor).toBe('');
+  });
+
+  it('keeps disabled:cursor-not-allowed utility on the new-conversation button', () => {
+    renderHeader({ clearDisabled: true });
+    const btn = screen.getByRole('button', { name: /new conversation/i });
+    expect(btn).toBeDisabled();
+    // Tailwind utility ensures REQ-004 (disabled → not-allowed) even with
+    // the global pointer rule active.
+    expect(btn.className).toMatch(/disabled:cursor-not-allowed/);
+  });
+});

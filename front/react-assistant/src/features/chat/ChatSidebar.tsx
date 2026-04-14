@@ -79,15 +79,31 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
     setIsRenaming(false);
   }, [renameValue, chat.id, chat.title, onRename]);
 
+  const handleActivate = useCallback(() => {
+    if (!isRenaming) onSelect(chat.id);
+  }, [isRenaming, onSelect, chat.id]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isRenaming) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onSelect(chat.id);
+    }
+  }, [isRenaming, onSelect, chat.id]);
+
   return (
     <div
-      className="group relative flex flex-col gap-0.5 px-3 py-2.5 cursor-pointer transition-colors duration-150 rounded-lg mx-1.5"
+      role="button"
+      tabIndex={isRenaming ? -1 : 0}
+      aria-current={isActive ? 'true' : undefined}
+      aria-label={chat.title || t('chat:sidebar.defaultTitle')}
+      className="group relative flex flex-col gap-0.5 px-3 py-2.5 transition-colors duration-150 rounded-lg mx-1.5"
       style={{
         backgroundColor: isActive ? 'rgba(14, 165, 233, 0.08)' : 'transparent',
         borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
       }}
-      onMouseEnter={() => !isRenaming && undefined}
-      onClick={() => !isRenaming && onSelect(chat.id)}
+      onClick={handleActivate}
+      onKeyDown={handleKeyDown}
     >
       {/* Title row */}
       <div className="flex items-center gap-1.5 min-w-0">

@@ -98,12 +98,10 @@ export function ChatHeader({
 
       <div className="flex items-center gap-3">
         <button
+          type="button"
           onClick={onClearConversation}
           disabled={clearDisabled}
-          className="p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          style={{ color: 'var(--text-muted)' }}
-          onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.color = 'var(--accent)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          className="p-1.5 rounded-md transition-colors text-[var(--text-muted)] hover:enabled:text-[var(--accent)] disabled:opacity-30 disabled:cursor-not-allowed"
           aria-label={t('header.newConversation')}
           title={t('header.newConversation')}
         >
@@ -124,11 +122,9 @@ export function ChatHeader({
               {user.name}
             </span>
             <button
+              type="button"
               onClick={logout}
-              className="text-xs px-2 py-1 rounded transition-colors"
-              style={{ color: 'var(--text-muted)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+              className="text-xs px-2 py-1 rounded transition-colors text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               aria-label={t('header.signOut')}
             >
               {t('header.signOut')}

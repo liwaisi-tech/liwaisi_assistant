@@ -149,22 +149,18 @@ export function StatusBar({ sessionState, isConnected, activeApp = 'chat', perso
             </span>
             {onOpenSettings && (
               <button
+                type="button"
                 onClick={onOpenSettings}
-                className="text-[10px] px-2 py-1 rounded transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                className="text-[10px] px-2 py-1 rounded transition-colors text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                 aria-label={t('settings:title')}
               >
                 {t('settings:title')}
               </button>
             )}
             <button
+              type="button"
               onClick={logout}
-              className="text-[10px] px-2 py-1 rounded transition-colors"
-              style={{ color: 'var(--text-muted)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+              className="text-[10px] px-2 py-1 rounded transition-colors text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               aria-label={t('desktop:statusBar.signOut')}
             >
               {t('desktop:statusBar.signOut')}

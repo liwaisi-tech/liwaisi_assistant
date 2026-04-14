@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { I18nTestWrapper } from '../../test/i18n-test-utils';
 import { ChatSidebar } from './ChatSidebar';
@@ -135,5 +135,55 @@ describe('ChatSidebar', () => {
     unmount();
 
     expect(mockDisconnect).toHaveBeenCalled();
+  });
+
+  // AC-009 — keyboard activation of the chat-list item (role="button")
+  describe('chat-list item keyboard a11y', () => {
+    it('exposes each chat item as role="button" with tabIndex=0', () => {
+      render(<ChatSidebar {...defaultProps} />, { wrapper });
+
+      const item = screen.getByRole('button', { name: 'Test Chat' });
+      expect(item).toBeInTheDocument();
+      expect(item).toHaveAttribute('tabIndex', '0');
+    });
+
+    it('calls onSelect when user presses Enter on a focused chat item', () => {
+      const onSelect = vi.fn();
+      render(
+        <ChatSidebar {...defaultProps} onSelect={onSelect} />,
+        { wrapper },
+      );
+
+      const item = screen.getByRole('button', { name: 'Test Chat' });
+      fireEvent.keyDown(item, { key: 'Enter' });
+
+      expect(onSelect).toHaveBeenCalledWith('chat-1');
+    });
+
+    it('calls onSelect when user presses Space on a focused chat item', () => {
+      const onSelect = vi.fn();
+      render(
+        <ChatSidebar {...defaultProps} onSelect={onSelect} />,
+        { wrapper },
+      );
+
+      const item = screen.getByRole('button', { name: 'Test Chat' });
+      fireEvent.keyDown(item, { key: ' ' });
+
+      expect(onSelect).toHaveBeenCalledWith('chat-1');
+    });
+
+    it('ignores other keys (e.g., ArrowDown) on the chat item', () => {
+      const onSelect = vi.fn();
+      render(
+        <ChatSidebar {...defaultProps} onSelect={onSelect} />,
+        { wrapper },
+      );
+
+      const item = screen.getByRole('button', { name: 'Test Chat' });
+      fireEvent.keyDown(item, { key: 'ArrowDown' });
+
+      expect(onSelect).not.toHaveBeenCalled();
+    });
   });
 });

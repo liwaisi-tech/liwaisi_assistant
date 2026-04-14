@@ -27,6 +27,32 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* -- Interactive affordance (Tailwind v4 Preflight restore) --
+ * Tailwind v4 changed the default <button> cursor from `pointer` to
+ * `default` to match browser UA. This rule restores the v3 behaviour
+ * project-wide so every enabled interactive element carries a pointer
+ * cursor by default. See spec-process-bugfix-ui-affordance-cursor-focus.md.
+ */
+button:not(:disabled):not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]),
+a[href]:not([aria-disabled="true"]),
+summary,
+label[for] {
+  cursor: pointer;
+}
+
+/* Keyboard-only focus ring, using the project accent colour. Uses
+ * :focus-visible so mouse clicks do NOT leave a visible outline, while
+ * keyboard navigation always does (WCAG 2.4.7). */
+button:not(:disabled):focus-visible,
+[role="button"]:not([aria-disabled="true"]):focus-visible,
+a[href]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
 /* -- Scan-line overlay -- */
 .scan-lines::after {
   content: '';
