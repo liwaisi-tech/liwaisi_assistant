@@ -97,6 +97,7 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// "$$a2ui:" prefix and renders an interactive surface that ultimately
 	// resolves the HITL request via the regular HTTP endpoint.
 	customSurface := false
+	var a2uiRowID string
 	if cfg.A2UIPayloadBuilder != nil {
 		if payload, err := cfg.A2UIPayloadBuilder(consumed); err == nil && payload != nil {
 			if encoded, mErr := json.Marshal(payload); mErr == nil {
@@ -142,8 +143,13 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 				// goroutine without holding c.mu (see executor.go
 				// dispatch), mirroring fire_llm.go which takes the lock
 				// around its own History append.
+				// The row gets a deterministic ID so the subsequent
+				// HITL response row (appended after resolution) can
+				// reference it via ParentMessageID (REQ-006/007).
+				a2uiRowID = fmt.Sprintf("%s-a2ui-%d", c.SessionID, time.Now().UnixNano())
 				c.mu.Lock()
 				c.History = append(c.History, &Message{
+					ID:        a2uiRowID,
 					Role:      RoleAssistant,
 					Content:   content,
 					CPNID:     c.ID,
@@ -246,6 +252,14 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 		built.Timestamp = time.Now()
 		outputSnaps := []TokenSnapshot{built.Snapshot()}
 
+		// REQ-001/002/006: persist the user's response as a RoleUser row
+		// linked to the A2UI surface so history rehydration can pair them
+		// and lock the questionnaire component. Skip when no A2UI surface
+		// was emitted — there's no parent to pair against.
+		if a2uiRowID != "" {
+			appendHITLResponseToHistory(c, resp, a2uiRowID)
+		}
+
 		needCentaurian := false
 		for _, pid := range t.OutputPlaces {
 			p, ok := c.Places[pid]
@@ -296,6 +310,16 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	out.SessionID = c.SessionID
 	out.Timestamp = time.Now()
 	outputSnaps := []TokenSnapshot{out.Snapshot()}
+
+	// REQ-001/002/006: raw-deposit path also appends the response row so
+	// t-review-style HITL transitions (approve/revise/submit on surface
+	// tokens) keep the questionnaire-lock invariant. Skip when no A2UI
+	// surface was emitted — there's no parent to pair against.
+	if a2uiRowID != "" {
+		if resp, ok := tok.Payload.(HITLResponse); ok {
+			appendHITLResponseToHistory(c, resp, a2uiRowID)
+		}
+	}
 
 	needCentaurian := false
 	for _, pid := range t.OutputPlaces {
@@ -567,4 +591,70 @@ func fireLLMDirect(ctx context.Context, corrTransition *Transition, c *CPN, inpu
 // formatRevisionPrompt creates a human-facing prompt for the next revision round.
 func formatRevisionPrompt(revised string) string {
 	return fmt.Sprintf("The following draft has been revised. Please review and approve, reject, or request further revisions:\n\n---\n%s\n---", revised)
+}
+
+// appendHITLResponseToHistory appends a RoleUser row to c.History capturing
+// the human's response to a HITL transition so session rehydration can show
+// the answers and lock the A2UI surface. The row's ParentMessageID links it
+// back to the A2UI surface row created when the transition was requested.
+//
+// Content encoding (REQ-001/002):
+//   - HITLSubmit: raw resp.Content (byte-identical — typically questionnaire
+//     answers JSON). Preserves original payload so rehydration can parse it
+//     without re-wrapping.
+//   - HITLRevise: canonical JSON {"action":"revise","content":"<feedback>"}.
+//   - HITLApprove: canonical JSON {"action":"approve"} or
+//     {"action":"approve","content":"<content>"} when non-empty.
+//   - HITLReject: not persisted (REQ-003 — caller short-circuits before
+//     reaching this helper anyway).
+//
+// See spec-process-bugfix-a2ui-hitl-response-persistence.md REQ-001..007.
+func appendHITLResponseToHistory(c *CPN, resp HITLResponse, parentID string) {
+	var content string
+	switch resp.Action {
+	case HITLSubmit:
+		content = resp.Content
+	case HITLRevise:
+		b, err := json.Marshal(struct {
+			Action  string `json:"action"`
+			Content string `json:"content"`
+		}{Action: string(resp.Action), Content: resp.Content})
+		if err != nil {
+			return
+		}
+		content = string(b)
+	case HITLApprove:
+		var b []byte
+		var err error
+		if resp.Content == "" {
+			b, err = json.Marshal(struct {
+				Action string `json:"action"`
+			}{Action: string(resp.Action)})
+		} else {
+			b, err = json.Marshal(struct {
+				Action  string `json:"action"`
+				Content string `json:"content"`
+			}{Action: string(resp.Action), Content: resp.Content})
+		}
+		if err != nil {
+			return
+		}
+		content = string(b)
+	default:
+		return
+	}
+
+	msg := &Message{
+		ID:              fmt.Sprintf("%s-hitlresp-%d", c.SessionID, time.Now().UnixNano()),
+		Role:            RoleUser,
+		Content:         content,
+		CPNID:           c.ID,
+		CPNRole:         c.Role,
+		CPNDepth:        c.Depth,
+		Timestamp:       time.Now(),
+		ParentMessageID: parentID,
+	}
+	c.mu.Lock()
+	c.History = append(c.History, msg)
+	c.mu.Unlock()
 }

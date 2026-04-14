@@ -46,6 +46,10 @@ interface A2UIProviderWrapperProps {
   payload: A2UIPayload;
   isStreaming: boolean;
   onAction: (action: A2UIAction) => void;
+  // When provided, the questionnaire component renders in a locked
+  // read-only state showing the user's submitted answers (REQ-102..105).
+  resolvedPayload?: string;
+  resolvedAt?: Date;
 }
 
 /**
@@ -53,11 +57,23 @@ interface A2UIProviderWrapperProps {
  * When rendered, it code-splits the A2UIMessageRenderer so the main bundle
  * is not penalized when A2UI is unused. Provides the BRAE catalog context.
  */
-export function A2UIProviderWrapper({ payload, isStreaming, onAction }: A2UIProviderWrapperProps) {
+export function A2UIProviderWrapper({
+  payload,
+  isStreaming,
+  onAction,
+  resolvedPayload,
+  resolvedAt,
+}: A2UIProviderWrapperProps) {
   return (
     <A2UICatalogContext.Provider value={{ catalogVersion: '1.0' }}>
       <Suspense fallback={<A2UILoadingFallback />}>
-        <LazyA2UIMessageRenderer payload={payload} isStreaming={isStreaming} onAction={onAction} />
+        <LazyA2UIMessageRenderer
+          payload={payload}
+          isStreaming={isStreaming}
+          onAction={onAction}
+          resolvedPayload={resolvedPayload}
+          resolvedAt={resolvedAt}
+        />
       </Suspense>
     </A2UICatalogContext.Provider>
   );

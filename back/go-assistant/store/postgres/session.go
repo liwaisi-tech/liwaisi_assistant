@@ -64,7 +64,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (*persist
 
 	// Load messages
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp
+		`SELECT id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, COALESCE(parent_message_id, '')
 		 FROM messages WHERE session_id = $1 ORDER BY timestamp`, sessionID,
 	)
 	if err != nil {
@@ -74,7 +74,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (*persist
 
 	for rows.Next() {
 		m := &persist.MessageRecord{}
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CPNID, &m.CPNRole, &m.CPNDepth, &m.Timestamp); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CPNID, &m.CPNRole, &m.CPNDepth, &m.Timestamp, &m.ParentMessageID); err != nil {
 			return nil, fmt.Errorf("postgres session scan message: %w", err)
 		}
 		s.Messages = append(s.Messages, m)
@@ -111,11 +111,17 @@ func (r *SessionRepository) GetByUserID(ctx context.Context, userID string) ([]*
 func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string, msg *persist.MessageRecord) error {
 	// Atomic check-and-insert: verify session is active in the same statement
 	// to avoid TOCTOU race between separate SELECT and INSERT.
+	// parent_message_id is NULL when ParentMessageID is empty so legacy rows
+	// remain distinguishable from explicitly-linked rows.
+	var parentID any
+	if msg.ParentMessageID != "" {
+		parentID = msg.ParentMessageID
+	}
 	tag, err := r.pool.Exec(ctx,
-		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp)
-		 SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, parent_message_id)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
 		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')`,
-		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp,
+		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp, parentID,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError

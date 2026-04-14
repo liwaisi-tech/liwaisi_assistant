@@ -626,8 +626,11 @@ func TestFireHITL_AppendsA2UIMarkerToHistory_OnSuccess(t *testing.T) {
 	after := append([]*Message(nil), c.History...)
 	c.mu.RUnlock()
 
-	if got := len(after) - before; got != 1 {
-		t.Fatalf("expected exactly 1 new history entry, got %d (total=%d)", got, len(after))
+	// Two new entries: the A2UI surface (RoleAssistant) + the response
+	// row (RoleUser) appended by fireHITL after resolution
+	// (spec-process-bugfix-a2ui-hitl-response-persistence.md REQ-001/002).
+	if got := len(after) - before; got != 2 {
+		t.Fatalf("expected exactly 2 new history entries, got %d (total=%d)", got, len(after))
 	}
 	m := after[before]
 	if m.Role != RoleAssistant {
@@ -801,5 +804,250 @@ func TestFireHITL_NoGoroutineLeak(t *testing.T) {
 	// Allow small variance (runtime overhead), but no unbounded growth.
 	if after > before+3 {
 		t.Errorf("possible goroutine leak: before=%d, after=%d", before, after)
+	}
+}
+
+// ── HITL response persistence (REQ-001..005, INV-001) ───────────────────────
+// See spec-process-bugfix-a2ui-hitl-response-persistence.md. After fireHITL
+// receives the human response on its channel, it MUST append a RoleUser
+// Message to c.History whose CPNID equals the CPN id, whose Content reflects
+// the action, and whose ParentMessageID links to the most recent A2UI surface
+// row from the same CPN. Reject and error paths MUST NOT append.
+
+const submitAnswersJSON = `{"answers":{"q1":"opt-a","q2":"Mi respuesta personalizada"}}`
+
+func submitToken(content string) Token {
+	return Token{
+		Color:   ColorHuman,
+		Space:   SpaceSurface,
+		Payload: HITLResponse{Action: HITLSubmit, Content: content},
+	}
+}
+
+// hitlClarifyTestCPN builds a CPN with an A2UI builder + an OutputBuilder
+// that mirrors t-clarify's structured-output path. The output place is
+// ColorString so the test exercises the OutputBuilder branch of fireHITL.
+func hitlClarifyTestCPN(builder func(consumed []Token) (any, error)) (*CPN, chan Token) {
+	ch := make(chan Token, 1)
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorString, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "request"})
+	transitions := map[string]*Transition{
+		"T:HITL": {
+			ID: "T:HITL", Kind: NodeKindHITL,
+			InputPlaces: []string{"P:IN"}, OutputPlaces: []string{"P:OUT"},
+			HITLConfig: &HITLConfig{
+				Channel:            ch,
+				Prompt:             "Please respond",
+				A2UIPayloadBuilder: builder,
+				OutputBuilder: func(consumed []Token, resp HITLResponse) (Token, error) {
+					return Token{
+						Color:   ColorString,
+						Payload: "synthesized:" + resp.Content,
+					}, nil
+				},
+			},
+		},
+	}
+	cpn := NewCPN("test-cpn", "worker", 0, ModeMAS, "sess-1", places, transitions)
+	return cpn, ch
+}
+
+func defaultA2UIBuilder() func(consumed []Token) (any, error) {
+	return func(consumed []Token) (any, error) {
+		return map[string]any{
+			"components": []any{
+				map[string]any{
+					"type":  "questionnaire",
+					"props": map[string]any{"componentId": "T:HITL"},
+				},
+			},
+		}, nil
+	}
+}
+
+func TestFireHITL_AppendsResponseToHistory_OnSubmit_OutputBuilderPath(t *testing.T) {
+	c, ch := hitlClarifyTestCPN(defaultA2UIBuilder())
+	ch <- submitToken(submitAnswersJSON)
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	// Expect 2 history rows: assistant A2UI surface (from fireHITL append)
+	// + user response row (REQ-001/002 OutputBuilder branch).
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows, got %d: %+v", len(hist), hist)
+	}
+	a2ui, resp := hist[0], hist[1]
+
+	if a2ui.Role != RoleAssistant || !strings.HasPrefix(a2ui.Content, A2UIMarker) {
+		t.Fatalf("first row should be the assistant A2UI surface; got role=%q content=%q", a2ui.Role, a2ui.Content)
+	}
+	if resp.Role != RoleUser {
+		t.Errorf("response Role = %q, want %q", resp.Role, RoleUser)
+	}
+	if resp.Content != submitAnswersJSON {
+		t.Errorf("response Content = %q, want byte-identical %q", resp.Content, submitAnswersJSON)
+	}
+	if resp.CPNID != c.ID {
+		t.Errorf("response CPNID = %q, want %q", resp.CPNID, c.ID)
+	}
+	if resp.CPNRole != c.Role {
+		t.Errorf("response CPNRole = %q, want %q", resp.CPNRole, c.Role)
+	}
+	if resp.ParentMessageID != a2ui.ID {
+		t.Errorf("response ParentMessageID = %q, want %q (the A2UI row's ID)", resp.ParentMessageID, a2ui.ID)
+	}
+}
+
+func TestFireHITL_AppendsResponseToHistory_OnSubmit_RawDepositPath(t *testing.T) {
+	c, ch := hitlA2UITestCPN(defaultA2UIBuilder())
+	ch <- submitToken(submitAnswersJSON)
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows, got %d: %+v", len(hist), hist)
+	}
+	resp := hist[1]
+	if resp.Role != RoleUser || resp.Content != submitAnswersJSON {
+		t.Errorf("raw-deposit branch did not append RoleUser response row: %+v", resp)
+	}
+	if resp.ParentMessageID != hist[0].ID {
+		t.Errorf("ParentMessageID = %q, want %q", resp.ParentMessageID, hist[0].ID)
+	}
+}
+
+func TestFireHITL_AppendsResponseToHistory_OnRevise_WrapsAsCanonicalJSON(t *testing.T) {
+	c, ch := hitlA2UITestCPN(defaultA2UIBuilder())
+	ch <- reviseToken("tighten the budget section")
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(hist))
+	}
+	resp := hist[1]
+	wantContent := `{"action":"revise","content":"tighten the budget section"}`
+	if resp.Content != wantContent {
+		t.Errorf("revise content wrap mismatch:\n got  %q\n want %q", resp.Content, wantContent)
+	}
+}
+
+func TestFireHITL_AppendsResponseToHistory_OnApprove_WithEmptyContent(t *testing.T) {
+	c, ch := hitlA2UITestCPN(defaultA2UIBuilder())
+	ch <- approveToken() // Action=approve, Content=""
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(hist))
+	}
+	resp := hist[1]
+	if resp.Content != `{"action":"approve"}` {
+		t.Errorf("approve content = %q, want %q", resp.Content, `{"action":"approve"}`)
+	}
+}
+
+func TestFireHITL_DoesNotAppend_OnReject(t *testing.T) {
+	c, ch := hitlA2UITestCPN(defaultA2UIBuilder())
+	ch <- rejectToken()
+
+	err := c.Run(context.Background())
+	if !errors.Is(err, ErrHITLRejected) {
+		t.Fatalf("expected ErrHITLRejected, got %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	// Only the A2UI surface row should be present (REQ-003).
+	if len(hist) != 1 {
+		t.Fatalf("expected exactly 1 history row (the A2UI surface), got %d: %+v", len(hist), hist)
+	}
+	if hist[0].Role != RoleAssistant {
+		t.Errorf("only row should be the assistant A2UI; got role=%q", hist[0].Role)
+	}
+}
+
+func TestFireHITL_DoesNotAppend_OnContextCancellation(t *testing.T) {
+	c, _ := hitlA2UITestCPN(defaultA2UIBuilder()) // channel never receives
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_ = c.Run(ctx) // expect ErrTimeout
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	// Only the A2UI surface row; no response row (REQ-004).
+	for _, m := range hist {
+		if m.Role == RoleUser {
+			t.Errorf("unexpected RoleUser row appended on context cancellation: %+v", m)
+		}
+	}
+}
+
+func TestFireHITL_DoesNotAppend_OnFailedOutputBuilder(t *testing.T) {
+	ch := make(chan Token, 1)
+	places := map[string]*Place{
+		"P:IN":  NewPlace("P:IN", ColorString, SpaceSurface),
+		"P:OUT": NewPlace("P:OUT", ColorString, SpaceSurface),
+	}
+	_ = places["P:IN"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "request"})
+	transitions := map[string]*Transition{
+		"T:HITL": {
+			ID: "T:HITL", Kind: NodeKindHITL,
+			InputPlaces: []string{"P:IN"}, OutputPlaces: []string{"P:OUT"},
+			HITLConfig: &HITLConfig{
+				Channel:            ch,
+				Prompt:             "Please respond",
+				A2UIPayloadBuilder: defaultA2UIBuilder(),
+				OutputBuilder: func(consumed []Token, resp HITLResponse) (Token, error) {
+					return Token{}, errors.New("intentional builder failure")
+				},
+			},
+		},
+	}
+	c := NewCPN("test-cpn", "worker", 0, ModeMAS, "sess-1", places, transitions)
+	ch <- submitToken(submitAnswersJSON)
+
+	_ = c.Run(context.Background()) // expect failure
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	for _, m := range hist {
+		if m.Role == RoleUser {
+			t.Errorf("REQ-005: no RoleUser append when OutputBuilder fails; got: %+v", m)
+		}
 	}
 }

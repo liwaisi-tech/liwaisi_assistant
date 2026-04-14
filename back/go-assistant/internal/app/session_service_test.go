@@ -583,6 +583,31 @@ func TestSessionService_AskThenHITL_NoRawTAskRowPersisted(t *testing.T) {
 	if !llmSawUser {
 		t.Errorf("AC-102: t-ask LLM did not see the user message in its request — input-side regression of SkipHistory dual-flag")
 	}
+
+	// INV-001 / REQ-006: the approve resolution must surface as a user row
+	// wrapping the canonical action JSON, with ParentMessageID pointing at
+	// the A2UI surface row so rehydration can lock the questionnaire.
+	var a2uiRow, respRow *cpn.Message
+	for i, m := range got.Messages {
+		if m.Role == cpn.RoleAssistant && strings.HasPrefix(m.Content, cpn.A2UIMarker) {
+			a2uiRow = &got.Messages[i]
+		}
+		if m.Role == cpn.RoleUser && m.ParentMessageID != "" {
+			respRow = &got.Messages[i]
+		}
+	}
+	if a2uiRow == nil {
+		t.Fatal("INV-001: expected an A2UI assistant row to pair the response against")
+	}
+	if respRow == nil {
+		t.Fatalf("INV-001: no HITL response user-row with ParentMessageID was persisted. messages: %+v", got.Messages)
+	}
+	if respRow.ParentMessageID != a2uiRow.ID {
+		t.Errorf("INV-001: response ParentMessageID = %q, want %q (A2UI surface id)", respRow.ParentMessageID, a2uiRow.ID)
+	}
+	if respRow.Content != `{"action":"approve"}` {
+		t.Errorf("REQ-002: approve response content = %q, want %q", respRow.Content, `{"action":"approve"}`)
+	}
 }
 
 // TestSessionService_HITLClarifyFlow_PersistsOnlyA2UIRow_NotTAskRaw asserts

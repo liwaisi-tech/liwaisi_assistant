@@ -67,7 +67,11 @@
   },
   "a2ui": {
     "unknownComponent": "Unsupported component: {{type}}",
-    "loading": "Loading interactive content..."
+    "loading": "Loading interactive content...",
+    "questionnaire": {
+      "respondedAt": "Responded at {{time}}",
+      "responded": "Responded"
+    }
   },
   "connection": {
     "connected": "Connected",

@@ -1,4 +1,4 @@
-import { useDeferredValue, useCallback, useMemo, useState, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
 import type {
@@ -9,6 +9,23 @@ import type {
   FormField,
   ChoiceOption,
 } from './types.ts';
+
+// ── Resolution context ─────────────────────────────────────────────────────
+// ResolutionContext carries the HITL response payload paired with the
+// current A2UI surface when the backend persisted a response row after
+// submission. When present, interactive components (QuestionnaireComponent)
+// render in a read-only locked state showing the submitted answers
+// (REQ-102..105 — spec-process-bugfix-a2ui-hitl-response-persistence.md).
+// Kept narrow on purpose: only consumers that must change render shape
+// in response to resolution should read this; forward it explicitly
+// when you really need it.
+
+interface ResolutionContextValue {
+  resolvedPayload?: string;
+  resolvedAt?: Date;
+}
+
+const ResolutionContext = createContext<ResolutionContextValue>({});
 
 // ── Component Catalog ──────────────────────────────────────────────────────
 
@@ -561,6 +578,129 @@ function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescri
   return out;
 }
 
+// QuestionnaireLocked renders a read-only view of a resolved questionnaire.
+// Displayed labels resolve each recorded answer id back to its option label
+// (falling back to the id itself if the answer was a free-text value that
+// does not match any option). Fields with no recorded answer still render
+// with a placeholder so the frame stays stable with the active state.
+interface QuestionnaireLockedProps {
+  questions: QuestionDescriptor[];
+  restatedGoal: string;
+  assumptions: string[];
+  resolvedPayload: string;
+  resolvedAt?: Date;
+}
+
+function parseResolvedAnswers(resolvedPayload: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(resolvedPayload) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const obj = parsed as Record<string, unknown>;
+    // Submit payload shape: {"answers": {...}}
+    if (obj.answers && typeof obj.answers === 'object') {
+      const answers = obj.answers as Record<string, unknown>;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(answers)) {
+        out[k] = typeof v === 'string' ? v : String(v ?? '');
+      }
+      return out;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function QuestionnaireLocked({
+  questions,
+  restatedGoal,
+  assumptions,
+  resolvedPayload,
+  resolvedAt,
+}: QuestionnaireLockedProps) {
+  const { t } = useTranslation('chat');
+  const answers = useMemo(() => parseResolvedAnswers(resolvedPayload), [resolvedPayload]);
+  const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
+
+  const respondedAtLabel = resolvedAt
+    ? t('a2ui.questionnaire.respondedAt', {
+        defaultValue: 'Responded at {{time}}',
+        time: resolvedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })
+    : t('a2ui.questionnaire.responded', 'Responded');
+
+  const resolveLabel = (q: QuestionDescriptor, answer: string): string => {
+    const match = q.options?.find((o) => o.id === answer);
+    return match?.label ?? answer;
+  };
+
+  return (
+    <section
+      aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
+      aria-live="polite"
+      className="flex flex-col gap-3 my-2"
+    >
+      {hasFraming && (
+        <div
+          className="rounded-xl px-3.5 py-3 flex flex-col gap-2"
+          style={{
+            backgroundColor: 'var(--bg-input)',
+            border: '1px solid var(--border-dim)',
+          }}
+        >
+          <div
+            className="text-[10px] uppercase tracking-widest font-semibold"
+            style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {t('a2ui.understoodAs', 'I understood')}
+          </div>
+          {restatedGoal && (
+            <div className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>
+              {restatedGoal}
+            </div>
+          )}
+          {assumptions.length > 0 && (
+            <ul className="flex flex-col gap-1 mt-1 list-disc pl-5">
+              {assumptions.map((a, i) => (
+                <li key={i} className="text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                  {a}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div
+        className="text-[10px] uppercase tracking-widest font-semibold"
+        style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {respondedAtLabel}
+      </div>
+
+      <ul className="flex flex-col gap-2">
+        {questions.map((q) => {
+          const answer = answers[q.id];
+          return (
+            <li
+              key={q.id}
+              className="rounded-lg px-3 py-2 flex flex-col gap-1"
+              style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-dim)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {q.label}
+              </div>
+              <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                {answer ? resolveLabel(q, answer) : '—'}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const { t } = useTranslation('chat');
   const componentId = (component.props.id as string) ?? '';
@@ -568,6 +708,23 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const restatedGoal = (component.props.restatedGoal as string | undefined) ?? '';
   const assumptions = (component.props.assumptions as string[] | undefined) ?? [];
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
+  const { resolvedPayload, resolvedAt } = useContext(ResolutionContext);
+
+  // REQ-102..105: when the backend has persisted a HITL response paired
+  // with this A2UI surface, render a read-only summary instead of the
+  // interactive form. Answers are parsed from the payload (submit: raw
+  // JSON object with `answers`; approve/revise: wrapped action JSON).
+  if (resolvedPayload !== undefined) {
+    return (
+      <QuestionnaireLocked
+        questions={questions}
+        restatedGoal={restatedGoal}
+        assumptions={assumptions}
+        resolvedPayload={resolvedPayload}
+        resolvedAt={resolvedAt}
+      />
+    );
+  }
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
@@ -887,9 +1044,17 @@ interface A2UIMessageRendererProps {
   payload: A2UIPayload;
   isStreaming: boolean;
   onAction: (action: A2UIAction) => void;
+  resolvedPayload?: string;
+  resolvedAt?: Date;
 }
 
-export function A2UIMessageRenderer({ payload, isStreaming, onAction }: A2UIMessageRendererProps) {
+export function A2UIMessageRenderer({
+  payload,
+  isStreaming,
+  onAction,
+  resolvedPayload,
+  resolvedAt,
+}: A2UIMessageRendererProps) {
   const deferredPayload = useDeferredValue(payload);
 
   const handleAction = useCallback(
@@ -899,13 +1064,20 @@ export function A2UIMessageRenderer({ payload, isStreaming, onAction }: A2UIMess
     [onAction],
   );
 
+  const resolutionValue = useMemo(
+    () => ({ resolvedPayload, resolvedAt }),
+    [resolvedPayload, resolvedAt],
+  );
+
   return (
-    <div className="a2ui-content">
-      {deferredPayload.components.map((component, i) => (
-        <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
-      ))}
-      {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
-    </div>
+    <ResolutionContext.Provider value={resolutionValue}>
+      <div className="a2ui-content">
+        {deferredPayload.components.map((component, i) => (
+          <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
+        ))}
+        {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
+      </div>
+    </ResolutionContext.Provider>
   );
 }
 

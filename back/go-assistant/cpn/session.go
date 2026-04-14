@@ -76,6 +76,13 @@ type Message struct {
 
 	// Timestamp records when this message was created.
 	Timestamp time.Time
+
+	// ParentMessageID, when non-empty, references the ID of an earlier
+	// Message that this row is a response to. Populated by fireHITL when
+	// appending a RoleUser response row, with the id of the A2UI surface
+	// row the response answers. Empty for all other messages.
+	// See spec-process-bugfix-a2ui-hitl-response-persistence.md REQ-006.
+	ParentMessageID string
 }
 
 // HITLAction classifies the human response to a HITL request.

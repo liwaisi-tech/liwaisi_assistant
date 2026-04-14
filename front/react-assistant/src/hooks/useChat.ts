@@ -32,7 +32,7 @@ export type ChatAction =
   | { type: 'SET_ERROR'; error: string }
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string; suppressBubble?: boolean }
-  | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction }
+  | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction; resolvedPayload?: string }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -56,6 +56,26 @@ function mapBackendStateToReducerState(s: BackendSessionState): SessionState {
 // vocabulary (waiting/completed/failed) is treated as 'idle' for rehydration —
 // the affordance the user needs is read from the persisted message list, not
 // from the legacy state value.
+// enrichWithResolutions pairs each A2UI assistant row with a later HITL
+// response row (linked via parentMessageId) so the questionnaire component
+// can render in a locked/read-only state showing the submitted answers
+// (REQ-102..105 — spec-process-bugfix-a2ui-hitl-response-persistence.md).
+// Iterating once over the array keeps this O(n).
+export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
+  const resolutions = new Map<string, { payload: string; at: Date }>();
+  for (const m of messages) {
+    if (m.role === 'user' && m.parentMessageId) {
+      resolutions.set(m.parentMessageId, { payload: m.content, at: m.timestamp });
+    }
+  }
+  if (resolutions.size === 0) return messages;
+  return messages.map((m) => {
+    const hit = resolutions.get(m.id);
+    if (!hit) return m;
+    return { ...m, resolvedPayload: hit.payload, resolvedAt: hit.at };
+  });
+}
+
 function narrowToBackendState(s: SessionState | BackendSessionState): BackendSessionState {
   if (s === 'running' || s === 'hitl_pending' || s === 'terminal' || s === 'idle') {
     return s;
@@ -245,7 +265,16 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sessionState: 'running',
         messages: state.messages.map((m) =>
           m.hitlTransitionId === action.transitionId
-            ? { ...m, hitlResolved: action.action, hitlActions: undefined }
+            ? {
+                ...m,
+                hitlResolved: action.action,
+                hitlActions: undefined,
+                // Lock immediately on live submission so the questionnaire
+                // renders read-only without waiting for a reload (REQ-105).
+                ...(action.resolvedPayload
+                  ? { resolvedPayload: action.resolvedPayload, resolvedAt: new Date() }
+                  : {}),
+              }
             : m
         ),
       };
@@ -318,11 +347,17 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           isStreaming: false,
           cpnId: m.cpn_id,
           timestamp: new Date(m.timestamp),
+          parentMessageId: m.parent_message_id,
         }));
+        // REQ-102..104: pair each A2UI surface with its HITL response row
+        // (linked via parent_message_id) so the questionnaire can render
+        // locked with the answers the user submitted
+        // (spec-process-bugfix-a2ui-hitl-response-persistence.md).
+        const enriched = enrichWithResolutions(messages);
         dispatch({
           type: 'SESSION_LOADED',
           sessionId: sessionId!,
-          messages,
+          messages: enriched,
           // GET /sessions/{id} returns BackendSessionState (REQ-404), but the
           // shared SessionResponse interface widens it to SessionState |
           // BackendSessionState. Narrow defensively at the seam: any legacy
@@ -419,7 +454,23 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
   const handleResolveHITL = useCallback(
     async (transitionId: string, action: HITLAction, content?: string) => {
       if (!sessionId) return;
-      dispatch({ type: 'HITL_RESOLVED', transitionId, action });
+      // Encode resolvedPayload for the reducer using the same rules the
+      // backend uses when appending the HITL response row (REQ-001/002):
+      //   submit       → raw content (questionnaire answers JSON)
+      //   revise       → {"action":"revise","content":"..."}
+      //   approve      → {"action":"approve"} or include content if present
+      //   reject       → no lock (backend does not persist a response)
+      let resolvedPayload: string | undefined;
+      if (action === 'submit') {
+        resolvedPayload = content ?? '';
+      } else if (action === 'revise') {
+        resolvedPayload = JSON.stringify({ action: 'revise', content: content ?? '' });
+      } else if (action === 'approve') {
+        resolvedPayload = content
+          ? JSON.stringify({ action: 'approve', content })
+          : JSON.stringify({ action: 'approve' });
+      }
+      dispatch({ type: 'HITL_RESOLVED', transitionId, action, resolvedPayload });
       try {
         await apiResolveHITL(sessionId, transitionId, {
           action,

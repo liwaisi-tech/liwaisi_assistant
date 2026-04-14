@@ -53,13 +53,14 @@ func EventToRecord(sessionID string, e *cpn.Event) (*EventRecord, error) {
 // Injects sessionID because cpn.Message does not carry it.
 func MessageToRecord(sessionID string, m *cpn.Message) *MessageRecord {
 	return &MessageRecord{
-		ID:        m.ID,
-		SessionID: sessionID,
-		Role:      string(m.Role),
-		Content:   m.Content,
-		CPNID:     m.CPNID,
-		CPNRole:   m.CPNRole,
-		CPNDepth:  m.CPNDepth,
-		Timestamp: m.Timestamp,
+		ID:              m.ID,
+		SessionID:       sessionID,
+		Role:            string(m.Role),
+		Content:         m.Content,
+		CPNID:           m.CPNID,
+		CPNRole:         m.CPNRole,
+		CPNDepth:        m.CPNDepth,
+		Timestamp:       m.Timestamp,
+		ParentMessageID: m.ParentMessageID,
 	}
 }

@@ -289,20 +289,36 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 
 		// Sync new history entries from CPN back to session on ALL exit paths.
 		// fireLLM appends assistant responses to c.History during execution;
-		// without this sync, those responses are lost when the CPN fails.
+		// fireHITL appends both an A2UI surface (assistant) and, on
+		// approve/submit/revise, a response row (user) with ParentMessageID
+		// pointing at the surface — both must propagate so persistence and
+		// rehydration can pair them (REQ-001/002/006). Without this sync,
+		// those responses are lost when the CPN fails.
 		if len(session.Root.History) > historyLen {
 			for _, m := range session.Root.History[historyLen:] {
-				if m.Role != cpn.RoleAssistant {
-					continue // user messages already in session history
+				// Assistant rows are always CPN-originated and always sync.
+				// User rows only sync when they are HITL responses (identified
+				// by ParentMessageID linking to an earlier A2UI surface). All
+				// other user rows were authored outside the CPN and are
+				// already in session.Messages.
+				if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+					continue
+				}
+				// Preserve the CPN-assigned ID when present so the response
+				// row's ParentMessageID remains resolvable across session.Messages.
+				id := m.ID
+				if id == "" {
+					id = sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano())
 				}
 				session.AppendMessage(&cpn.Message{
-					ID:        sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					Role:      m.Role,
-					Content:   m.Content,
-					CPNID:     m.CPNID,
-					CPNRole:   m.CPNRole,
-					CPNDepth:  m.CPNDepth,
-					Timestamp: m.Timestamp,
+					ID:              id,
+					Role:            m.Role,
+					Content:         m.Content,
+					CPNID:           m.CPNID,
+					CPNRole:         m.CPNRole,
+					CPNDepth:        m.CPNDepth,
+					Timestamp:       m.Timestamp,
+					ParentMessageID: m.ParentMessageID,
 				})
 			}
 		}
@@ -908,16 +924,20 @@ func (s *SessionService) persistAfterRun(sessionID string, newMessages []cpn.Mes
 		}
 	}
 
-	// 2. Persist new assistant messages.
+	// 2. Persist new assistant messages and HITL user-response rows.
+	// HITL response rows carry ParentMessageID linking to the A2UI surface
+	// — they must be persisted so rehydration can lock the questionnaire
+	// (REQ-001/002/006/007). Other user rows were already persisted at
+	// submission time in SendMessage.
 	if s.persist.Sessions != nil {
 		for i := range newMessages {
 			m := &newMessages[i]
-			if m.Role != cpn.RoleAssistant {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
 				continue
 			}
 			rec := persist.MessageToRecord(sessionID, m)
 			if err := s.persist.Sessions.AppendMessage(ctx, sessionID, rec); err != nil {
-				s.logger.Warn("persist assistant message", "session_id", sessionID, "error", err)
+				s.logger.Warn("persist cpn-sourced message", "session_id", sessionID, "error", err)
 			}
 		}
 	}
@@ -1222,13 +1242,14 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 			continue
 		}
 		session.AppendMessage(&cpn.Message{
-			ID:        mr.ID,
-			Role:      cpn.MessageRole(mr.Role),
-			Content:   mr.Content,
-			CPNID:     mr.CPNID,
-			CPNRole:   mr.CPNRole,
-			CPNDepth:  mr.CPNDepth,
-			Timestamp: mr.Timestamp,
+			ID:              mr.ID,
+			Role:            cpn.MessageRole(mr.Role),
+			Content:         mr.Content,
+			CPNID:           mr.CPNID,
+			CPNRole:         mr.CPNRole,
+			CPNDepth:        mr.CPNDepth,
+			Timestamp:       mr.Timestamp,
+			ParentMessageID: mr.ParentMessageID,
 		})
 	}
 

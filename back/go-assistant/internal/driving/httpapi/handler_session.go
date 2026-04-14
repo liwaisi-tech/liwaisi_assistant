@@ -199,11 +199,12 @@ func (h *Handlers) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 	msgs := make([]MessageResponse, len(info.Messages))
 	for i, m := range info.Messages {
 		msgs[i] = MessageResponse{
-			ID:        m.ID,
-			Role:      string(m.Role),
-			Content:   m.Content,
-			CPNID:     m.CPNID,
-			Timestamp: m.Timestamp.Format(time.RFC3339),
+			ID:              m.ID,
+			Role:            string(m.Role),
+			Content:         m.Content,
+			CPNID:           m.CPNID,
+			Timestamp:       m.Timestamp.Format(time.RFC3339),
+			ParentMessageID: m.ParentMessageID,
 		}
 	}
 

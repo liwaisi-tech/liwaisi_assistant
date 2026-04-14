@@ -15,6 +15,12 @@ interface MessageBubbleProps {
   hitlTransitionId?: string;
   hitlActions?: HITLAction[];
   hitlResolved?: HITLAction;
+  // Resolution props that lock an A2UI surface (e.g. the questionnaire)
+  // into a read-only state showing what the user submitted. Populated by
+  // the chat reducer on SESSION_LOADED rehydration and on live HITL
+  // submission (REQ-102..105).
+  resolvedPayload?: string;
+  resolvedAt?: Date;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   onOpenMonitor?: () => void;
 }
@@ -48,7 +54,8 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 
 export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
-  hitlTransitionId, hitlResolved, onHITLAction, onOpenMonitor,
+  hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
+  onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
@@ -144,6 +151,8 @@ export const MessageBubble = memo(function MessageBubble({
             payload={payload}
             isStreaming={isStreaming ?? false}
             onAction={handleA2UIAction}
+            resolvedPayload={resolvedPayload}
+            resolvedAt={resolvedAt}
           />
         ) : null}
 

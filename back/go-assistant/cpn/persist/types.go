@@ -79,6 +79,11 @@ type MessageRecord struct {
 	CPNRole   string
 	CPNDepth  int
 	Timestamp time.Time
+	// ParentMessageID, when non-empty, references the ID of an earlier
+	// MessageRecord. Populated for HITL response rows so the frontend can
+	// correlate them with the A2UI surface they answer (REQ-007/008,
+	// spec-process-bugfix-a2ui-hitl-response-persistence.md).
+	ParentMessageID string
 }
 
 // EventRecord is the persistence DTO for a CPN event.

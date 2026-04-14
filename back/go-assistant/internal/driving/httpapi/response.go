@@ -33,12 +33,17 @@ type SessionDetailResponse struct {
 }
 
 // MessageResponse is a single message in the session history.
+// ParentMessageID, when present, links a HITL response row to the earlier
+// A2UI surface it answers so the frontend can lock the questionnaire
+// component on rehydration (REQ-006/REQ-101
+// — spec-process-bugfix-a2ui-hitl-response-persistence.md).
 type MessageResponse struct {
-	ID        string `json:"id"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	CPNID     string `json:"cpn_id,omitempty"`
-	Timestamp string `json:"timestamp"`
+	ID              string `json:"id"`
+	Role            string `json:"role"`
+	Content         string `json:"content"`
+	CPNID           string `json:"cpn_id,omitempty"`
+	Timestamp       string `json:"timestamp"`
+	ParentMessageID string `json:"parent_message_id,omitempty"`
 }
 
 // StatusResponse is a simple status response.

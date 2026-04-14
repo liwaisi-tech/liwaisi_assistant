@@ -29,6 +29,10 @@ export interface MessageResponse {
   content: string;
   cpn_id?: string;
   timestamp: string;
+  // parent_message_id pairs a HITL response row with the A2UI surface it
+  // answers so the reducer can lock the questionnaire on rehydration
+  // (REQ-101 — spec-process-bugfix-a2ui-hitl-response-persistence.md).
+  parent_message_id?: string;
 }
 
 export interface SessionDetailResponse extends SessionResponse {
