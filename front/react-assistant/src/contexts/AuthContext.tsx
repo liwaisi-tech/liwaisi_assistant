@@ -168,12 +168,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.email]);
 
   // Listen for auth:expired events (fired by api.ts on 401 responses).
-  // Re-trigger Google Sign-In prompt to get a fresh token.
+  // Perform a full logout so the app re-renders to the landing page and the
+  // user can sign in again. Clearing only the token is not enough: App.tsx
+  // gates the landing view on `!user`, so leaving `user` populated keeps the
+  // authed UI mounted while every API call keeps 401-ing.
+  const logoutRef = useRef(logout);
+  useEffect(() => {
+    logoutRef.current = logout;
+  }, [logout]);
   useEffect(() => {
     const handleExpired = () => {
-      setToken(null);
-      localStorage.removeItem('liwaisi_token');
-      // Re-prompt Google Sign-In for fresh credential.
+      logoutRef.current();
       window.google?.accounts.id.prompt();
     };
     window.addEventListener('auth:expired', handleExpired);
