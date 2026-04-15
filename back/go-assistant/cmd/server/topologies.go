@@ -241,7 +241,8 @@ func hitlTopologyFactory(sessionID string) *cpn.CPN {
 	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
 		[]string{"p-plan"}, []string{"p-reviewed"})
 	tReview.HITLConfig = &cpn.HITLConfig{
-		Prompt: "",
+		Prompt:             "",
+		A2UIPayloadBuilder: buildReviewA2UIPayload("t-review"),
 	}
 
 	tExecute := cpn.NewTransition("t-execute", cpn.NodeKindLLM,
@@ -558,10 +559,15 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 	// t-review: HITL gate — waits for user approval. The prompt text is
 	// intentionally empty: the A2UI Review Required card already labels
 	// itself, and a duplicate plain-text bubble was visual noise.
+	//
+	// REQ-BE-001/002: t-review owns its A2UI surface via a transition-scoped
+	// A2UIPayloadBuilder so the surface row flows through c.History and the
+	// paired response row is persisted by fireHITL's raw-deposit branch.
 	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
 		[]string{"p-plan"}, []string{"p-reviewed"})
 	tReview.HITLConfig = &cpn.HITLConfig{
-		Prompt: "",
+		Prompt:             "",
+		A2UIPayloadBuilder: buildReviewA2UIPayload("t-review"),
 	}
 
 	// t-execute: fires after approval. The plan above may be either:
@@ -623,6 +629,57 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 	)
 	c.ContextWindowSize = 10
 	return c
+}
+
+// ── Review helpers ──────────────────────────────────────────────────────────
+
+// buildReviewA2UIPayload returns an A2UIPayloadBuilder for the t-review HITL
+// transition. The returned builder ignores `consumed` (the review card content
+// is fixed) and produces the same typed component tree the legacy
+// cmd/server/main.go buildHITLReviewCard historically emitted, so live and
+// rehydrated renders converge byte-identically.
+//
+// The transitionID is captured by closure so each button's `id` prop points
+// at the correct transition.
+//
+// See spec-process-bugfix-treview-surface-and-locked-parser.md REQ-BE-001/002.
+func buildReviewA2UIPayload(transitionID string) func([]cpn.Token) (any, error) {
+	return func(_ []cpn.Token) (any, error) {
+		return reviewCardPayload(transitionID), nil
+	}
+}
+
+// reviewCardPayload returns the typed component tree for a HITL review card.
+// The shape MUST match what cmd/server/main.go buildHITLReviewCard
+// historically produced — single source of truth. The legacy emission path in
+// main.go is a WARN-and-emit defensive fallback (PAT-003) and also consumes
+// this helper so a misconfigured topology still ships the correct card shape.
+func reviewCardPayload(transitionID string) any {
+	return map[string]any{
+		"components": []any{
+			map[string]any{
+				"type":  "card",
+				"props": map[string]any{"title": "Review Required"},
+				"children": []any{
+					map[string]any{"type": "text", "props": map[string]any{"content": "Please review and confirm."}},
+					map[string]any{"type": "divider"},
+					map[string]any{"type": "text", "props": map[string]any{"content": "Choose an action to continue:", "variant": "secondary"}},
+				},
+			},
+			map[string]any{"type": "button", "props": map[string]any{
+				"label": "✓ Approve", "variant": "success",
+				"actionType": "hitl:approve", "id": transitionID,
+			}},
+			map[string]any{"type": "button", "props": map[string]any{
+				"label": "✎ Request Changes", "variant": "primary",
+				"actionType": "hitl:revise", "id": transitionID,
+			}},
+			map[string]any{"type": "button", "props": map[string]any{
+				"label": "✗ Discard", "variant": "danger",
+				"actionType": "hitl:reject", "id": transitionID,
+			}},
+		},
+	}
 }
 
 // ── Clarification helpers ───────────────────────────────────────────────────

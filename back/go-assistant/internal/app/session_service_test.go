@@ -698,3 +698,180 @@ func TestSessionService_HITLClarifyFlow_PersistsOnlyA2UIRow_NotTAskRaw(t *testin
 		t.Errorf("expected zero t-ask rows (INV-004), got %d", tAskRows)
 	}
 }
+
+// tReviewA2UITopologyFactory builds a minimal topology that mirrors the real
+// t-review HITL gate. The transition owns its A2UI surface via an
+// A2UIPayloadBuilder that returns the review card shape
+// (approve/revise/reject buttons), so fireHITL takes the raw-deposit path
+// AND appends both the surface row and the paired response row to
+// c.History. Used to lock in AC-BE-001/002/003 of
+// spec-process-bugfix-treview-surface-and-locked-parser.md end-to-end
+// through SessionService (without a Postgres testcontainer).
+func tReviewA2UITopologyFactory(sessionID string) *cpn.CPN {
+	places := map[string]*cpn.Place{
+		"p-plan":     cpn.NewPlace("p-plan", cpn.ColorString, cpn.SpaceSurface),
+		"p-reviewed": cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceSurface),
+	}
+	tReview := cpn.NewTransition("t-review", cpn.NodeKindHITL,
+		[]string{"p-plan"}, []string{"p-reviewed"})
+	tReview.HITLConfig = &cpn.HITLConfig{
+		Prompt: "",
+		A2UIPayloadBuilder: func(_ []cpn.Token) (any, error) {
+			return map[string]any{
+				"components": []any{
+					map[string]any{
+						"type":  "card",
+						"props": map[string]any{"title": "Review Required"},
+					},
+					map[string]any{"type": "button", "props": map[string]any{
+						"label": "Approve", "actionType": "hitl:approve", "id": "t-review",
+					}},
+					map[string]any{"type": "button", "props": map[string]any{
+						"label": "Revise", "actionType": "hitl:revise", "id": "t-review",
+					}},
+					map[string]any{"type": "button", "props": map[string]any{
+						"label": "Reject", "actionType": "hitl:reject", "id": "t-review",
+					}},
+				},
+			}, nil
+		},
+	}
+	transitions := map[string]*cpn.Transition{"t-review": tReview}
+	return cpn.NewCPN("cpn-"+sessionID, "test-root", 0, cpn.ModeMAS, sessionID, places, transitions)
+}
+
+// runTReviewResolve drives a full SendMessage → EventHITLRequested →
+// ResolveHITL cycle against the t-review topology and returns the resulting
+// session messages. Helper keeps each AC-BE-001/002/003 test compact.
+func runTReviewResolve(t *testing.T, resp cpn.HITLResponse) []cpn.Message {
+	t.Helper()
+	svc := NewSessionService(
+		&mockLLMClient{},
+		&mockCostProvider{cost: 0.0},
+		testLogger(),
+		tReviewA2UITopologyFactory,
+	)
+	hitlReady := make(chan struct{}, 1)
+	svc.SetEventCallback(func(_ string, evt cpn.Event) {
+		if evt.Type == cpn.EventHITLRequested {
+			select {
+			case hitlReady <- struct{}{}:
+			default:
+			}
+		}
+	})
+
+	info, err := svc.CreateSession(context.Background(), "user-treview", cpn.ChannelWeb)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := svc.SendMessage(context.Background(), info.ID, "ready to review"); err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+	select {
+	case <-hitlReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for EventHITLRequested")
+	}
+	// ResolveHITL surfaces errors synchronously for some actions (reject
+	// bubbles ErrHITLRejected); swallow so the caller can still inspect the
+	// messages persisted up to that point.
+	_ = svc.ResolveHITL(context.Background(), info.ID, "t-review", resp)
+
+	svc.mu.RLock()
+	st := svc.states[info.ID]
+	svc.mu.RUnlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for st.get() == cpn.StateRunning || st.get() == cpn.StateWaiting {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for CPN to finish, state=%s", st.get())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got, err := svc.GetSession(info.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	return got.Messages
+}
+
+// TestSessionService_TReview_Approve_PersistsSurfaceAndResponse — AC-BE-001.
+// Approve cycles MUST produce exactly one $$a2ui: assistant row AND one
+// user row whose ParentMessageID references the surface and whose content
+// is the canonical {"action":"approve"} JSON.
+func TestSessionService_TReview_Approve_PersistsSurfaceAndResponse(t *testing.T) {
+	t.Parallel()
+	msgs := runTReviewResolve(t, cpn.HITLResponse{Action: cpn.HITLApprove})
+
+	var surface, resp *cpn.Message
+	for i := range msgs {
+		m := &msgs[i]
+		if m.Role == cpn.RoleAssistant && strings.HasPrefix(m.Content, cpn.A2UIMarker) {
+			surface = m
+		}
+		if m.Role == cpn.RoleUser && m.ParentMessageID != "" {
+			resp = m
+		}
+	}
+	if surface == nil {
+		t.Fatalf("AC-BE-001: expected a $$a2ui: surface row; messages=%+v", msgs)
+	}
+	if !strings.Contains(surface.Content, "hitl:approve") {
+		t.Errorf("AC-BE-001: surface missing hitl:approve button; content=%s", surface.Content)
+	}
+	if resp == nil {
+		t.Fatalf("AC-BE-001: expected a RoleUser response row; messages=%+v", msgs)
+	}
+	if resp.ParentMessageID != surface.ID {
+		t.Errorf("AC-BE-001: response ParentMessageID = %q, want %q", resp.ParentMessageID, surface.ID)
+	}
+	if resp.Content != `{"action":"approve"}` {
+		t.Errorf("AC-BE-001: response content = %q, want %q", resp.Content, `{"action":"approve"}`)
+	}
+}
+
+// TestSessionService_TReview_Revise_PersistsCanonicalContent — AC-BE-002.
+func TestSessionService_TReview_Revise_PersistsCanonicalContent(t *testing.T) {
+	t.Parallel()
+	msgs := runTReviewResolve(t, cpn.HITLResponse{
+		Action:  cpn.HITLRevise,
+		Content: "tighten the budget",
+	})
+
+	var resp *cpn.Message
+	for i := range msgs {
+		if msgs[i].Role == cpn.RoleUser && msgs[i].ParentMessageID != "" {
+			resp = &msgs[i]
+		}
+	}
+	if resp == nil {
+		t.Fatalf("AC-BE-002: expected a RoleUser response row; messages=%+v", msgs)
+	}
+	want := `{"action":"revise","content":"tighten the budget"}`
+	if resp.Content != want {
+		t.Errorf("AC-BE-002: response content = %q, want %q", resp.Content, want)
+	}
+}
+
+// TestSessionService_TReview_Reject_PersistsSurfaceOnly — AC-BE-003. The
+// surface row MUST be persisted (the user did see the card) but NO user
+// response row MUST be appended (REQ-003 of predecessor spec).
+func TestSessionService_TReview_Reject_PersistsSurfaceOnly(t *testing.T) {
+	t.Parallel()
+	msgs := runTReviewResolve(t, cpn.HITLResponse{Action: cpn.HITLReject})
+
+	var surface *cpn.Message
+	for i := range msgs {
+		m := &msgs[i]
+		if m.Role == cpn.RoleAssistant && strings.HasPrefix(m.Content, cpn.A2UIMarker) {
+			surface = m
+		}
+		if m.Role == cpn.RoleUser && m.ParentMessageID != "" {
+			t.Errorf("AC-BE-003: reject MUST NOT append a RoleUser row; got %+v", m)
+		}
+	}
+	if surface == nil {
+		t.Errorf("AC-BE-003: surface row MUST still be persisted on reject; messages=%+v", msgs)
+	}
+}

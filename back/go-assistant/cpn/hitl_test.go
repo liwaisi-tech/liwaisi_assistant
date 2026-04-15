@@ -1051,3 +1051,122 @@ func TestFireHITL_DoesNotAppend_OnFailedOutputBuilder(t *testing.T) {
 		}
 	}
 }
+
+// ── t-review flavored persistence (raw-deposit branch) ──────────────────────
+// spec-process-bugfix-treview-surface-and-locked-parser.md REQ-BE-001..006,
+// INV-002/003. t-review has no OutputBuilder so fireHITL takes the raw-deposit
+// path. With a transition-owned A2UIPayloadBuilder attached (REQ-BE-002), the
+// surface row is appended to c.History and the response row (for approve /
+// revise; never for reject) follows. Reject MUST leave the surface in place
+// but MUST NOT append a response row.
+
+// tReviewPayloadBuilder is a miniature stand-in for
+// cmd/server/topologies.go::buildReviewA2UIPayload. The cpn package cannot
+// import cmd/server (CON-005), so the shape is replicated here.
+func tReviewPayloadBuilder() func(consumed []Token) (any, error) {
+	return func(_ []Token) (any, error) {
+		return map[string]any{
+			"components": []any{
+				map[string]any{
+					"type":  "card",
+					"props": map[string]any{"title": "Review Required"},
+				},
+				map[string]any{"type": "button", "props": map[string]any{
+					"label": "Approve", "actionType": "hitl:approve", "id": "t-review",
+				}},
+				map[string]any{"type": "button", "props": map[string]any{
+					"label": "Revise", "actionType": "hitl:revise", "id": "t-review",
+				}},
+				map[string]any{"type": "button", "props": map[string]any{
+					"label": "Reject", "actionType": "hitl:reject", "id": "t-review",
+				}},
+			},
+		}, nil
+	}
+}
+
+func TestFireHITL_TReview_Approve_PersistsSurfaceAndResponse(t *testing.T) {
+	c, ch := hitlA2UITestCPN(tReviewPayloadBuilder())
+	ch <- approveToken()
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows (surface + response), got %d: %+v", len(hist), hist)
+	}
+	a2ui, resp := hist[0], hist[1]
+	if a2ui.Role != RoleAssistant || !strings.HasPrefix(a2ui.Content, A2UIMarker) {
+		t.Errorf("surface row malformed: role=%q content=%q", a2ui.Role, a2ui.Content)
+	}
+	if !strings.Contains(a2ui.Content, "hitl:approve") ||
+		!strings.Contains(a2ui.Content, "hitl:revise") ||
+		!strings.Contains(a2ui.Content, "hitl:reject") {
+		t.Errorf("surface MUST include all three action buttons; got %q", a2ui.Content)
+	}
+	if resp.Role != RoleUser {
+		t.Errorf("response Role = %q, want %q", resp.Role, RoleUser)
+	}
+	if resp.Content != `{"action":"approve"}` {
+		t.Errorf("approve content = %q, want %q", resp.Content, `{"action":"approve"}`)
+	}
+	if resp.ParentMessageID != a2ui.ID {
+		t.Errorf("ParentMessageID = %q, want %q (surface row ID)", resp.ParentMessageID, a2ui.ID)
+	}
+}
+
+func TestFireHITL_TReview_Revise_WrapsCanonically(t *testing.T) {
+	c, ch := hitlA2UITestCPN(tReviewPayloadBuilder())
+	ch <- reviseToken("tighten the budget")
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(hist))
+	}
+	resp := hist[1]
+	want := `{"action":"revise","content":"tighten the budget"}`
+	if resp.Content != want {
+		t.Errorf("revise content = %q, want %q", resp.Content, want)
+	}
+	if resp.ParentMessageID != hist[0].ID {
+		t.Errorf("ParentMessageID = %q, want %q", resp.ParentMessageID, hist[0].ID)
+	}
+}
+
+func TestFireHITL_TReview_Reject_PersistsSurfaceButNotResponse(t *testing.T) {
+	c, ch := hitlA2UITestCPN(tReviewPayloadBuilder())
+	ch <- rejectToken()
+
+	err := c.Run(context.Background())
+	if !errors.Is(err, ErrHITLRejected) {
+		t.Fatalf("expected ErrHITLRejected, got %v", err)
+	}
+
+	c.mu.RLock()
+	hist := append([]*Message(nil), c.History...)
+	c.mu.RUnlock()
+
+	if len(hist) != 1 {
+		t.Fatalf("expected exactly 1 history row (surface only), got %d: %+v", len(hist), hist)
+	}
+	if hist[0].Role != RoleAssistant || !strings.HasPrefix(hist[0].Content, A2UIMarker) {
+		t.Errorf("expected surface row, got role=%q content=%q", hist[0].Role, hist[0].Content)
+	}
+	for _, m := range hist {
+		if m.Role == RoleUser {
+			t.Errorf("REQ-003: reject MUST NOT append RoleUser row; got %+v", m)
+		}
+	}
+}

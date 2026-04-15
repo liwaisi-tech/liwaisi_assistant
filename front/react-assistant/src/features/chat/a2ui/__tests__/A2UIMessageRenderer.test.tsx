@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { I18nTestWrapper } from '../../../../test/i18n-test-utils';
-import { A2UIMessageRenderer } from '../A2UIMessageRenderer';
+import { A2UIMessageRenderer, parseResolvedAnswers } from '../A2UIMessageRenderer';
 import type { A2UIPayload, A2UIAction } from '../types';
 
 const wrapper = I18nTestWrapper;
@@ -134,6 +134,91 @@ describe('A2UIMessageRenderer', () => {
       { wrapper },
     );
     expect(container.querySelector('.streaming-cursor-inline')).toBeInTheDocument();
+  });
+
+  describe('parseResolvedAnswers', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it('parses the wrapped shape', () => {
+      const result = parseResolvedAnswers('{"answers":{"q1":"opt-a","q2":"opt-b"}}');
+      expect(result).toEqual({ q1: 'opt-a', q2: 'opt-b' });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('parses the flat shape from the current emitter (AC-FE-005 fixture)', () => {
+      const result = parseResolvedAnswers(
+        '{"q1":"es software yo soy el AI engineer","q2":"opt-c"}',
+      );
+      expect(result).toEqual({
+        q1: 'es software yo soy el AI engineer',
+        q2: 'opt-c',
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns {} for action envelope approve and does not warn', () => {
+      const result = parseResolvedAnswers('{"action":"approve"}');
+      expect(result).toEqual({});
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns {} for action envelope revise and does not warn', () => {
+      const result = parseResolvedAnswers('{"action":"revise","content":"tighten"}');
+      expect(result).toEqual({});
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('warns with JSON parse error on malformed JSON', () => {
+      const result = parseResolvedAnswers('{not-valid');
+      expect(result).toEqual({});
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'parseResolvedAnswers: JSON parse error',
+        '{not-valid',
+      );
+    });
+
+    it('warns with non-object JSON on array root', () => {
+      const result = parseResolvedAnswers('[1,2,3]');
+      expect(result).toEqual({});
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toBe('parseResolvedAnswers: non-object JSON');
+    });
+
+    it('warns with non-object JSON on null root', () => {
+      const result = parseResolvedAnswers('null');
+      expect(result).toEqual({});
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toBe('parseResolvedAnswers: non-object JSON');
+    });
+
+    it('coerces non-string values to string', () => {
+      const result = parseResolvedAnswers('{"q1":42,"q2":true}');
+      expect(result).toEqual({ q1: '42', q2: 'true' });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns {} for empty object with no warnings', () => {
+      const result = parseResolvedAnswers('{}');
+      expect(result).toEqual({});
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('truncates preview to 120 characters on parse error', () => {
+      const long = '{' + 'x'.repeat(500);
+      parseResolvedAnswers(long);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const preview = warnSpy.mock.calls[0][1] as string;
+      expect(preview.length).toBeLessThanOrEqual(120);
+    });
   });
 
   it('renders form and dispatches submit action', () => {

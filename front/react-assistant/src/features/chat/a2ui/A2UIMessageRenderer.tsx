@@ -591,24 +591,57 @@ interface QuestionnaireLockedProps {
   resolvedAt?: Date;
 }
 
-function parseResolvedAnswers(resolvedPayload: string): Record<string, string> {
+export function parseResolvedAnswers(resolvedPayload: string): Record<string, string> {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(resolvedPayload) as unknown;
-    if (!parsed || typeof parsed !== 'object') return {};
-    const obj = parsed as Record<string, unknown>;
-    // Submit payload shape: {"answers": {...}}
-    if (obj.answers && typeof obj.answers === 'object') {
-      const answers = obj.answers as Record<string, unknown>;
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(answers)) {
-        out[k] = typeof v === 'string' ? v : String(v ?? '');
-      }
-      return out;
-    }
-    return {};
+    parsed = JSON.parse(resolvedPayload);
   } catch {
+    console.warn(
+      'parseResolvedAnswers: JSON parse error',
+      resolvedPayload.slice(0, 120),
+    );
     return {};
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn(
+      'parseResolvedAnswers: non-object JSON',
+      typeof parsed,
+      String(resolvedPayload).slice(0, 120),
+    );
+    return {};
+  }
+
+  const obj = parsed as Record<string, unknown>;
+
+  // Wrapped shape — REQ-FE-001 (legacy / forward-compat).
+  if (obj.answers && typeof obj.answers === 'object' && !Array.isArray(obj.answers)) {
+    return coerceAll(obj.answers as Record<string, unknown>);
+  }
+
+  // Action envelope — REQ-FE-002. Approve/revise/reject MUST NOT be
+  // misread as a questionnaire answer map.
+  if ('action' in obj || 'content' in obj) {
+    return {};
+  }
+
+  // Flat shape — REQ-FE-001 (current emitter). Treat the top-level
+  // object as the answer map, coercing each value to string.
+  const out = coerceAll(obj);
+  if (Object.keys(out).length === 0 && Object.keys(obj).length > 0) {
+    console.warn(
+      'parseResolvedAnswers: unrecognized shape',
+      { keys: Object.keys(obj), preview: resolvedPayload.slice(0, 120) },
+    );
+  }
+  return out;
+}
+
+function coerceAll(o: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = typeof v === 'string' ? v : String(v ?? '');
+  }
+  return out;
 }
 
 function QuestionnaireLocked({

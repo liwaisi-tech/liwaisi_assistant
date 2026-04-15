@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -473,4 +475,62 @@ func TestUnifiedTopology_TAskDualFlagHistory(t *testing.T) {
 	if !tAsk.LLMConfig.SkipOutputHistory {
 		t.Error("t-ask LLMConfig.SkipOutputHistory = false would re-pollute the transcript with raw JSON (REQ-104, INV-101)")
 	}
+}
+
+// ── t-review A2UIPayloadBuilder wiring ──────────────────────────────────────
+// spec-process-bugfix-treview-surface-and-locked-parser.md REQ-BE-001/002.
+// Both topology factories that include t-review MUST attach a non-nil
+// A2UIPayloadBuilder that produces an A2UI payload containing all three
+// action-type strings. Missing builder → surface cannot flow through
+// c.History → legacy WARN branch fires → INV-005 violated.
+
+func assertTReviewBuilderEmitsActions(t *testing.T, factoryName string, c *cpn.CPN) {
+	t.Helper()
+
+	tReview, ok := c.Transitions["t-review"]
+	if !ok {
+		t.Fatalf("%s: missing t-review transition", factoryName)
+	}
+	if tReview.HITLConfig == nil {
+		t.Fatalf("%s: t-review HITLConfig is nil", factoryName)
+	}
+	if tReview.HITLConfig.A2UIPayloadBuilder == nil {
+		t.Fatalf("%s: t-review A2UIPayloadBuilder is nil (INV-005 regression — the legacy WARN branch would fire)", factoryName)
+	}
+	if tReview.HITLConfig.Prompt != "" {
+		t.Errorf("%s: t-review Prompt = %q, want empty string", factoryName, tReview.HITLConfig.Prompt)
+	}
+
+	payload, err := tReview.HITLConfig.A2UIPayloadBuilder(nil)
+	if err != nil {
+		t.Fatalf("%s: A2UIPayloadBuilder returned error: %v", factoryName, err)
+	}
+	if payload == nil {
+		t.Fatalf("%s: A2UIPayloadBuilder returned nil payload", factoryName)
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("%s: json.Marshal(payload) failed: %v", factoryName, err)
+	}
+	body := string(data)
+	for _, needle := range []string{"hitl:approve", "hitl:revise", "hitl:reject"} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("%s: A2UI payload missing %q; body=%s", factoryName, needle, body)
+		}
+	}
+}
+
+func TestDefaultTopologyFactory_TReview_BuilderEmitsAllActions(t *testing.T) {
+	// defaultTopologyFactory does not include t-review; skip if so. The hitl
+	// topology factory is the "default" surface that exposes t-review in
+	// the non-unified path (spec references "default topology" at line
+	// 241-245 of topologies.go — that block is inside hitlTopologyFactory).
+	c := hitlTopologyFactory("test-session")
+	assertTReviewBuilderEmitsActions(t, "hitlTopologyFactory", c)
+}
+
+func TestUnifiedTopologyFactory_TReview_BuilderEmitsAllActions(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	assertTReviewBuilderEmitsActions(t, "unifiedTopologyFactory", c)
 }

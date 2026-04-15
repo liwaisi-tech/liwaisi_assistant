@@ -296,6 +296,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		// rehydration can pair them (REQ-001/002/006). Without this sync,
 		// those responses are lost when the CPN fails.
 		if len(session.Root.History) > historyLen {
+			var newRows, assistantCount, userCount int
 			for _, m := range session.Root.History[historyLen:] {
 				// Assistant rows are always CPN-originated and always sync.
 				// User rows only sync when they are HITL responses (identified
@@ -321,7 +322,25 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 					Timestamp:       m.Timestamp,
 					ParentMessageID: m.ParentMessageID,
 				})
+				newRows++
+				switch m.Role {
+				case cpn.RoleAssistant:
+					assistantCount++
+				case cpn.RoleUser:
+					userCount++
+				}
 			}
+			// REQ-OBS-005 (spec-process-bugfix-treview-surface-and-locked-parser.md):
+			// emit a structured delta log so operators can correlate a CPN
+			// run's History growth with the Messages table. HITL cycles
+			// should produce assistant_count >= 1 (surface) and user_count
+			// in {0, 1} (0 on reject, 1 on approve/revise/submit).
+			slog.DebugContext(bgCtx, "history sync delta",
+				"session_id", sessionID,
+				"new_rows", newRows,
+				"assistant_count", assistantCount,
+				"user_count", userCount,
+			)
 		}
 
 		if runErr != nil {

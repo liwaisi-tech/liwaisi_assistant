@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -98,6 +99,15 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// resolves the HITL request via the regular HTTP endpoint.
 	customSurface := false
 	var a2uiRowID string
+	// REQ-OBS-001: log the surface-emit decision before gating. This is the
+	// entry point for diagnosing "why didn't this HITL get persisted?" —
+	// has_builder=false for t-review in healthy production indicates the
+	// topology regressed (see INV-005).
+	slog.DebugContext(ctx, "fireHITL surface decision",
+		"transition_id", t.ID,
+		"cpn_id", c.ID,
+		"has_builder", cfg.A2UIPayloadBuilder != nil,
+	)
 	if cfg.A2UIPayloadBuilder != nil {
 		if payload, err := cfg.A2UIPayloadBuilder(consumed); err == nil && payload != nil {
 			if encoded, mErr := json.Marshal(payload); mErr == nil {
@@ -158,6 +168,18 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 					Timestamp: time.Now(),
 				})
 				c.mu.Unlock()
+
+				// REQ-OBS-002: write-confirmation for the A2UI surface
+				// append. Pair this with REQ-OBS-004's
+				// "appendHITLResponseToHistory wrote row" line via the
+				// a2ui_row_id <-> parent_id handoff to trace a full HITL
+				// cycle in the log stream.
+				slog.InfoContext(ctx, "fireHITL appended A2UI surface to History",
+					"transition_id", t.ID,
+					"cpn_id", c.ID,
+					"a2ui_row_id", a2uiRowID,
+					"content_len", len(content),
+				)
 
 				customSurface = true
 			}
@@ -256,8 +278,19 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 		// linked to the A2UI surface so history rehydration can pair them
 		// and lock the questionnaire component. Skip when no A2UI surface
 		// was emitted — there's no parent to pair against.
+		//
+		// REQ-OBS-003: log the persistence decision before the gate. The
+		// appended=false case is diagnostic for "surface emit failed or
+		// was skipped, so the response row cannot be paired".
+		slog.DebugContext(ctx, "fireHITL hitl-response persistence decision",
+			"transition_id", t.ID,
+			"cpn_id", c.ID,
+			"a2ui_row_id", a2uiRowID,
+			"branch", "output_builder",
+			"appended", a2uiRowID != "",
+		)
 		if a2uiRowID != "" {
-			appendHITLResponseToHistory(c, resp, a2uiRowID)
+			appendHITLResponseToHistory(ctx, c, resp, a2uiRowID)
 		}
 
 		needCentaurian := false
@@ -315,9 +348,20 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// t-review-style HITL transitions (approve/revise/submit on surface
 	// tokens) keep the questionnaire-lock invariant. Skip when no A2UI
 	// surface was emitted — there's no parent to pair against.
+	//
+	// REQ-OBS-003: log the persistence decision before the gate. For
+	// t-review this line is the canonical signal that the transition-owned
+	// A2UIPayloadBuilder succeeded upstream and the response row will flow.
+	slog.DebugContext(ctx, "fireHITL hitl-response persistence decision",
+		"transition_id", t.ID,
+		"cpn_id", c.ID,
+		"a2ui_row_id", a2uiRowID,
+		"branch", "raw_deposit",
+		"appended", a2uiRowID != "",
+	)
 	if a2uiRowID != "" {
 		if resp, ok := tok.Payload.(HITLResponse); ok {
-			appendHITLResponseToHistory(c, resp, a2uiRowID)
+			appendHITLResponseToHistory(ctx, c, resp, a2uiRowID)
 		}
 	}
 
@@ -609,7 +653,12 @@ func formatRevisionPrompt(revised string) string {
 //     reaching this helper anyway).
 //
 // See spec-process-bugfix-a2ui-hitl-response-persistence.md REQ-001..007.
-func appendHITLResponseToHistory(c *CPN, resp HITLResponse, parentID string) {
+//
+// REQ-OBS-004 (spec-process-bugfix-treview-surface-and-locked-parser.md):
+// ctx is threaded through solely for log correlation — the function is
+// fire-and-forget (a History append) and does NOT honor ctx.Done() /
+// cancellation. GUD-005.
+func appendHITLResponseToHistory(ctx context.Context, c *CPN, resp HITLResponse, parentID string) {
 	var content string
 	switch resp.Action {
 	case HITLSubmit:
@@ -657,4 +706,14 @@ func appendHITLResponseToHistory(c *CPN, resp HITLResponse, parentID string) {
 	c.mu.Lock()
 	c.History = append(c.History, msg)
 	c.mu.Unlock()
+
+	// REQ-OBS-004: write-confirmation. parent_id couples this line to the
+	// REQ-OBS-002 surface-append line via a2ui_row_id <-> parent_id so a
+	// full HITL cycle is traceable end-to-end in the log stream.
+	slog.InfoContext(ctx, "appendHITLResponseToHistory wrote row",
+		"cpn_id", c.ID,
+		"parent_id", parentID,
+		"action", string(resp.Action),
+		"content_len", len(content),
+	)
 }

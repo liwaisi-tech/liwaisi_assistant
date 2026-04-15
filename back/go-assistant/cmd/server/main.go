@@ -314,6 +314,23 @@ func main() {
 					})
 				}
 
+				// REQ-BE-003 / INV-005: reaching this branch indicates a
+				// misconfigured t-review topology (missing A2UIPayloadBuilder
+				// on the transition). The surface is still emitted so the
+				// user is not stranded, but NO history row is persisted here
+				// — only the transition-owned A2UIPayloadBuilder path in
+				// fireHITL feeds c.History. A WARN line is the regression
+				// signal on-call greps for. PAT-003. No request-scoped ctx
+				// is available inside the event-subscriber callback, so we
+				// use context.Background() — trace correlation happens via
+				// the session_id / transition_id fields below.
+				slog.WarnContext(context.Background(), "legacy review-card emit path used (NOT persisted) — t-review topology may be misconfigured",
+					"session_id", sessionID,
+					"cpn_id", evt.CPNID,
+					"transition_id", evt.TransitionID,
+					"prompt_len", len(prompt),
+				)
+
 				a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
 				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
 					SessionID: sessionID,
@@ -571,41 +588,23 @@ func parseDuration(key string, defaultVal time.Duration) time.Duration {
 
 // buildHITLReviewCard constructs an A2UI payload for HITL review.
 // The backend drives the UI: approve, request changes, or discard.
-func buildHITLReviewCard(prompt, transitionID string) string {
-	type comp struct {
-		Type     string         `json:"type"`
-		Props    map[string]any `json:"props,omitempty"`
-		Children []comp         `json:"children,omitempty"`
-	}
-	type payload struct {
-		Components []comp `json:"components"`
-	}
-
-	p := payload{
-		Components: []comp{
-			{Type: "card", Props: map[string]any{"title": "Review Required"}, Children: []comp{
-				{Type: "text", Props: map[string]any{"content": prompt}},
-				{Type: "divider"},
-				{Type: "text", Props: map[string]any{"content": "Choose an action to continue:", "variant": "secondary"}},
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✓ Approve", "variant": "success",
-				"actionType": "hitl:approve", "id": transitionID,
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✎ Request Changes", "variant": "primary",
-				"actionType": "hitl:revise", "id": transitionID,
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✗ Discard", "variant": "danger",
-				"actionType": "hitl:reject", "id": transitionID,
-			}},
-		},
-	}
-
-	data, err := json.Marshal(p)
+//
+// This is a thin wrapper over reviewCardPayload (topologies.go). The
+// transition-owned A2UIPayloadBuilder on t-review uses reviewCardPayload
+// directly via buildReviewA2UIPayload. This legacy-branch wrapper exists so
+// cmd/server/main.go's defensive WARN-and-emit fallback (PAT-003) produces
+// a byte-identical card shape if a future t-review ships without its
+// A2UIPayloadBuilder.
+//
+// The `prompt` argument is retained for call-site compatibility but is
+// ignored — the card's primary text is fixed in reviewCardPayload so live
+// and rehydrated renders converge. If a custom prompt is ever needed in
+// this branch, it should be threaded through reviewCardPayload instead.
+func buildHITLReviewCard(_, transitionID string) string {
+	payload := reviewCardPayload(transitionID)
+	data, err := json.Marshal(payload)
 	if err != nil {
-		return prompt // fallback to plain text
+		return "" // caller's WARN already fired; swallow to avoid stranding the SSE stream
 	}
 	return "$$a2ui:" + string(data)
 }
