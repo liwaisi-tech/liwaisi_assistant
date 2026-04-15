@@ -65,13 +65,15 @@
   },
   "model": {
     "title": "Preferencia de modelo de IA",
-    "description": "Elige el modelo de IA predeterminado para tus conversaciones.",
+    "description": "Este modelo ejecuta cada tarea que brae hace por ti. El predeterminado es Gemma 4 31B, servido por Google vía OpenRouter — un equilibrio entre costo y capacidad. Puedes cambiarlo más tarde en Configuración.",
     "advanced": "Avanzado: ajustes por rol",
     "appliesToAll": "Este modelo se encarga de todas las tareas. Personaliza los modelos por tarea más abajo si quieres un control más fino.",
     "keepDefaults": "Mantener los valores recomendados",
     "modeSimple": "Modo simple",
     "modeAdvanced": "Modo avanzado",
-    "resetToSingle": "Restablecer a modelo único"
+    "resetToSingle": "Restablecer a modelo único",
+    "continue": "Continuar",
+    "required": "Elige un modelo para continuar"
   },
   "personality": {
     "title": "Elige el estilo de tu IA",

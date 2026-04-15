@@ -17,6 +17,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// writeErrorCode writes a JSON error response with a stable machine-readable
+// error code alongside the human-readable message. Used for client-facing
+// error classifications the frontend branches on (e.g.
+// ONBOARDING_MODEL_REQUIRED from REQ-ONB-003).
+func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}
+
 // SessionResponse is the JSON response for session operations.
 type SessionResponse struct {
 	ID        string `json:"id"`

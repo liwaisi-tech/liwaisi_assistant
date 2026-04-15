@@ -33,6 +33,10 @@ export interface ModelsResponse {
   default_model: string;
   available_models: string[];
   roles: ModelRole[];
+  // Forward-compatible fields per spec-architecture-model-selection-centralization.md
+  // §4 — once the backend returns these, the UI prefers them.
+  default?: string;
+  available?: string[];
 }
 
 export type PersonalityPreset = 'balanced' | 'creative' | 'precise' | 'custom' | '';

@@ -65,13 +65,15 @@
   },
   "model": {
     "title": "AI Model Preference",
-    "description": "Choose the default AI model for your conversations.",
+    "description": "This model runs every task brae performs for you. The default is Gemma 4 31B, served by Google via OpenRouter — a balanced choice for cost and capability. You can change it later from Settings.",
     "advanced": "Advanced: Per-role overrides",
     "appliesToAll": "This model handles every task. Customize per-task models below if you want finer control.",
     "keepDefaults": "Keep recommended defaults",
     "modeSimple": "Simple mode",
     "modeAdvanced": "Advanced mode",
-    "resetToSingle": "Reset to single model"
+    "resetToSingle": "Reset to single model",
+    "continue": "Continue",
+    "required": "Pick a model to continue"
   },
   "personality": {
     "title": "Choose Your AI Style",

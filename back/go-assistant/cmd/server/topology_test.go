@@ -41,9 +41,9 @@ func TestHITLTopology_HITLTransitionHasConfig(t *testing.T) {
 		t.Fatal("t-review HITLConfig is nil")
 	}
 
-	if tReview.HITLConfig.Prompt == "" {
-		t.Error("t-review HITLConfig.Prompt is empty")
-	}
+	// HITLConfig.Prompt is intentionally empty: the A2UI Review Required
+	// card labels itself and a plain-text bubble would be visual noise.
+	// See topologies.go for the rationale.
 
 	// Channel must be nil — wired by SessionService.CreateSession.
 	if tReview.HITLConfig.Channel != nil {
@@ -111,6 +111,10 @@ func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
 	}
 }
 
+// TestUnifiedTopology_ClassifierConfig asserts REQ-CFG-003/004: the
+// authored LLMConfig expresses intent via Role, NOT Model. The Model field
+// is stamped by applyUserModelPreferences at session-resolve time and MUST
+// remain empty at topology-factory time.
 func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
 
@@ -121,8 +125,11 @@ func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	if tc.LLMConfig == nil {
 		t.Fatal("t-classify LLMConfig is nil")
 	}
-	if tc.LLMConfig.Model != "classifier" {
-		t.Errorf("t-classify model = %q, want 'classifier'", tc.LLMConfig.Model)
+	if tc.LLMConfig.Model != "" {
+		t.Errorf("t-classify Model = %q, want empty (resolver writes it per REQ-CFG-003)", tc.LLMConfig.Model)
+	}
+	if tc.LLMConfig.Role != "classifier" {
+		t.Errorf("t-classify Role = %q, want 'classifier' (REQ-CFG-004)", tc.LLMConfig.Role)
 	}
 	if !tc.LLMConfig.RequireJSON {
 		t.Error("t-classify should have RequireJSON=true")
@@ -132,6 +139,32 @@ func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	}
 	if tc.LLMConfig.MaxTokens != 128 {
 		t.Errorf("t-classify MaxTokens = %d, want 128", tc.LLMConfig.MaxTokens)
+	}
+}
+
+// TestUnifiedTopology_TAskConfig asserts REQ-CFG-003/004 and REQ-PAR-004
+// for t-ask: Role="structured", Model="", ResponseFmtRequired=true.
+func TestUnifiedTopology_TAskConfig(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	tAsk, ok := c.Transitions["t-ask"]
+	if !ok {
+		t.Fatal("missing t-ask transition")
+	}
+	if tAsk.LLMConfig == nil {
+		t.Fatal("t-ask LLMConfig is nil")
+	}
+	if tAsk.LLMConfig.Model != "" {
+		t.Errorf("t-ask Model = %q, want empty (resolver writes it)", tAsk.LLMConfig.Model)
+	}
+	if tAsk.LLMConfig.Role != "structured" {
+		t.Errorf("t-ask Role = %q, want 'structured'", tAsk.LLMConfig.Role)
+	}
+	if !tAsk.LLMConfig.RequireJSON {
+		t.Error("t-ask should have RequireJSON=true")
+	}
+	if !tAsk.LLMConfig.ResponseFmtRequired {
+		t.Error("t-ask should have ResponseFmtRequired=true (REQ-PAR-004)")
 	}
 }
 

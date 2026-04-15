@@ -32,11 +32,16 @@ export function ModelStep({
     getModels()
       .then((res) => {
         if (cancelled) return;
-        setDefaultModel(res.default_model);
+        // Prefer the spec's canonical names (default / available) when the
+        // backend emits them; fall back to the legacy fields so the UI keeps
+        // working during the rollout window.
+        const dflt = res.default ?? res.default_model;
+        const avail = res.available ?? res.available_models ?? [dflt];
+        setDefaultModel(dflt);
         setRoles(res.roles);
-        setAvailableModels(res.available_models ?? [res.default_model]);
+        setAvailableModels(avail);
         if (!selectedModel) {
-          onSelectModel(res.default_model);
+          onSelectModel(dflt);
         }
         setLoading(false);
       })
@@ -129,6 +134,27 @@ export function ModelStep({
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {t('model.appliesToAll')}
             </p>
+            {!selectedModel && (
+              <div
+                className="flex items-center gap-1.5 mt-1"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: '#f59e0b',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: '#f59e0b',
+                    boxShadow: '0 0 6px rgba(245,158,11,0.6)',
+                    animation: 'welcome-fade 0.4s ease-out forwards',
+                  }}
+                />
+                <span className="text-[10px] uppercase tracking-wider">
+                  {t('model.required')}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Advanced toggle */}

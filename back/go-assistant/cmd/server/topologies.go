@@ -3,13 +3,27 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
+
+// thinkBlockRe matches reasoning-mode <think>…</think> preambles emitted by
+// models like Gemma 4 31B. Case-insensitive, dot-matches-newline, non-greedy.
+// Compiled once to avoid per-call regexp.Compile cost.
+//
+// See spec-architecture-model-selection-centralization.md §9 for sample.
+var thinkBlockRe = regexp.MustCompile(`(?is)<think[^>]*>.*?</think>`)
+
+// fencedJSONRe matches a ```json … ``` fenced code block (case-insensitive
+// on the language tag). When present, only the inner content is considered
+// for JSON extraction.
+var fencedJSONRe = regexp.MustCompile("(?is)```(?:json)?\\s*(\\{.*?})\\s*```")
 
 // defaultClassifierConfidenceThreshold is the minimum Confidence the classifier
 // must emit for a task flagged as fully-specified to skip the clarification
@@ -339,7 +353,9 @@ Your certainty about BOTH the intent choice AND (for tasks) the specification ju
 
 Output contract: respond with ONLY the JSON object. The first character of your response MUST be "{" and the last character MUST be "}". No preamble, no code fences, no trailing text.`)
 	tClassify.LLMConfig = &cpn.LLMConfig{
-		Model:        "classifier",
+		// REQ-CFG-003/004: Role carries routing intent; Model is filled in
+		// by applyUserModelPreferences at session-resolve time.
+		Role:         "classifier",
 		MaxTokens:    128,
 		Temperature:  0.0,
 		RequireJSON:  true,
@@ -495,11 +511,16 @@ The <PLACEHOLDER> markers above are illustrative only. Your output must contain 
 ═══ OUTPUT FORMAT (CRITICAL) ═══
 Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, no preamble, no markdown code fences, no trailing commentary. The very first character of your response MUST be "{" and the very last character MUST be "}". Any text before "{" or after "}" will break the parser.`)
 	tAsk.LLMConfig = &cpn.LLMConfig{
-		Model:        "structured",
-		MaxTokens:    envInt("MAX_TOKENS_ASK", 1024),
-		Temperature:  0.3,
-		RequireJSON:  true,
-		StreamOutput: false,
+		// REQ-CFG-003/004: Role drives per-role override lookup in
+		// applyUserModelPreferences. Model is written by the resolver.
+		Role:                "structured",
+		MaxTokens:           envInt("MAX_TOKENS_ASK", 1024),
+		Temperature:         0.3,
+		RequireJSON:         true,
+		// REQ-PAR-004: verify JSON-ness of the response and retry once with
+		// a tighter directive if the model emits prose or reasoning tokens.
+		ResponseFmtRequired: true,
+		StreamOutput:        false,
 		// Dual-flag configuration (REQ-104, spec-process-bugfix-a2ui-rehydration-completion.md):
 		//   SkipHistory:       false → t-ask MUST read the user's message from
 		//                              c.History on the input side. Its consumed
@@ -636,76 +657,197 @@ type questionnaireOption struct {
 	Label string `json:"label"`
 }
 
-// extractJSONObject pulls the outermost {...} object out of a string that may
-// be wrapped in chatty prose, fenced code blocks, or other preamble. Models
-// asked for JSON-only sometimes prepend "Claro, aquí tienes:" or similar; this
-// makes the parser tolerant without weakening the schema.
+// extractJSONObject pulls a usable JSON object out of a string that may be
+// wrapped in chatty prose, reasoning-mode <think>…</think> preambles, or
+// fenced code blocks. Models asked for JSON-only sometimes prepend
+// "Claro, aquí tienes:" or similar; Gemma 4 31B emits <think> blocks
+// containing brace-balanced but semantically garbage pseudo-JSON. This
+// function's tolerance is the regression hotspot — it MUST survive every
+// shape in the parser test matrix.
+//
+// Extraction pipeline (REQ-PAR-001):
+//  1. Strip every <think>…</think> block (case-insensitive, dot matches
+//     newlines, non-greedy).
+//  2. If a ```json fence is present with a balanced object inside, prefer
+//     the fenced content.
+//  3. Scan forward through the remaining string collecting every balanced
+//     {…} object. Return the FIRST object that decodes into a usable
+//     questionnaireSpec (non-empty Questions OR Assumptions OR RestatedGoal).
+//     If none is usable, return the first syntactically balanced object so
+//     the caller's existing "no JSON" branch still fires for truly empty
+//     input.
+//
+// The inner brace-balancer loop (quote-aware, backslash-aware) is preserved
+// verbatim — it was never the bug; the extractor's single-shot scan was.
 func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	if start < 0 {
-		return ""
+	// (1) Strip reasoning-mode preambles that frequently contain
+	// brace-balanced junk. This MUST happen before the scan so the junk
+	// can never win the first-candidate race.
+	s = thinkBlockRe.ReplaceAllString(s, "")
+
+	// (2) Prefer the content of a ```json fence. Go regex is greedy-safe
+	// under (?s); the non-greedy inside captures the shortest balanced
+	// object, which matches Gemma's observed shape.
+	if m := fencedJSONRe.FindStringSubmatch(s); len(m) == 2 {
+		// The fence's inner content is already a candidate object; fall
+		// through to the scan-forward loop below operating on that slice,
+		// so we still get schema-aware preference within the fence.
+		s = m[1]
 	}
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		if inString {
-			if escaped {
-				escaped = false
+
+	// (3) Scan forward, collecting balanced candidates.
+	var firstSyntactic string
+	cursor := 0
+	for cursor < len(s) {
+		start := strings.IndexByte(s[cursor:], '{')
+		if start < 0 {
+			break
+		}
+		start += cursor
+
+		// ── Quote-aware brace balancer (inner loop preserved) ─────────
+		depth := 0
+		inString := false
+		escaped := false
+		end := -1
+		for i := start; i < len(s); i++ {
+			c := s[i]
+			if inString {
+				if escaped {
+					escaped = false
+					continue
+				}
+				if c == '\\' {
+					escaped = true
+					continue
+				}
+				if c == '"' {
+					inString = false
+				}
 				continue
 			}
-			if c == '\\' {
-				escaped = true
-				continue
+			switch c {
+			case '"':
+				inString = true
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					end = i
+				}
 			}
-			if c == '"' {
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[start : i+1]
+			if end >= 0 {
+				break
 			}
 		}
+		if end < 0 {
+			// No matching close brace from this start: unterminated.
+			// Nothing further in s can be balanced either — bail.
+			break
+		}
+
+		candidate := s[start : end+1]
+		if firstSyntactic == "" {
+			firstSyntactic = candidate
+		}
+
+		// Schema-aware preference: accept the first candidate that decodes
+		// into a usable questionnaireSpec. Stop scanning when one matches.
+		var spec questionnaireSpec
+		if err := json.Unmarshal([]byte(candidate), &spec); err == nil {
+			if spec.RestatedGoal != "" || len(spec.Assumptions) > 0 || len(spec.Questions) > 0 {
+				return candidate
+			}
+		}
+
+		cursor = end + 1
 	}
-	return ""
+
+	// Nothing decoded into a usable spec. Return the first balanced
+	// candidate if we found one — the caller's Unmarshal will surface
+	// a more specific error than "no JSON found".
+	return firstSyntactic
 }
 
 // firstQuestionnaireFromTokens decodes the first ColorJSON / string-payload
 // token in consumed as a questionnaireSpec. Tolerates leading/trailing prose
 // around the JSON object.
+//
+// Error shape is load-bearing: REQ-PAR-002 requires that callers (namely
+// buildClarifyA2UIPayload) can surface the first 512 bytes of the raw
+// response when decoding fails, so the returned error ALWAYS wraps the raw
+// payload prefix (truncated) when one was present.
 func firstQuestionnaireFromTokens(consumed []cpn.Token) (questionnaireSpec, error) {
 	for i := range consumed {
 		s, ok := consumed[i].Payload.(string)
 		if !ok {
 			continue
 		}
+		if strings.TrimSpace(s) == "" {
+			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: empty LLM output: raw=%q", rawPayloadPrefix(s))
+		}
 		jsonStr := extractJSONObject(s)
 		if jsonStr == "" {
-			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: no JSON object found in payload")
+			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: no JSON object found in payload: raw=%q", rawPayloadPrefix(s))
 		}
 		var spec questionnaireSpec
 		if err := json.Unmarshal([]byte(jsonStr), &spec); err != nil {
-			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: %w", err)
+			return questionnaireSpec{}, fmt.Errorf("decode questionnaire: %w: raw=%q", err, rawPayloadPrefix(s))
 		}
 		return spec, nil
 	}
 	return questionnaireSpec{}, fmt.Errorf("no questionnaire token found")
 }
 
+// rawPayloadPrefix returns the first 512 bytes of s so a decode error can
+// surface what the model actually emitted without dumping a huge payload
+// into the error string. 512 is the cap mandated by REQ-PAR-002.
+func rawPayloadPrefix(s string) string {
+	const max = 512
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}
+
+// sessionIDFromTokens best-effort extracts the session id from the first
+// consumed token that carries one. Used only for structured logging.
+func sessionIDFromTokens(consumed []cpn.Token) string {
+	for i := range consumed {
+		if consumed[i].SessionID != "" {
+			return consumed[i].SessionID
+		}
+	}
+	return ""
+}
+
 // buildClarifyA2UIPayload converts the t-ask questionnaire JSON into the A2UI
 // component payload that the React renderer understands.
+//
+// Contract (REQ-PAR-002): on unrecoverable decode failure, returns (nil, err)
+// — NEVER (nil, nil). The error wraps the first 512 bytes of the raw LLM
+// output so operators can diagnose the failing model directly from logs. A
+// structured slog.Error accompanies the return so even callers that
+// swallow the error still see the payload prefix in the log stream.
 func buildClarifyA2UIPayload(consumed []cpn.Token) (any, error) {
 	spec, err := firstQuestionnaireFromTokens(consumed)
 	if err != nil {
+		// Structured log carries the same identity fields the LLM-call
+		// log emits (REQ-OBS-001) so the failure can be correlated back
+		// to a specific session/transition.
+		var raw string
+		for i := range consumed {
+			if s, ok := consumed[i].Payload.(string); ok {
+				raw = rawPayloadPrefix(s)
+				break
+			}
+		}
+		slog.Error("clarify payload build failed",
+			"session_id", sessionIDFromTokens(consumed),
+			"raw_prefix", raw,
+			"error", err.Error(),
+		)
 		return nil, err
 	}
 

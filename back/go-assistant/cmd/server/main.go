@@ -131,10 +131,13 @@ func main() {
 	if apiKey == "" {
 		logger.Warn("OPENROUTER_API_KEY not set; LLM calls will fail")
 	}
-	defaultModel := resolveConfig("default_model")
+	// REQ-MIG-003: record the single product default at startup. The legacy
+	// "default_model" config key and its DEFAULT_MODEL env variable were
+	// removed; PRODUCT_DEFAULT_MODEL is the only default, unconditionally.
+	logger.Info("using product default model", "model", openrouter.PRODUCT_DEFAULT_MODEL)
 
 	// ── Driven adapters ─────────────────────────────────────────────────
-	llmClient := openrouter.NewClient(apiKey, defaultModel)
+	llmClient := openrouter.NewClient(apiKey, openrouter.PRODUCT_DEFAULT_MODEL)
 	// Per-call audit recorder (writes one row per LLM invocation to llm_calls).
 	// Only enabled when persistence is configured.
 	var callRecorder openrouter.CallRecorder
@@ -153,12 +156,15 @@ func main() {
 	}
 
 	// ── Hot-reload: swap LLM client when config changes ─────────────────
+	// REQ-CFG-002: default_model is no longer a platform config key; only
+	// the API key triggers a client swap. Model selection is resolved
+	// per-session from user preferences with PRODUCT_DEFAULT_MODEL as the
+	// floor (see internal/app/session_service.go::applyUserModelPreferences).
 	if configProvider != nil {
 		configProvider.OnChange(func(key, _ string) {
-			if key == "openrouter_api_key" || key == "default_model" {
+			if key == "openrouter_api_key" {
 				newAPIKey := configProvider.Get("openrouter_api_key")
-				newModel := configProvider.Get("default_model")
-				newClient := openrouter.NewClient(newAPIKey, newModel)
+				newClient := openrouter.NewClient(newAPIKey, openrouter.PRODUCT_DEFAULT_MODEL)
 				newClient.CallRecorder = callRecorder
 				holder.Swap(newClient)
 				logger.Info("LLM client hot-reloaded", "trigger_key", key)
@@ -273,6 +279,41 @@ func main() {
 			srv.Broker().PublishEvent(sessionID, &evt)
 
 			if !transitionOwnsSurface {
+				// REQ-PAR-003: when the A2UI questionnaire builder on
+				// t-clarify fails (e.g. the selected model emitted
+				// undecodable JSON), fireHITL falls back to
+				// CustomSurface:false and the integration layer emits the
+				// generic Review Required card above. That alone strands
+				// the user — they see a card with no context. Here we
+				// also publish a plain-text banner (no $$a2ui: prefix, so
+				// it renders as a regular assistant bubble) explaining
+				// what happened and how to recover.
+				//
+				// Design note: we use transition identity (t-clarify) as
+				// the signal rather than a new side-channel field on
+				// HITLRequestedPayload, because the invariant "t-clarify
+				// always owns its surface on success" is already baked
+				// into the topology. A CustomSurface:false for t-clarify
+				// is therefore a reliable proxy for an A2UIPayloadBuilder
+				// failure without touching cpn/hitl.go.
+				if evt.TransitionID == "t-clarify" {
+					const banner = "Your selected model did not return a valid questionnaire. You can approve the request as-is, reject it, or change the model in Settings."
+					srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     evt.CPNID,
+						CPNRole:   "review",
+						Content:   banner,
+						Done:      false,
+					})
+					srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     evt.CPNID,
+						CPNRole:   "review",
+						Content:   "",
+						Done:      true,
+					})
+				}
+
 				a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
 				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
 					SessionID: sessionID,

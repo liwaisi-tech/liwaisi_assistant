@@ -69,11 +69,15 @@ export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
     }
   }
   if (resolutions.size === 0) return messages;
-  return messages.map((m) => {
+  const result: ChatMessage[] = [];
+  for (const m of messages) {
+    // Drop HITL response rows — their content is surfaced via the parent
+    // A2UI row's resolvedPayload, not as a standalone user bubble.
+    if (m.role === 'user' && m.parentMessageId) continue;
     const hit = resolutions.get(m.id);
-    if (!hit) return m;
-    return { ...m, resolvedPayload: hit.payload, resolvedAt: hit.at };
-  });
+    result.push(hit ? { ...m, resolvedPayload: hit.payload, resolvedAt: hit.at } : m);
+  }
+  return result;
 }
 
 function narrowToBackendState(s: SessionState | BackendSessionState): BackendSessionState {

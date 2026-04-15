@@ -17,6 +17,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 )
 
 // rehydrateTimeout bounds the time a single-flight rehydration can block the
@@ -777,35 +778,54 @@ func (s *SessionService) resolveRegionalVariant(ctx context.Context, userID stri
 	return prompts.DefaultVariant(rec.PreferredLanguage)
 }
 
-// applyUserModelPreferences rewrites LLMConfig.Model on every transition in
-// root using the user's persisted preferences. Best-effort: any error path
-// leaves the topology unchanged so role-key env fallback remains intact
-// (REQ-001..REQ-004, GUD-001, GUD-002, PAT-001).
+// applyUserModelPreferences stamps LLMConfig.Model on every transition in
+// root with the concrete OpenRouter model id the user's preferences dictate.
+//
+// Precedence (highest wins), per REQ-CFG-005:
+//  1. UserRecord.ModelOverrides[LLMConfig.Role] when Role is non-empty and
+//     the override is non-empty.
+//  2. UserRecord.PreferredModel when non-empty.
+//  3. openrouter.PRODUCT_DEFAULT_MODEL.
+//
+// This function is the ONLY legitimate mutator of LLMConfig.Model — all
+// topology authors leave it empty and express intent through Role. No ENV
+// lookup occurs here (REQ-CFG-002).
+//
+// Error handling is best-effort: if the user cannot be fetched, every LLM
+// transition is stamped with PRODUCT_DEFAULT_MODEL so the session still
+// runs with a well-defined model. Callers MUST NOT attempt to re-resolve
+// the model elsewhere (GUD-001).
 func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cpn.CPN, userID string) {
-	if s.persist == nil || s.persist.Users == nil || userID == "" {
-		return
-	}
-	rec, err := s.persist.Users.GetByID(ctx, userID)
-	if err != nil {
-		// Anonymous / pre-onboarding users are expected here; non-fatal.
-		return
-	}
-	if rec.PreferredModel == "" && len(rec.ModelOverrides) == 0 {
-		return
+	var rec *persist.UserRecord
+	if s.persist != nil && s.persist.Users != nil && userID != "" {
+		// Anonymous / pre-onboarding users are expected to yield an error
+		// here; we treat that as "no preference" and fall through.
+		rec, _ = s.persist.Users.GetByID(ctx, userID)
 	}
 	for _, t := range root.Transitions {
-		if t.LLMConfig == nil {
+		if t.Kind != cpn.NodeKindLLM || t.LLMConfig == nil {
 			continue
 		}
-		roleKey := t.LLMConfig.Model // may be "" or a role key like "classifier"
-		if override, ok := rec.ModelOverrides[roleKey]; ok && override != "" {
-			t.LLMConfig.Model = override
-			continue
+		t.LLMConfig.Model = resolveModelForUser(rec, t.LLMConfig.Role)
+	}
+}
+
+// resolveModelForUser applies the three-level precedence cascade. Exported
+// as a package-visible helper to keep applyUserModelPreferences readable and
+// to give tests a tiny pure function to exercise precedence without building
+// a full CPN.
+func resolveModelForUser(rec *persist.UserRecord, role string) string {
+	if rec != nil {
+		if role != "" {
+			if m, ok := rec.ModelOverrides[role]; ok && m != "" {
+				return m
+			}
 		}
 		if rec.PreferredModel != "" {
-			t.LLMConfig.Model = rec.PreferredModel
+			return rec.PreferredModel
 		}
 	}
+	return openrouter.PRODUCT_DEFAULT_MODEL
 }
 
 // injectPersonality loads the user's personality and prefixes all LLM system prompts.

@@ -97,6 +97,19 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 		overrides = map[string]string{}
 	}
 
+	// REQ-ONB-004: a legacy user whose model preference is unset (empty
+	// preferred_model AND no role overrides) is treated as mid-onboarding
+	// regardless of OnboardingCompletedAt, so the frontend router routes
+	// them back into the wizard to pick a model. Once the user re-completes
+	// onboarding and sets preferred_model, OnboardingCompletedAt is what
+	// governs the flag again. We do NOT overwrite the DB — the user is
+	// allowed to keep their OnboardingCompletedAt timestamp; this flag is
+	// purely derived for the response.
+	onboardingCompleted := rec.OnboardingCompletedAt != nil
+	if rec.PreferredModel == "" && len(overrides) == 0 {
+		onboardingCompleted = false
+	}
+
 	writeJSON(w, http.StatusOK, UserProfileResponse{
 		ID:      rec.ID,
 		Email:   rec.Email,
@@ -108,7 +121,7 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 			PreferredModel:    rec.PreferredModel,
 			ModelOverrides:    overrides,
 		},
-		OnboardingCompleted: rec.OnboardingCompletedAt != nil,
+		OnboardingCompleted: onboardingCompleted,
 		IsAdmin:             h.isAdminEmail(rec.Email),
 		CreatedAt:           rec.CreatedAt.Format(time.RFC3339),
 	})
@@ -212,6 +225,15 @@ func (h *Handlers) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reque
 	var req CompleteOnboardingRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// REQ-ONB-003: preferred_model is REQUIRED. A silent accept of the
+	// default would undermine the privacy-adjacent moment onboarding exists
+	// to surface (see spec-architecture-model-selection-centralization.md
+	// rationale §7 "Why onboarding, not a silent default").
+	if req.PreferredModel == "" {
+		writeErrorCode(w, http.StatusBadRequest, "ONBOARDING_MODEL_REQUIRED", "preferred_model is required")
 		return
 	}
 

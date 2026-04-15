@@ -235,19 +235,26 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 {t('skip')}
               </button>
             )}
-            {step > 0 && step < READY_STEP && (
-              <button
-                onClick={goNext}
-                className="px-6 py-2 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer hover:shadow-lg"
-                style={{
-                  backgroundColor: 'var(--accent)',
-                  color: '#0a0a0f',
-                  boxShadow: '0 0 12px var(--accent-glow)',
-                }}
-              >
-                {t('next')}
-              </button>
-            )}
+            {step > 0 && step < READY_STEP && (() => {
+              // AC-008: only the Model step (index 3) is gated on a non-empty
+              // selection. Every other step carries its own defaults.
+              const nextDisabled = step === 3 && !state.model;
+              return (
+                <button
+                  onClick={goNext}
+                  disabled={nextDisabled}
+                  className="px-6 py-2 rounded-lg text-xs font-medium transition-all duration-200 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: 'var(--accent)',
+                    color: '#0a0a0f',
+                    boxShadow: nextDisabled ? 'none' : '0 0 12px var(--accent-glow)',
+                    cursor: nextDisabled ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {t('next')}
+                </button>
+              );
+            })()}
           </div>
         </div>
 

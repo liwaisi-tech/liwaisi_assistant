@@ -447,7 +447,7 @@ func TestOpenRouterClient_Complete_ModelResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	want := "google/gemini-2.0-flash-001"
+	want := PRODUCT_DEFAULT_MODEL
 	if gotModel != want {
 		t.Errorf("resolved model = %q, want %q", gotModel, want)
 	}
@@ -1852,8 +1852,8 @@ func TestModelRegistry_ThinkingEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("ModelRegistry missing 'thinking' entry")
 	}
-	if model != "anthropic/claude-opus-4-6" {
-		t.Errorf("thinking model = %q, want anthropic/claude-opus-4-6", model)
+	if model != PRODUCT_DEFAULT_MODEL {
+		t.Errorf("thinking model = %q, want %q", model, PRODUCT_DEFAULT_MODEL)
 	}
 }
 
@@ -1868,16 +1868,38 @@ func TestBuildModelRegistry_Defaults(t *testing.T) {
 	}
 }
 
-func TestBuildModelRegistry_EnvOverride(t *testing.T) {
-	env := map[string]string{"MODEL_CLASSIFIER": "custom/my-classifier"}
-	registry := buildModelRegistry(func(key string) string { return env[key] })
+// TestBuildModelRegistry_IgnoresEnv asserts REQ-CFG-002: removing the
+// legacy per-role env variables means buildModelRegistry MUST NOT consult
+// the env function at all. The test uses an env function that returns a
+// sentinel for EVERY key; if buildModelRegistry ever looked up a key, the
+// sentinel would leak into the registry and the assertion would fail.
+func TestBuildModelRegistry_IgnoresEnv(t *testing.T) {
+	callCount := 0
+	registry := buildModelRegistry(func(string) string {
+		callCount++
+		return "custom/sentinel"
+	})
 
-	if got := registry["classifier"]; got != "custom/my-classifier" {
-		t.Errorf("classifier = %q, want %q", got, "custom/my-classifier")
+	if callCount != 0 {
+		t.Errorf("buildModelRegistry must not read env; called %d times", callCount)
 	}
-	// Other keys must remain at their defaults.
-	if got := registry["reasoning"]; got != DefaultModelRegistry["reasoning"] {
-		t.Errorf("reasoning = %q, want default %q", got, DefaultModelRegistry["reasoning"])
+	for role, got := range registry {
+		if got != PRODUCT_DEFAULT_MODEL {
+			t.Errorf("registry[%q] = %q, want %q (env overrides must be ignored)", role, got, PRODUCT_DEFAULT_MODEL)
+		}
+	}
+}
+
+// TestProductDefaultModel asserts REQ-CFG-001: PRODUCT_DEFAULT_MODEL is a
+// compile-time constant pinned to Gemma 4 31B.
+func TestProductDefaultModel(t *testing.T) {
+	if PRODUCT_DEFAULT_MODEL != "google/gemma-4-31b-it" {
+		t.Fatalf("PRODUCT_DEFAULT_MODEL = %q, want google/gemma-4-31b-it", PRODUCT_DEFAULT_MODEL)
+	}
+	for role, model := range DefaultModelRegistry {
+		if model != PRODUCT_DEFAULT_MODEL {
+			t.Errorf("DefaultModelRegistry[%q] = %q, want %q", role, model, PRODUCT_DEFAULT_MODEL)
+		}
 	}
 }
 
@@ -2103,28 +2125,21 @@ func TestCompleteStream_TokenLedgerRecorded(t *testing.T) {
 	}
 }
 
-func TestBuildModelRegistry_AllOverrides(t *testing.T) {
-	env := map[string]string{
-		"MODEL_CLASSIFIER":   "custom/classifier",
-		"MODEL_STRUCTURED":   "custom/structured",
-		"MODEL_REASONING":    "custom/reasoning",
-		"MODEL_LONG_CONTEXT": "custom/long-context",
-		"MODEL_SUMMARIZE":    "custom/summarize",
-		"MODEL_THINKING":     "custom/thinking",
-	}
-	registry := buildModelRegistry(func(key string) string { return env[key] })
+// TestBuildModelRegistry_AllRolesMapToDefault asserts REQ-CFG-001: every
+// role in DefaultModelRegistry resolves to PRODUCT_DEFAULT_MODEL. Replaces
+// the pre-spec TestBuildModelRegistry_AllOverrides, which exercised the
+// removed MODEL_* env override path.
+func TestBuildModelRegistry_AllRolesMapToDefault(t *testing.T) {
+	registry := buildModelRegistry(func(string) string { return "" })
 
-	want := map[string]string{
-		"classifier":   "custom/classifier",
-		"structured":   "custom/structured",
-		"reasoning":    "custom/reasoning",
-		"long-context": "custom/long-context",
-		"summarize":    "custom/summarize",
-		"thinking":     "custom/thinking",
-	}
-	for key, wantModel := range want {
-		if got := registry[key]; got != wantModel {
-			t.Errorf("registry[%q] = %q, want %q", key, got, wantModel)
+	for _, role := range []string{"classifier", "structured", "reasoning", "long-context", "summarize", "thinking"} {
+		got, ok := registry[role]
+		if !ok {
+			t.Errorf("registry missing role %q", role)
+			continue
+		}
+		if got != PRODUCT_DEFAULT_MODEL {
+			t.Errorf("registry[%q] = %q, want %q", role, got, PRODUCT_DEFAULT_MODEL)
 		}
 	}
 }

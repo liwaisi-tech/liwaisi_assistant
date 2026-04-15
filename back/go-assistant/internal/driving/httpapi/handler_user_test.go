@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
@@ -332,5 +333,173 @@ func TestHandleUpdatePreferences(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandleCompleteOnboarding_RequiresPreferredModel asserts REQ-ONB-003:
+// POST /api/v1/user/onboarding/complete with empty (or missing) preferred_model
+// MUST return HTTP 400 with error code "ONBOARDING_MODEL_REQUIRED".
+func TestHandleCompleteOnboarding_RequiresPreferredModel(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty preferred_model", `{"preferred_language":"en","preferred_model":""}`},
+		{"missing preferred_model", `{"preferred_language":"en"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeUserRepo{}
+			h := &Handlers{
+				UserRepo: repo,
+				Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/user/onboarding/complete", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(auth.NewContext(req.Context(), &auth.AuthenticatedUser{Sub: "user-1", Email: "u@x"}))
+			rec := httptest.NewRecorder()
+
+			h.HandleCompleteOnboarding(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			if body["code"] != "ONBOARDING_MODEL_REQUIRED" {
+				t.Errorf("code = %q, want %q", body["code"], "ONBOARDING_MODEL_REQUIRED")
+			}
+			if len(repo.updatePrefsCalls) > 0 {
+				t.Errorf("preferences must NOT be persisted on rejection")
+			}
+			if repo.completeOnboardingOK {
+				t.Error("onboarding must NOT be marked complete on rejection")
+			}
+		})
+	}
+}
+
+// TestHandleGetProfile_LegacyUserRoutedToOnboarding asserts REQ-ONB-004 /
+// AC-009: a user whose preferred_model is empty AND model_overrides are
+// empty is treated as mid-onboarding even if OnboardingCompletedAt is set.
+func TestHandleGetProfile_LegacyUserRoutedToOnboarding(t *testing.T) {
+	t.Parallel()
+
+	completedAt := time.Now().Add(-24 * time.Hour)
+	repo := &fakeUserRepo{
+		rec: &persist.UserRecord{
+			ID:                    "user-1",
+			Email:                 "u@x",
+			CreatedAt:             completedAt.Add(-time.Hour),
+			OnboardingCompletedAt: &completedAt,
+			PreferredLanguage:     "en",
+			PreferredModel:        "", // legacy: never picked a model
+			ModelOverrides:        map[string]string{},
+		},
+	}
+	h := &Handlers{
+		UserRepo: repo,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/profile", nil)
+	req = req.WithContext(auth.NewContext(req.Context(), &auth.AuthenticatedUser{Sub: "user-1", Email: "u@x"}))
+	rec := httptest.NewRecorder()
+
+	h.HandleGetProfile(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp UserProfileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp.OnboardingCompleted {
+		t.Error("legacy user with empty preferred_model must report onboarding_completed=false")
+	}
+}
+
+// TestHandleGetProfile_UserWithPreferenceStaysCompleted asserts the inverse
+// of REQ-ONB-004: a user with a non-empty preferred_model keeps the
+// OnboardingCompletedAt-derived true flag.
+func TestHandleGetProfile_UserWithPreferenceStaysCompleted(t *testing.T) {
+	t.Parallel()
+
+	completedAt := time.Now().Add(-24 * time.Hour)
+	repo := &fakeUserRepo{
+		rec: &persist.UserRecord{
+			ID:                    "user-1",
+			Email:                 "u@x",
+			CreatedAt:             completedAt.Add(-time.Hour),
+			OnboardingCompletedAt: &completedAt,
+			PreferredLanguage:     "en",
+			PreferredModel:        "google/gemma-4-31b-it",
+			ModelOverrides:        map[string]string{},
+		},
+	}
+	h := &Handlers{
+		UserRepo: repo,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/profile", nil)
+	req = req.WithContext(auth.NewContext(req.Context(), &auth.AuthenticatedUser{Sub: "user-1", Email: "u@x"}))
+	rec := httptest.NewRecorder()
+
+	h.HandleGetProfile(rec, req)
+
+	var resp UserProfileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !resp.OnboardingCompleted {
+		t.Error("user with non-empty preferred_model must report onboarding_completed=true")
+	}
+}
+
+// TestHandleGetProfile_UserWithOnlyOverridesStaysCompleted asserts REQ-ONB-004:
+// empty preferred_model but NON-empty model_overrides keeps the user completed
+// (they expressed a preference, just per-role rather than globally).
+func TestHandleGetProfile_UserWithOnlyOverridesStaysCompleted(t *testing.T) {
+	t.Parallel()
+
+	completedAt := time.Now().Add(-24 * time.Hour)
+	repo := &fakeUserRepo{
+		rec: &persist.UserRecord{
+			ID:                    "user-1",
+			Email:                 "u@x",
+			CreatedAt:             completedAt.Add(-time.Hour),
+			OnboardingCompletedAt: &completedAt,
+			PreferredLanguage:     "en",
+			PreferredModel:        "",
+			ModelOverrides:        map[string]string{"classifier": "google/gemini-2.0-flash-001"},
+		},
+	}
+	h := &Handlers{
+		UserRepo: repo,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/profile", nil)
+	req = req.WithContext(auth.NewContext(req.Context(), &auth.AuthenticatedUser{Sub: "user-1", Email: "u@x"}))
+	rec := httptest.NewRecorder()
+
+	h.HandleGetProfile(rec, req)
+
+	var resp UserProfileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !resp.OnboardingCompleted {
+		t.Error("user with non-empty model_overrides must report onboarding_completed=true")
 	}
 }

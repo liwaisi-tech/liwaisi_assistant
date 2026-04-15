@@ -3,6 +3,7 @@ package cpn
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -29,6 +30,48 @@ func renderSystemPrompt(t *Transition, c *CPN) string {
 
 // MaxToolCallIterations caps the agentic loop to prevent infinite cycles.
 const MaxToolCallIterations = 10
+
+// responseContainsJSONObject reports whether s contains at least one
+// syntactically balanced JSON object. Used by the REQ-PAR-004 verify loop
+// to decide whether a JSON-required response needs a single retry. The
+// check is intentionally loose — the downstream parser (e.g.
+// cmd/server/topologies.go::extractJSONObject) applies the schema-level
+// filtering. This helper only distinguishes "no braces at all" from
+// "something brace-shaped is present".
+func responseContainsJSONObject(s string) bool {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // fireLLM executes a NodeKindLLM transition.
 //
@@ -129,6 +172,19 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	var err error
 	var totalCostUSD float64
 
+	// REQ-OBS-001: one INFO log per LLM call, structured with the identity
+	// fields an operator needs to answer "which model ran for this user in
+	// this session?". resolved_model is the authored Model (already written
+	// by applyUserModelPreferences); the openrouter layer may map role
+	// aliases further but that is observable in its own per-call log.
+	slog.InfoContext(ctx, "llm call",
+		"session_id", c.SessionID,
+		"cpn_id", c.ID,
+		"transition_id", t.ID,
+		"role", t.LLMConfig.Role,
+		"resolved_model", t.LLMConfig.Model,
+	)
+
 	streamOutput := t.LLMConfig.StreamOutput
 	var onChunk func(string)
 	if streamOutput {
@@ -156,6 +212,40 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		return nil, 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
 	totalCostUSD += resp.CostUSD
+
+	// REQ-PAR-004: response-format verify-and-retry. Applies ONLY to
+	// non-streaming, RequireJSON+ResponseFmtRequired transitions — t-ask
+	// is the canonical caller. If the first response contains no balanced
+	// JSON object, we retry once with a terser directive appended to the
+	// system prompt. Gemma 4 31B with reasoning mode drops JSON entirely
+	// about 2% of the time; one deterministic retry recovers the call at
+	// at most one extra LLM hop of cost, attributed to the same transition.
+	if t.LLMConfig.ResponseFmtRequired && !streamOutput && t.LLMConfig.RequireJSON {
+		if !responseContainsJSONObject(resp.Content) {
+			retryReq := *req
+			retryMessages := make([]*LLMMessage, len(messages))
+			copy(retryMessages, messages)
+			if len(retryMessages) > 0 && retryMessages[0].Role == "system" {
+				sys := *retryMessages[0]
+				sys.Content = sys.Content + "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
+				retryMessages[0] = &sys
+			}
+			retryReq.Messages = retryMessages
+			slog.InfoContext(ctx, "llm response-format retry",
+				"session_id", c.SessionID,
+				"cpn_id", c.ID,
+				"transition_id", t.ID,
+				"role", t.LLMConfig.Role,
+				"resolved_model", t.LLMConfig.Model,
+			)
+			retryResp, retryErr := c.LLMClient.Complete(ctx, &retryReq)
+			if retryErr == nil {
+				// Cost of the retry is attributed to the same transition.
+				totalCostUSD += retryResp.CostUSD
+				resp = retryResp
+			}
+		}
+	}
 	// Record the actually executed model id (after role→model resolution) so
 	// the executor can expose it on the transition_completed event and the UI
 	// can show the real model that ran rather than the authored role alias.

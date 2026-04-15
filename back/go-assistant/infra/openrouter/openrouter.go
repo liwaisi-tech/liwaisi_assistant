@@ -17,18 +17,29 @@ import (
 // Compile-time interface check.
 var _ cpn.LLMClient = (*Client)(nil)
 
+// PRODUCT_DEFAULT_MODEL is the single hard-coded default model for every
+// CPN transition. Per spec-architecture-model-selection-centralization.md
+// (REQ-CFG-001), this is the ONLY place a role's default is defined. User
+// preferences (UserRecord.PreferredModel / ModelOverrides) override this
+// at session resolve time via internal/app/session_service.go.
+//
+// When a future spec changes the default, edit this one line (CON-003).
+const PRODUCT_DEFAULT_MODEL = "google/gemma-4-31b-it"
+
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
 // DefaultModelRegistry holds the default model for each task role.
-// Using the cheapest model that can do the job operationalizes Axiom A11.
-// Override any entry via its environment variable (see ModelEnvVars).
+// Every role maps to PRODUCT_DEFAULT_MODEL (REQ-CFG-001) — there is no
+// per-role deviation from the product default. Historical ENV overrides
+// (MODEL_CLASSIFIER, MODEL_STRUCTURED, …) were removed in favour of the
+// per-user override mechanism (see UserRecord.ModelOverrides).
 var DefaultModelRegistry = map[string]string{
-	"classifier":   "google/gemini-2.0-flash-001",
-	"structured":   "anthropic/claude-sonnet-4-6",
-	"reasoning":    "anthropic/claude-sonnet-4-6",
-	"long-context": "google/gemini-2.0-flash-001",
-	"summarize":    "google/gemini-2.0-flash-001",
-	"thinking":     "anthropic/claude-opus-4-6",
+	"classifier":   PRODUCT_DEFAULT_MODEL,
+	"structured":   PRODUCT_DEFAULT_MODEL,
+	"reasoning":    PRODUCT_DEFAULT_MODEL,
+	"long-context": PRODUCT_DEFAULT_MODEL,
+	"summarize":    PRODUCT_DEFAULT_MODEL,
+	"thinking":     PRODUCT_DEFAULT_MODEL,
 }
 
 // AvailableModels lists all models offered to users for selection.
@@ -53,28 +64,15 @@ var AvailableModels = []string{
 	"z-ai/glm-5.1",
 }
 
-// ModelEnvVars maps each registry key to the environment variable that overrides it.
-var ModelEnvVars = map[string]string{
-	"classifier":   "MODEL_CLASSIFIER",
-	"structured":   "MODEL_STRUCTURED",
-	"reasoning":    "MODEL_REASONING",
-	"long-context": "MODEL_LONG_CONTEXT",
-	"summarize":    "MODEL_SUMMARIZE",
-	"thinking":     "MODEL_THINKING",
-}
-
-// buildModelRegistry creates a model registry by reading environment variables
-// with fallback to defaults. The getEnv parameter enables testing without
-// manipulating real environment variables.
-func buildModelRegistry(getEnv func(string) string) map[string]string {
+// buildModelRegistry returns a copy of DefaultModelRegistry. Retained as a
+// function (rather than a direct reference) so callers get an isolated map
+// they can safely mutate for testing. No ENV reads happen here — per
+// spec-architecture-model-selection-centralization.md (REQ-CFG-002) every
+// MODEL_* variable and DEFAULT_MODEL were removed; user preferences are the
+// only legitimate override layer.
+func buildModelRegistry(_ func(string) string) map[string]string {
 	registry := make(map[string]string, len(DefaultModelRegistry))
 	for key, defaultModel := range DefaultModelRegistry {
-		if envVar, ok := ModelEnvVars[key]; ok {
-			if v := getEnv(envVar); v != "" {
-				registry[key] = v
-				continue
-			}
-		}
 		registry[key] = defaultModel
 	}
 	return registry
@@ -131,10 +129,15 @@ type Client struct {
 
 // NewClient returns a configured client with sensible defaults.
 // Reads from environment:
-//   - MODEL_CLASSIFIER, MODEL_STRUCTURED, MODEL_REASONING, MODEL_LONG_CONTEXT,
-//     MODEL_SUMMARIZE, MODEL_THINKING — override default model registry entries
 //   - OPENROUTER_APP_URL — sent as HTTP-Referer for app identification
 //   - OPENROUTER_APP_TITLE — sent as X-Title for app identification
+//
+// Model selection is resolved at the session layer, not here: the per-role
+// MODEL_* and DEFAULT_MODEL environment variables were removed per
+// spec-architecture-model-selection-centralization.md (REQ-CFG-002). The
+// defaultModel argument still seeds Client.DefaultModel for the rare path
+// where LLMRequest.Model is empty at dispatch time; callers SHOULD pass
+// PRODUCT_DEFAULT_MODEL when they have no user-specific preference.
 func NewClient(apiKey, defaultModel string) *Client {
 	return &Client{
 		apiKey:        apiKey,

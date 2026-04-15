@@ -158,9 +158,26 @@ type LLMResponse struct {
 // v1.2 replaces v1.1 — all 6 original fields remain, 8 new fields added.
 // Widening is backward-compatible: existing code using v1.1 fields compiles unchanged.
 type LLMConfig struct {
-	// Model is an OpenRouter model string or ModelRegistry key.
-	// If empty, falls back to OpenRouterClient.DefaultModel.
-	Model string
+	// Model is the concrete OpenRouter model id for this transition.
+	// Populated at session resolve time by
+	// internal/app/session_service.go::applyUserModelPreferences based on
+	// (in precedence order) the user's per-role ModelOverride, the user's
+	// global PreferredModel, or openrouter.PRODUCT_DEFAULT_MODEL.
+	//
+	// Authored LLMConfig literals in topology factories MUST leave this
+	// empty — the authoring layer expresses intent via Role, and the
+	// resolver writes Model. See spec-architecture-model-selection-centralization.md
+	// (REQ-CFG-003).
+	Model string `json:"model,omitempty"`
+
+	// Role is the logical model class this transition needs (e.g.
+	// "classifier", "structured"). It is the hook applyUserModelPreferences
+	// uses to look up per-role overrides on UserRecord.ModelOverrides. An
+	// empty Role means the transition has no role-specific requirement and
+	// inherits the user's global PreferredModel (or the product default).
+	//
+	// Role is authored; Model is derived. See REQ-CFG-004.
+	Role string `json:"role,omitempty"`
 
 	// FallbackModels lists alternative models tried in order if Model is unavailable.
 	FallbackModels []string
@@ -178,7 +195,18 @@ type LLMConfig struct {
 	StreamOutput bool
 
 	// RequireJSON sets response_format to json_object.
-	RequireJSON bool
+	RequireJSON bool `json:"require_json,omitempty"`
+
+	// ResponseFmtRequired upgrades RequireJSON from "best-effort" to
+	// "verify-and-retry". After a successful LLM response, fireLLM re-runs
+	// extractJSONObject on the content; if no balanced JSON object is
+	// present, a single retry is issued with a terse "JSON only, no
+	// thinking, no markdown fences" instruction appended to the system
+	// prompt. The retry's cost is attributed to the same transition. Set
+	// on t-ask to guard against reasoning-mode models (e.g. Gemma 4 31B)
+	// that emit <think>…</think> preambles before the JSON payload. See
+	// spec-architecture-model-selection-centralization.md (REQ-PAR-004).
+	ResponseFmtRequired bool `json:"response_fmt_required,omitempty"`
 
 	// JSONSchema configures structured JSON output with a schema.
 	JSONSchema *JSONSchemaConfig

@@ -57,21 +57,23 @@ type TransitionTopology struct {
 
 // LLMConfigTopology is the serializable representation of LLMConfig.
 type LLMConfigTopology struct {
-	Model          string                      `json:"model,omitempty"`
-	FallbackModels []string                    `json:"fallbackModels,omitempty"`
-	Endpoint       string                      `json:"endpoint,omitempty"`
-	MaxTokens      int                         `json:"maxTokens,omitempty"`
-	Temperature    float64                     `json:"temperature,omitempty"`
-	StreamOutput   bool                        `json:"streamOutput,omitempty"`
-	RequireJSON    bool                        `json:"requireJSON,omitempty"`
-	JSONSchema     *JSONSchemaConfigTopology   `json:"jsonSchema,omitempty"`
-	Budget         float64                     `json:"budget,omitempty"`
-	Provider       *ProviderConfigTopology     `json:"provider,omitempty"`
-	Trace          *TraceConfigTopology        `json:"trace,omitempty"`
-	Plugins        []string                    `json:"plugins,omitempty"`
-	Reasoning      *ReasoningConfigTopology    `json:"reasoning,omitempty"`
-	CacheControl   *CacheControlConfigTopology `json:"cacheControl,omitempty"`
-	SkipHistory    bool                        `json:"skipHistory,omitempty"`
+	Model               string                      `json:"model,omitempty"`
+	Role                string                      `json:"role,omitempty"`
+	FallbackModels      []string                    `json:"fallbackModels,omitempty"`
+	Endpoint            string                      `json:"endpoint,omitempty"`
+	MaxTokens           int                         `json:"maxTokens,omitempty"`
+	Temperature         float64                     `json:"temperature,omitempty"`
+	StreamOutput        bool                        `json:"streamOutput,omitempty"`
+	RequireJSON         bool                        `json:"requireJSON,omitempty"`
+	ResponseFmtRequired bool                        `json:"responseFmtRequired,omitempty"`
+	JSONSchema          *JSONSchemaConfigTopology   `json:"jsonSchema,omitempty"`
+	Budget              float64                     `json:"budget,omitempty"`
+	Provider            *ProviderConfigTopology     `json:"provider,omitempty"`
+	Trace               *TraceConfigTopology        `json:"trace,omitempty"`
+	Plugins             []string                    `json:"plugins,omitempty"`
+	Reasoning           *ReasoningConfigTopology    `json:"reasoning,omitempty"`
+	CacheControl        *CacheControlConfigTopology `json:"cacheControl,omitempty"`
+	SkipHistory         bool                        `json:"skipHistory,omitempty"`
 }
 
 // JSONSchemaConfigTopology mirrors cpn.JSONSchemaConfig.
@@ -285,15 +287,17 @@ func marshalTransition(t *cpn.Transition, reg *FuncRegistry) (TransitionTopology
 
 func marshalLLMConfig(c *cpn.LLMConfig) *LLMConfigTopology {
 	lc := &LLMConfigTopology{
-		Model:          c.Model,
-		FallbackModels: c.FallbackModels,
-		Endpoint:       string(c.Endpoint),
-		MaxTokens:      c.MaxTokens,
-		Temperature:    c.Temperature,
-		StreamOutput:   c.StreamOutput,
-		RequireJSON:    c.RequireJSON,
-		Budget:         c.Budget,
-		SkipHistory:    c.SkipHistory,
+		Model:               c.Model,
+		Role:                c.Role,
+		FallbackModels:      c.FallbackModels,
+		Endpoint:            string(c.Endpoint),
+		MaxTokens:           c.MaxTokens,
+		Temperature:         c.Temperature,
+		StreamOutput:        c.StreamOutput,
+		RequireJSON:         c.RequireJSON,
+		ResponseFmtRequired: c.ResponseFmtRequired,
+		Budget:              c.Budget,
+		SkipHistory:         c.SkipHistory,
 	}
 
 	if c.JSONSchema != nil {
@@ -557,15 +561,17 @@ func unmarshalTransition(tt *TransitionTopology, reg *FuncRegistry) (*cpn.Transi
 
 func unmarshalLLMConfig(lc *LLMConfigTopology) *cpn.LLMConfig {
 	c := &cpn.LLMConfig{
-		Model:          lc.Model,
-		FallbackModels: lc.FallbackModels,
-		Endpoint:       cpn.LLMEndpoint(lc.Endpoint),
-		MaxTokens:      lc.MaxTokens,
-		Temperature:    lc.Temperature,
-		StreamOutput:   lc.StreamOutput,
-		RequireJSON:    lc.RequireJSON,
-		Budget:         lc.Budget,
-		SkipHistory:    lc.SkipHistory,
+		Model:               lc.Model,
+		Role:                lc.Role,
+		FallbackModels:      lc.FallbackModels,
+		Endpoint:            cpn.LLMEndpoint(lc.Endpoint),
+		MaxTokens:           lc.MaxTokens,
+		Temperature:         lc.Temperature,
+		StreamOutput:        lc.StreamOutput,
+		RequireJSON:         lc.RequireJSON,
+		ResponseFmtRequired: lc.ResponseFmtRequired,
+		Budget:              lc.Budget,
+		SkipHistory:         lc.SkipHistory,
 	}
 
 	if lc.JSONSchema != nil {
