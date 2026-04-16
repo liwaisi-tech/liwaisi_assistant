@@ -343,6 +343,10 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 // REQ-016: Calls t.Executor, stamps origin metadata, deposits result in OutputPlaces.
 // Returns (0, error) — tool transitions have no LLM cost.
 func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
+	if t.ToolHandler != nil {
+		return fireToolHandler(ctx, t, c, consumed)
+	}
+
 	if t.Executor == nil {
 		return nil, 0, fmt.Errorf("transition %s: nil Executor", t.ID)
 	}
@@ -379,5 +383,41 @@ func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 		}
 	}
 
+	return outputSnaps, 0, nil
+}
+
+// fireToolHandler is the multi-in/multi-out tool firing path. Used by routing
+// + counter-update transitions (e.g. t-followup in the clarification loop)
+// that consume more than one input token and deposit DIFFERENT tokens into
+// DIFFERENT output places. Stamps origin metadata on every deposited token.
+func fireToolHandler(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
+	results, err := t.ToolHandler(ctx, consumed)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	outputSnaps := make([]TokenSnapshot, 0, len(t.OutputPlaces))
+	for _, pid := range t.OutputPlaces {
+		p, ok := c.Places[pid]
+		if !ok {
+			return nil, 0, fmt.Errorf("transition %s: output place %s not found", t.ID, pid)
+		}
+		tok, ok := results[pid]
+		if !ok {
+			return nil, 0, fmt.Errorf("transition %s: ToolHandler produced no token for output place %s", t.ID, pid)
+		}
+		tok.OriginID = c.ID
+		tok.OriginDepth = c.Depth
+		tok.OriginKind = NodeKindTool
+		tok.SessionID = c.SessionID
+		tok.Timestamp = time.Now()
+		if tok.Space == "" {
+			tok.Space = p.Space
+		}
+		outputSnaps = append(outputSnaps, tok.Snapshot())
+		if err := p.Deposit(&tok); err != nil {
+			return nil, 0, fmt.Errorf("transition %s: deposit to %s: %w", t.ID, pid, err)
+		}
+	}
 	return outputSnaps, 0, nil
 }

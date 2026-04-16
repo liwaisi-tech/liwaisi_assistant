@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -304,10 +305,33 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		"p-classified": cpn.NewPlace("p-classified", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-questions":  cpn.NewPlace("p-questions", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-clarified":  cpn.NewPlace("p-clarified", cpn.ColorString, cpn.SpaceSurface),
+		// Iterative clarification loop (REQ-001/002). p-round holds a
+		// 1-bounded counter token; p-reassessed holds the t-reassess
+		// output that routes to t-followup or t-plan-clarified.
+		"p-round":      cpn.NewPlace("p-round", cpn.ColorJSON, cpn.SpaceSurface),
+		"p-reassessed": cpn.NewPlace("p-reassessed", cpn.ColorJSON, cpn.SpaceSurface),
+		// p-planner-input: intermediate ColorString place produced by
+		// t-preplanner (a no-LLM tool transition that composes
+		// buildPlannerPreamble output) and consumed by t-plan-clarified.
+		// The spec's REQ-005 nominally says t-plan-clarified consumes
+		// from p-reassessed directly; in practice fireLLM filters
+		// ColorJSON tokens out of the user message (see cpn/fire_llm.go
+		// §Step-1 token-color gate), so we interpose a ColorString
+		// hop so the preamble text reaches the LLM as a user message.
+		"p-planner-input": cpn.NewPlace("p-planner-input", cpn.ColorString, cpn.SpaceSurface),
 		"p-plan":       cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
 		"p-reviewed":   cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
 		"p-output":     cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
 	}
+	// REQ-001: seed p-round with {n:0, reset:false} so the initial marking
+	// has the counter available. Also covers REQ-051 (rehydrated
+	// pre-feature sessions default to n=0).
+	seedRound := &cpn.Token{
+		Color:   cpn.ColorJSON,
+		Space:   cpn.SpaceSurface,
+		Payload: `{"n":0,"reset":false}`,
+	}
+	_ = places["p-round"].Deposit(seedRound)
 
 	// t-classify: fast intent classifier using lightweight model.
 	tClassify := cpn.NewTransition("t-classify", cpn.NodeKindLLM,
@@ -421,16 +445,36 @@ The user's original request is in the conversation history. The CURRENT user mes
 	tPlanDirect.LLMConfig = planLLMConfig()
 	tPlanDirect.Guard = guardPlanTaskDirect
 
-	// t-plan-clarified: fires after the user has answered the clarification
-	// questionnaire. Reads the merged classifier+answers payload from p-clarified.
+	// t-plan-clarified: fires AFTER t-reassess has decided the clarification
+	// loop can close. Consumes a ColorString preamble token from
+	// p-planner-input (produced by t-preplanner) so the preamble text —
+	// composed by buildPlannerPreamble — reaches the planner LLM as a
+	// user message (fireLLM's ColorJSON filter would otherwise suppress
+	// it; see cpn/fire_llm.go user-message gate). The preamble carries
+	// the explicit "do not ask again" / "budget exhausted" / "user chose
+	// to proceed" directive mandated by REQ-031/032 §4.5.
 	tPlanClarified := cpn.NewTransition("t-plan-clarified", cpn.NodeKindLLM,
-		[]string{"p-clarified"}, []string{"p-plan"})
+		[]string{"p-planner-input"}, []string{"p-plan"})
 	tPlanClarified.SystemPrompt = planClarifiedSystemPrompt
 	tPlanClarified.LLMConfig = planLLMConfig()
+	// Guard stays unconditional here — gating happens upstream in
+	// t-preplanner via guardResidualResolved (REQ-011). By the time a
+	// token is sitting on p-planner-input, the loop is closed.
 	tPlanClarified.Guard = guardPlanTaskClarified
 
-	// t-ask: when classifier flags missing info, generate a small JSON questionnaire
-	// using the missing[] list as hints. Output is consumed by t-clarify (HITL).
+	// t-ask: when classifier flags missing info, generate a small JSON
+	// questionnaire using the missing[] list as hints. Output is consumed
+	// by t-clarify (HITL).
+	//
+	// REQ-007 (pragmatic interpretation): t-ask does NOT consume p-round.
+	// fireLLM deposits its single output token into ALL OutputPlaces
+	// (cpn/fire_llm.go Step-5), so an "output to p-questions + p-round"
+	// arc would double-write the questionnaire JSON into p-round and
+	// destroy the counter. Instead we leave p-round untouched — the
+	// counter was seeded to {n:0} in the initial marking and sits ready
+	// for t-reassess to consume on the FIRST reassess pass. The CPN's
+	// 1-bounded invariant is preserved by never depositing into p-round
+	// while it is already marked (CON-004).
 	tAsk := cpn.NewTransition("t-ask", cpn.NodeKindLLM,
 		[]string{"p-classified"}, []string{"p-questions"})
 	tAsk.SystemPrompt = envOr("PROMPT_ASK", `You produce a REFRAME-THEN-ASK clarification artifact. Before asking anything, you prove you understood the user by restating their goal and listing the assumptions you would make. Then — and only then — you ask the few questions whose answers would change the plan.
@@ -550,6 +594,11 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 	// surface and waits for the user's structured "submit" response. On
 	// resolve it merges the answers into the classifier JSON and deposits a
 	// ColorJSON token into p-clarified.
+	//
+	// REQ-100: buildClarifyA2UIPayload now reads an optional p-round token
+	// from consumed to stamp the "Follow-up n/k" badge on the envelope.
+	// The builder also sniffs the p-questions payload to pick between
+	// standard-questionnaire and escape-hatch-card rendering (PAT-002).
 	tClarify := cpn.NewTransition("t-clarify", cpn.NodeKindHITL,
 		[]string{"p-questions"}, []string{"p-clarified"})
 	tClarify.HITLConfig = &cpn.HITLConfig{
@@ -557,6 +606,139 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 		RevisionLoop:       false,
 		A2UIPayloadBuilder: buildClarifyA2UIPayload,
 		OutputBuilder:      buildClarifiedToken,
+	}
+
+	// t-reassess: post-clarify LLM that scores residual ambiguity and
+	// decides whether to (a) re-fire t-clarify with a deeper questionnaire,
+	// (b) proceed to the planner with stated assumptions, or (c) emit a
+	// binary escape-hatch surface (REQ-004, §4.2).
+	//
+	// Consumes: p-clarified. The round counter (p-round) is read by
+	// downstream guards/handlers (t-followup / t-preplanner), not by this
+	// transition — fireLLM deposits its single output token into every
+	// OutputPlace, which would clobber p-round if it appeared here.
+	tReassess := cpn.NewTransition("t-reassess", cpn.NodeKindLLM,
+		[]string{"p-clarified"}, []string{"p-reassessed"})
+	tReassess.SystemPrompt = envOr("PROMPT_REASSESS", braeIdentity+`
+You are the clarification-loop reassessor for a LATAM-entrepreneurship planning assistant. On every user-answered clarification round, you score residual ambiguity and decide whether one more question would measurably improve the plan.
+
+Seven ambiguity axes you recognize (LATAM entrepreneurship domain):
+event_type, stage, audience, budget_band, geography, timeline, success_metric.
+
+═══ CORE RULES ═══
+
+1. DRILL DEEPER, NEVER WIDER. Next-round questions MUST target `+"`missing_dimensions`"+` and MUST NOT reuse any question id from round_history, nor re-ask anything the user already stated. Drop the question before repeating.
+
+2. ROUND-AWARE DISCIPLINE. At round == max_rounds - 1, bias toward `+"`decision: proceed_to_plan`"+` unless a plan-invalidating axis is still missing. Users prefer a plan with stated assumptions over a third questionnaire.
+
+3. QUOTE GROUNDING (round 2+). Every `+"`next_questions.questions[*].quote_from_user`"+` MUST be a literal substring of the user's original message OR a prior user turn in the conversation. If you cannot ground a follow-up question, drop it and lower residual_ambiguity accordingly.
+
+4. FRUSTRATION DETECTION. If the latest answer contains any of: "whatever", "lo que sea", "just pick", "tú decide", "no sé", "I don't know", "da igual", "you choose", "any of them", "doesn't matter" (case-insensitive, in any language) — set `+"`frustration_signal: true`"+` and `+"`decision: request_user_choice`"+` with a two-option user_choice (drill / proceed).
+
+5. CONTRADICTION DETECTION. If the latest answer contradicts a prior answer or the original message, set `+"`contradiction_detected: true`"+`, make convergence_delta negative, and set `+"`decision: request_user_choice`"+` with BOTH contradictory values as equal-weight options.
+
+═══ OUTPUT SCHEMA (strict JSON — first char MUST be "{" and last char MUST be "}") ═══
+
+{
+  "residual_ambiguity": 0.0,
+  "convergence_delta": 0.0,
+  "missing_dimensions": ["..."],
+  "resolved_dimensions": ["..."],
+  "contradiction_detected": false,
+  "frustration_signal": false,
+  "topic_shift": false,
+  "decision": "clarify_again" | "proceed_to_plan" | "request_user_choice",
+  "rationale": "one sentence, telemetry only, never user-facing",
+
+  // Required iff decision == "clarify_again":
+  "next_questions": {
+    "restated_goal": "...",
+    "assumptions": ["..."],
+    "questions": [
+      {"id":"qN","prompt":"...","quote_from_user":"...","why_it_matters":"...","recommended":"opt-a",
+       "options":[{"id":"opt-a","label":"..."},{"id":"opt-b","label":"..."}]}
+    ]
+  },
+
+  // Required iff decision == "proceed_to_plan":
+  "stated_assumptions": ["..."],
+
+  // Required iff decision == "request_user_choice":
+  "user_choice": {
+    "prompt": "...",
+    "options": [{"id":"drill|<opt>","label":"..."},{"id":"proceed|<opt>","label":"..."}]
+  }
+}
+
+OMIT conditional keys that do not apply to the chosen decision — never set them to null.
+
+`+langRule)
+	tReassess.LLMConfig = &cpn.LLMConfig{
+		Role:                 "structured",
+		MaxTokens:            envInt("MAX_TOKENS_REASSESS", 1024),
+		Temperature:          0.2,
+		RequireJSON:          true,
+		ResponseFmtRequired:  true,
+		StreamOutput:         false,
+		SkipHistory:          false,
+		SkipOutputHistory:    true,
+		SkipRegionalPreamble: true,
+	}
+
+	// t-followup: deterministic NodeKindTool — consumes (p-reassessed,
+	// p-round), deposits (p-questions, p-round') with the counter
+	// incremented, reset (on topic_shift), or held (on
+	// request_user_choice). No LLM call (REQ-006).
+	tFollowup := cpn.NewTransition("t-followup", cpn.NodeKindTool,
+		[]string{"p-reassessed", "p-round"},
+		[]string{"p-questions", "p-round"})
+	tFollowup.Guard = guardResidualAmbiguous
+	tFollowup.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+		rrPtrs := make([]*cpn.Token, len(consumed))
+		for i := range consumed {
+			t := consumed[i]
+			rrPtrs[i] = &t
+		}
+		rr, ok := parseReassessResult(rrPtrs)
+		if !ok {
+			return nil, fmt.Errorf("t-followup: unparseable reassess token")
+		}
+		rt, ok := parseRoundToken(rrPtrs)
+		if !ok {
+			// Defensive: if the round token is missing, start fresh.
+			rt = roundToken{}
+		}
+		return buildFollowupDeposits(rr, rt)
+	}
+
+	// t-preplanner: deterministic NodeKindTool — consumes (p-reassessed,
+	// p-round), deposits a ColorString preamble token to p-planner-input
+	// using buildPlannerPreamble. This is the loop-exit branch: the round
+	// counter dies here (no re-emission), preserving REQ-008's
+	// counter-dies-in-terminal-branches guarantee.
+	tPreplanner := cpn.NewTransition("t-preplanner", cpn.NodeKindTool,
+		[]string{"p-reassessed", "p-round"},
+		[]string{"p-planner-input"})
+	tPreplanner.Guard = guardResidualResolved
+	tPreplanner.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+		ptrs := make([]*cpn.Token, len(consumed))
+		for i := range consumed {
+			t := consumed[i]
+			ptrs[i] = &t
+		}
+		rr, _ := parseReassessResult(ptrs) // fail-open: zero-value triggers AC-007 preamble
+		rt, _ := parseRoundToken(ptrs)
+		cfg := loadReassessConfig()
+		preamble := buildPlannerPreamble(rr, rt, cfg)
+		// Append the last user/clarification content from consumed as
+		// context so the planner sees the user's answers alongside the
+		// preamble. In practice c.History already carries the
+		// t-clarify OutputBuilder's "User answers follow." token, so
+		// we just emit the preamble — the planner reads c.History for
+		// the rest.
+		return map[string]cpn.Token{
+			"p-planner-input": {Color: cpn.ColorString, Payload: preamble},
+		}, nil
 	}
 
 	// t-review: HITL gate — waits for user approval. The prompt text is
@@ -615,6 +797,9 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		"t-direct":         tDirect,
 		"t-ask":            tAsk,
 		"t-clarify":        tClarify,
+		"t-reassess":       tReassess,
+		"t-followup":       tFollowup,
+		"t-preplanner":     tPreplanner,
 		"t-plan-direct":    tPlanDirect,
 		"t-plan-clarified": tPlanClarified,
 		"t-review":         tReview,
@@ -890,7 +1075,30 @@ func sessionIDFromTokens(consumed []cpn.Token) string {
 // output so operators can diagnose the failing model directly from logs. A
 // structured slog.Error accompanies the return so even callers that
 // swallow the error still see the payload prefix in the log stream.
+//
+// Dispatch (spec-architecture-cpn-iterative-clarification-loop.md §4.3, §4.4):
+// the builder sniffs the p-questions payload to pick one of:
+//   - escape-hatch card (payload contains "escape_hatch" field)
+//   - standard questionnaire (default)
+//
+// Both variants receive the optional `round` envelope (REQ-100) when a
+// non-zero p-round token is present in consumed.
 func buildClarifyA2UIPayload(consumed []cpn.Token) (any, error) {
+	// Escape-hatch sniff: if the first JSON-string payload carries the
+	// escape_hatch field, render the binary card instead of a
+	// questionnaire. This lets the same t-clarify HITL transition drive
+	// either surface (REQ-013 / PAT-002).
+	if seed, ok := firstEscapeHatchSeed(consumed); ok {
+		rr := reassessResult{
+			Decision:              "request_user_choice",
+			ContradictionDetected: seed.Kind == "contradiction",
+			FrustrationSignal:     seed.Kind == "frustration",
+			UserChoice:            seed.UserChoice,
+		}
+		rt, _ := parseRoundTokenValue(consumed)
+		return buildEscapeHatchA2UIPayload(rr, rt, loadReassessConfig())
+	}
+
 	spec, err := firstQuestionnaireFromTokens(consumed)
 	if err != nil {
 		// Structured log carries the same identity fields the LLM-call
@@ -930,7 +1138,7 @@ func buildClarifyA2UIPayload(consumed []cpn.Token) (any, error) {
 		})
 	}
 
-	return map[string]any{
+	env := map[string]any{
 		"components": []map[string]any{{
 			"type": "questionnaire",
 			"props": map[string]any{
@@ -941,7 +1149,49 @@ func buildClarifyA2UIPayload(consumed []cpn.Token) (any, error) {
 			},
 			"children": children,
 		}},
-	}, nil
+	}
+	// REQ-100: attach the round badge envelope only when a non-zero round
+	// token is present. Zero / missing → no badge (backward-compatible).
+	if rt, ok := parseRoundTokenValue(consumed); ok && rt.N > 0 {
+		env["round"] = map[string]any{"n": rt.N, "max": loadReassessConfig().MaxRounds}
+	}
+	return env, nil
+}
+
+// firstEscapeHatchSeed decodes the first token carrying an escape-hatch seed.
+// Returns (seed, true) when the payload's outer JSON has an "escape_hatch"
+// field. Silent on all other payloads.
+func firstEscapeHatchSeed(consumed []cpn.Token) (escapeHatchSeed, bool) {
+	for i := range consumed {
+		s, ok := consumed[i].Payload.(string)
+		if !ok {
+			continue
+		}
+		if !strings.Contains(s, `"escape_hatch"`) {
+			continue
+		}
+		var seed escapeHatchSeed
+		if err := json.Unmarshal([]byte(s), &seed); err != nil {
+			continue
+		}
+		if seed.Kind == "" {
+			continue
+		}
+		return seed, true
+	}
+	return escapeHatchSeed{}, false
+}
+
+// parseRoundTokenValue is a []cpn.Token (by-value) adapter for the pointer
+// form used by guards. Kept local to the topology package to avoid widening
+// the guard API.
+func parseRoundTokenValue(consumed []cpn.Token) (roundToken, bool) {
+	ptrs := make([]*cpn.Token, len(consumed))
+	for i := range consumed {
+		t := consumed[i]
+		ptrs[i] = &t
+	}
+	return parseRoundToken(ptrs)
 }
 
 // buildClarifiedToken parses the user's structured submit response, merges it
@@ -966,10 +1216,18 @@ func buildClarifiedToken(consumed []cpn.Token, resp cpn.HITLResponse) (cpn.Token
 
 	// Render a deterministic, LLM-friendly summary of the answers, resolving
 	// option ids back to their labels so the planner sees human text rather
-	// than opaque ids. The leading directive reinforces the system prompt so
-	// the planner cannot loop back into another clarification round.
+	// than opaque ids.
+	//
+	// REQ-030 (spec-architecture-cpn-iterative-clarification-loop.md): the
+	// suppressive "Produce the plan now — do not ask any further questions"
+	// directive MUST NOT be emitted here. With t-reassess formally gating
+	// the planner, the directive is redundant when another round is
+	// warranted and harmful when we want the planner to receive stated
+	// assumptions. Routing-aware suppression lives in buildPlannerPreamble
+	// (PAT-003). A neutral prefix tells downstream consumers (t-reassess
+	// history, planner preamble) that what follows is user-authored answers.
 	var b strings.Builder
-	b.WriteString("I have answered your clarification questions. Produce the plan now — do not ask any further questions. If anything is still unspecified, state a reasonable assumption under \"Assumptions:\" and proceed.\n\n")
+	b.WriteString("User answers follow.\n\n")
 	if strings.TrimSpace(spec.RestatedGoal) != "" {
 		fmt.Fprintf(&b, "Agreed goal: %s\n", spec.RestatedGoal)
 	}

@@ -263,8 +263,12 @@ func TestBuildClarifyA2UIPayload_RoundField(t *testing.T) {
 			if !ok {
 				t.Fatalf("round is not a map: %T", round)
 			}
-			if rm["n"] != tc.wantN {
-				t.Errorf("round.n = %v, want %v", rm["n"], tc.wantN)
+			// In-memory the builder emits int; through JSON roundtrip
+			// the value becomes float64. Normalize before compare so
+			// the test survives either representation.
+			gotN := normalizeNumber(rm["n"])
+			if gotN != tc.wantN {
+				t.Errorf("round.n = %v (%T), want %v", rm["n"], rm["n"], tc.wantN)
 			}
 			if _, hasMax := rm["max"]; !hasMax {
 				t.Errorf("round must include 'max' field; got %v", rm)
@@ -404,4 +408,20 @@ func mapKeys(m map[string]cpn.Token) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// normalizeNumber converts int / int64 / float64 to float64 so table-driven
+// tests over post-JSON-roundtrip payloads don't flake on numeric typing.
+func normalizeNumber(v any) float64 {
+	switch n := v.(type) {
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	}
+	return 0
 }
