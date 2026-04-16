@@ -140,6 +140,28 @@ summary:focus-visible {
   animation: session-notice-in 200ms ease-out;
 }
 
+/* -- A2UI clarify-round mount fade --
+ * Applied only to A2UI bubbles whose envelope carries a `round` field.
+ * Regular bubbles keep their current (no-motion) mount to avoid visual
+ * drift across unrelated surfaces. Global prefers-reduced-motion rule
+ * above zeros the duration; keep the keyframe as fade-plus-lift so the
+ * non-reduced path matches the 180ms / 4px spec in §Motion. */
+@keyframes a2ui-round-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.a2ui-round-in {
+  animation: a2ui-round-in 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-round-in {
+    /* Fade only — no translate. Duration is already forced to 0ms by the
+     * global rule above, so this is belt-and-suspenders for clarity. */
+    animation: none;
+  }
+}
+
 /* -- Glow border -- */
 .glow-border {
   box-shadow: 0 0 0 1px var(--border-dim),

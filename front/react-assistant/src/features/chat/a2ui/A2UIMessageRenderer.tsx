@@ -1,4 +1,4 @@
-import { useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, useContext, createContext, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
 import type {
@@ -60,6 +60,11 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   const componentId = (component.props.id as string) ?? '';
   const actionType = (component.props.actionType as string) ?? 'click';
   const variant = (component.props.variant as string) ?? 'primary';
+  // `size` governs tap-target scale. `sm` (default) is the existing compact
+  // button used inline inside cards / questionnaires. `lg` is used by the
+  // escape-hatch binary choice where the user is being asked to make a
+  // decisive handoff — see spec §4.4 REQ-102 and ButtonSize in types.ts.
+  const size: ButtonSize = component.props.size === 'lg' ? 'lg' : 'sm';
   const propDisabled = component.props.disabled === true;
 
   // When this surface has been resolved (live submit OR rehydration), every
@@ -91,13 +96,19 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   };
   const s = variantStyles[variant] ?? variantStyles.primary;
   const opacity = propDisabled ? 0.5 : dim ? 0.35 : 1;
+  // Size classes kept parallel so a single token swap gives the larger
+  // tap-target without changing the surrounding DOM.
+  const sizeClasses =
+    size === 'lg'
+      ? 'px-5 py-2.5 rounded-lg text-sm font-medium'
+      : 'px-4 py-1.5 rounded-lg text-xs font-medium';
 
   return (
     <button
       onClick={handleClick}
       disabled={disabled}
       aria-disabled={disabled}
-      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+      className={`${sizeClasses} transition-all`}
       style={{
         backgroundColor: s.bg,
         color: s.color,
@@ -134,12 +145,30 @@ function extractResolvedHITLAction(payload: string | undefined): string | null {
 
 function CardComponent({ component, onAction }: ComponentProps) {
   const title = component.props.title as string | undefined;
+  // `variant` drives the escape-hatch card's left-rail accent. The accent
+  // tint distinguishes the two escape flavors at a glance without a new
+  // surface type: frustration uses --accent (offer of agency), contradiction
+  // uses --text-muted (neutral path-framing per REQ-124). Default is unchanged.
+  const variant: CardVariant =
+    component.props.variant === 'escape-frustration' ||
+    component.props.variant === 'escape-contradiction'
+      ? (component.props.variant as CardVariant)
+      : 'default';
+
+  const variantStyle =
+    variant === 'escape-frustration'
+      ? { borderLeft: '3px solid var(--accent)' }
+      : variant === 'escape-contradiction'
+        ? { borderLeft: '3px solid var(--text-muted)' }
+        : undefined;
+
   return (
     <div
       className="rounded-xl p-4 my-2"
       style={{
         backgroundColor: 'var(--bg-surface)',
         border: '1px solid var(--border-dim)',
+        ...variantStyle,
       }}
     >
       {title && (
@@ -334,6 +363,76 @@ function AlertComponent({ component }: ComponentProps) {
       {title && <strong className="block mb-1">{title}</strong>}
       {message}
     </div>
+  );
+}
+
+// ── round badge ─────────────────────────────────────────────────────────────
+// RoundBadge is *chrome* — a read-only status strip that prefixes the A2UI
+// surface whenever the backend re-fires `t-clarify` via `t-reassess` and
+// stamps the outgoing A2UI envelope with a top-level `round: {n, max}` field.
+// Deliberately not registered in componentCatalog: the backend never emits a
+// `round_badge` component; this pill is derived from envelope metadata and
+// rendered by the renderer itself (REQ-100).
+//
+// Visual contract (see spec §4.3 + REQ-120/127):
+//   • Reuses BadgeComponent's pill language: 1px accent border, 8% tint,
+//     JetBrains Mono 10px uppercase tracked-widest.
+//   • Leading ◉ glyph is purely decorative (aria-hidden).
+//   • Caption after a `·` separator: "seguimiento" (active mid-loop),
+//     "última ronda" (n === max), or "respondida {{time}}" (locked).
+//   • NO tooltip — REQ-127 — silence is intentional mid-loop.
+//   • Hidden when round is absent, `n < 1`, or `max < 2` (single-round
+//     turns must look unchanged).
+//
+// Wrapped in role="status" aria-live="polite" so screen readers announce
+// "Follow-up 2 of 3, follow-up" the moment the bubble mounts, without
+// stealing focus.
+interface RoundBadgeProps {
+  round: A2UIRound;
+  resolvedAt?: Date;
+}
+
+function RoundBadge({ round, resolvedAt }: RoundBadgeProps) {
+  const { t } = useTranslation('chat');
+  // Gate on the exact conditions spelled out in REQ-100 + types.ts doc:
+  // suppress for the very first round of a turn and for single-round turns.
+  if (!round || round.n < 1 || round.max < 2) return null;
+
+  const isLocked = resolvedAt !== undefined;
+  const isFinal = round.n === round.max;
+
+  // Caption selection: locked state wins over final/active; otherwise the
+  // active surface of the last budgeted round reads "última ronda" to soften
+  // the stakes without hiding the cap.
+  const caption = isLocked
+    ? t('a2ui.clarify.badge.responded', {
+        time: resolvedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })
+    : isFinal
+      ? t('a2ui.clarify.badge.final')
+      : t('a2ui.clarify.badge.followup');
+
+  const label = t('a2ui.clarify.badge.label', { n: round.n, max: round.max });
+  const aria = t('a2ui.clarify.badge.aria', { n: round.n, max: round.max, caption });
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      aria-label={aria}
+      className="inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full mb-2 self-start"
+      style={{
+        color: 'var(--accent)',
+        border: '1px solid var(--accent)',
+        background: 'rgba(14, 165, 233, 0.08)',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}
+    >
+      <span aria-hidden="true">{'\u25C9'}</span>
+      <span>{label}</span>
+      <span aria-hidden="true" style={{ opacity: 0.5 }}>·</span>
+      <span style={{ color: 'var(--text-muted)' }}>{caption}</span>
+    </span>
   );
 }
 
@@ -1138,9 +1237,21 @@ export function A2UIMessageRenderer({
     [resolvedPayload, resolvedAt],
   );
 
+  // Motion — §Motion in the iterative-clarification-loop spec.
+  // Only A2UI bubbles that carry a `round` field animate on mount; other
+  // bubbles keep their current mount behavior to avoid introducing motion
+  // inconsistency across surfaces that pre-date this feature. The `.a2ui-
+  // round-in` class is defined in index.css (180ms fade + 4px lift,
+  // reduced-motion → fade only).
+  const hasRound = Boolean(deferredPayload.round);
+  const contentClass = hasRound ? 'a2ui-content a2ui-round-in' : 'a2ui-content';
+
   return (
     <ResolutionContext.Provider value={resolutionValue}>
-      <div className="a2ui-content">
+      <div className={contentClass}>
+        {deferredPayload.round ? (
+          <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+        ) : null}
         {deferredPayload.components.map((component, i) => (
           <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
         ))}
