@@ -10,7 +10,7 @@
     "clear": "Limpiar",
     "fork": "Bifurcar",
     "rename": "Renombrar",
-    "signOut": "Cerrar sesion",
+    "signOut": "Cerrar sesión",
     "confirm": "Confirmar",
     "back": "Volver",
     "load": "Cargar",
@@ -30,27 +30,27 @@
     "failed": "Fallido"
   },
   "errors": {
-    "generic": "Algo salio mal. Por favor, intenta de nuevo.",
-    "tooManyRequests": "Demasiadas solicitudes. Intenta de nuevo en un momento.",
+    "generic": "Algo salió mal. Por favor, inténtalo de nuevo.",
+    "tooManyRequests": "Demasiadas solicitudes. Inténtalo de nuevo en un momento.",
     "failedToLoad": "No se pudo cargar {{resource}}: {{error}}",
     "balanceUnavailable": "Saldo no disponible"
   },
   "timeAgo": {
     "justNow": "ahora mismo",
-    "minutesAgo": "hace {{count}}m",
-    "hoursAgo": "hace {{count}}h",
+    "minutesAgo": "hace {{count}} min",
+    "hoursAgo": "hace {{count}} h",
     "yesterday": "Ayer",
-    "daysAgo": "hace {{count}}d",
-    "weeksAgo": "hace {{count}}sem",
-    "monthsAgo": "hace {{count}}mes",
-    "yearsAgo": "hace {{count}}a"
+    "daysAgo": "hace {{count}} d",
+    "weeksAgo": "hace {{count}} sem",
+    "monthsAgo": "hace {{count}} mes",
+    "yearsAgo": "hace {{count}} a"
   },
   "a11y": {
-    "mainNavigation": "Navegacion principal",
-    "landingNavigation": "Navegacion de la pagina de inicio",
-    "mobileNavigation": "Navegacion movil",
+    "mainNavigation": "Navegación principal",
+    "landingNavigation": "Navegación de la página de inicio",
+    "mobileNavigation": "Navegación móvil",
     "applicationDock": "Panel de aplicaciones",
-    "assistantThinking": "El asistente esta pensando",
+    "assistantThinking": "brae está pensando",
     "messageInput": "Entrada de mensaje",
     "sendMessage": "Enviar mensaje",
     "searchCommands": "Buscar comandos",

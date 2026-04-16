@@ -3,12 +3,75 @@ package cpn
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 )
+
+// renderSystemPrompt returns the per-invocation system prompt for an LLM
+// transition. It prepends the session's regional-variant preamble to the
+// transition's static SystemPrompt without mutating the transition (CON-003).
+// Returns the original prompt unchanged when SkipRegionalPreamble is set.
+func renderSystemPrompt(t *Transition, c *CPN) string {
+	if t.LLMConfig != nil && t.LLMConfig.SkipRegionalPreamble {
+		return t.SystemPrompt
+	}
+	preamble := prompts.PreambleFor(c.RegionalVariant)
+	if preamble == "" {
+		return t.SystemPrompt
+	}
+	if t.SystemPrompt == "" {
+		return preamble
+	}
+	return preamble + "\n\n" + t.SystemPrompt
+}
 
 // MaxToolCallIterations caps the agentic loop to prevent infinite cycles.
 const MaxToolCallIterations = 10
+
+// responseContainsJSONObject reports whether s contains at least one
+// syntactically balanced JSON object. Used by the REQ-PAR-004 verify loop
+// to decide whether a JSON-required response needs a single retry. The
+// check is intentionally loose — the downstream parser (e.g.
+// cmd/server/topologies.go::extractJSONObject) applies the schema-level
+// filtering. This helper only distinguishes "no braces at all" from
+// "something brace-shaped is present".
+func responseContainsJSONObject(s string) bool {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // fireLLM executes a NodeKindLLM transition.
 //
@@ -43,7 +106,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	historySnapshot := make([]*Message, len(c.History))
 	copy(historySnapshot, c.History)
 	c.mu.RUnlock()
-	cw := BuildContext(t.SystemPrompt, historySnapshot, ctxWindowSize)
+	cw := BuildContext(renderSystemPrompt(t, c), historySnapshot, ctxWindowSize)
 
 	// Assemble messages: system prompt + context window messages + consumed tokens.
 	messages := make([]*LLMMessage, 0, 1+len(cw.Messages)+1)
@@ -109,6 +172,19 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	var err error
 	var totalCostUSD float64
 
+	// REQ-OBS-001: one INFO log per LLM call, structured with the identity
+	// fields an operator needs to answer "which model ran for this user in
+	// this session?". resolved_model is the authored Model (already written
+	// by applyUserModelPreferences); the openrouter layer may map role
+	// aliases further but that is observable in its own per-call log.
+	slog.InfoContext(ctx, "llm call",
+		"session_id", c.SessionID,
+		"cpn_id", c.ID,
+		"transition_id", t.ID,
+		"role", t.LLMConfig.Role,
+		"resolved_model", t.LLMConfig.Model,
+	)
+
 	streamOutput := t.LLMConfig.StreamOutput
 	var onChunk func(string)
 	if streamOutput {
@@ -136,6 +212,46 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		return nil, 0, fmt.Errorf("transition %s: LLM call: %w", t.ID, err)
 	}
 	totalCostUSD += resp.CostUSD
+
+	// REQ-PAR-004: response-format verify-and-retry. Applies ONLY to
+	// non-streaming, RequireJSON+ResponseFmtRequired transitions — t-ask
+	// is the canonical caller. If the first response contains no balanced
+	// JSON object, we retry once with a terser directive appended to the
+	// system prompt. Gemma 4 31B with reasoning mode drops JSON entirely
+	// about 2% of the time; one deterministic retry recovers the call at
+	// at most one extra LLM hop of cost, attributed to the same transition.
+	if t.LLMConfig.ResponseFmtRequired && !streamOutput && t.LLMConfig.RequireJSON {
+		if !responseContainsJSONObject(resp.Content) {
+			retryReq := *req
+			retryMessages := make([]*LLMMessage, len(messages))
+			copy(retryMessages, messages)
+			if len(retryMessages) > 0 && retryMessages[0].Role == "system" {
+				sys := *retryMessages[0]
+				sys.Content = sys.Content + "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
+				retryMessages[0] = &sys
+			}
+			retryReq.Messages = retryMessages
+			slog.InfoContext(ctx, "llm response-format retry",
+				"session_id", c.SessionID,
+				"cpn_id", c.ID,
+				"transition_id", t.ID,
+				"role", t.LLMConfig.Role,
+				"resolved_model", t.LLMConfig.Model,
+			)
+			retryResp, retryErr := c.LLMClient.Complete(ctx, &retryReq)
+			if retryErr == nil {
+				// Cost of the retry is attributed to the same transition.
+				totalCostUSD += retryResp.CostUSD
+				resp = retryResp
+			}
+		}
+	}
+	// Record the actually executed model id (after role→model resolution) so
+	// the executor can expose it on the transition_completed event and the UI
+	// can show the real model that ran rather than the authored role alias.
+	if meta := metaFromCtx(ctx); meta != nil && resp.Model != "" {
+		meta.executedModel = resp.Model
+	}
 
 	// Step 4: Tool-call loop.
 	var content string
@@ -185,9 +301,14 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	}
 
 	// Append consumed input and LLM output to CPN history for downstream transitions.
-	// Skip when SkipHistory is true — classifier output is routing metadata,
-	// not conversational content that downstream transitions need in history.
-	if !t.LLMConfig.SkipHistory {
+	// Suppressed when EITHER:
+	//   - SkipHistory: the transition reads no history AND its output has no
+	//     conversational value (e.g. t-classify routing metadata), OR
+	//   - SkipOutputHistory: the transition DOES read history (input side) but
+	//     its output is routing metadata that must not pollute the transcript
+	//     (e.g. t-ask raw questionnaire JSON consumed by t-clarify via tokens).
+	// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107.
+	if !t.LLMConfig.SkipHistory && !t.LLMConfig.SkipOutputHistory {
 		c.mu.Lock()
 		if len(userTokens) > 0 {
 			c.History = append(c.History, &Message{
@@ -455,6 +576,9 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			return "", loopCost, fmt.Errorf("transition %s: LLM re-call (iteration %d): %w", t.ID, i+1, err)
 		}
 		loopCost += newResp.CostUSD
+		if meta := metaFromCtx(ctx); meta != nil && newResp.Model != "" {
+			meta.executedModel = newResp.Model
+		}
 		resp = &newResp
 
 		// If no more tool calls, return the content.

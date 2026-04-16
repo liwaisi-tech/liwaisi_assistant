@@ -1,7 +1,18 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useChatList } from './useChatList';
 
-type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
+type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin' | 'settings';
+
+const RAIL_STORAGE_KEY = 'liwaisi_rail_expanded';
+
+function readRailExpanded(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(RAIL_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Manages navigation state and coordinates chat session lifecycle.
@@ -9,7 +20,16 @@ type ActiveApp = 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin
  */
 export function useSessionManager(userId: string) {
   const [activeApp, setActiveApp] = useState<ActiveApp>('chat');
-  const [isRailExpanded, setIsRailExpanded] = useState(false);
+  const [isRailExpanded, setIsRailExpanded] = useState<boolean>(readRailExpanded);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(RAIL_STORAGE_KEY, isRailExpanded ? '1' : '0');
+    } catch {
+      /* storage unavailable — silently degrade */
+    }
+  }, [isRailExpanded]);
+
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [forkingSessionId, setForkingSessionId] = useState<string | null>(null);
 

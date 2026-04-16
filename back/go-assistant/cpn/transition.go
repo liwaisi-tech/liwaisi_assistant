@@ -66,6 +66,18 @@ type Transition struct {
 	// Only used when Kind == NodeKindTool.
 	Executor func(ctx context.Context, in Token) (Token, error)
 
+	// ToolHandler is an alternative NodeKindTool entrypoint for transitions
+	// that consume more than one input token or need to deposit DIFFERENT
+	// tokens into DIFFERENT output places (routing + counter-update
+	// patterns). When non-nil, fireTool calls ToolHandler with the full
+	// consumed slice and expects a map keyed by output place ID. Every
+	// output place in OutputPlaces MUST have a corresponding entry.
+	//
+	// When both Executor and ToolHandler are set, ToolHandler wins — this
+	// lets legacy transitions opt in without behavior changes and keeps the
+	// single-in/single-out Executor the default.
+	ToolHandler func(ctx context.Context, consumed []Token) (map[string]Token, error)
+
 	// LLMConfig holds per-transition model selection and budget.
 	// Only meaningful when Kind == NodeKindLLM. Nil for other kinds.
 	LLMConfig *LLMConfig

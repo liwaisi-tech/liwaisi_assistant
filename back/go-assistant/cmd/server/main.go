@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
@@ -84,6 +85,7 @@ func main() {
 				Ledger:       store.Ledger(),
 				Flows:        store.Flows(),
 				Intelligence: store.Intelligence(),
+				Users:        store.Users(),
 				FuncRegistry: registry,
 			}),
 		)
@@ -129,10 +131,20 @@ func main() {
 	if apiKey == "" {
 		logger.Warn("OPENROUTER_API_KEY not set; LLM calls will fail")
 	}
-	defaultModel := resolveConfig("default_model")
+	// REQ-MIG-003: record the single product default at startup. The legacy
+	// "default_model" config key and its DEFAULT_MODEL env variable were
+	// removed; PRODUCT_DEFAULT_MODEL is the only default, unconditionally.
+	logger.Info("using product default model", "model", openrouter.PRODUCT_DEFAULT_MODEL)
 
 	// ── Driven adapters ─────────────────────────────────────────────────
-	llmClient := openrouter.NewClient(apiKey, defaultModel)
+	llmClient := openrouter.NewClient(apiKey, openrouter.PRODUCT_DEFAULT_MODEL)
+	// Per-call audit recorder (writes one row per LLM invocation to llm_calls).
+	// Only enabled when persistence is configured.
+	var callRecorder openrouter.CallRecorder
+	if store != nil {
+		callRecorder = &llmCallRecorderAdapter{repo: store.LLMCalls(), logger: logger}
+		llmClient.CallRecorder = callRecorder
+	}
 	holder := config.NewLLMClientHolder(llmClient)
 	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
 
@@ -144,12 +156,16 @@ func main() {
 	}
 
 	// ── Hot-reload: swap LLM client when config changes ─────────────────
+	// REQ-CFG-002: default_model is no longer a platform config key; only
+	// the API key triggers a client swap. Model selection is resolved
+	// per-session from user preferences with PRODUCT_DEFAULT_MODEL as the
+	// floor (see internal/app/session_service.go::applyUserModelPreferences).
 	if configProvider != nil {
 		configProvider.OnChange(func(key, _ string) {
-			if key == "openrouter_api_key" || key == "default_model" {
+			if key == "openrouter_api_key" {
 				newAPIKey := configProvider.Get("openrouter_api_key")
-				newModel := configProvider.Get("default_model")
-				newClient := openrouter.NewClient(newAPIKey, newModel)
+				newClient := openrouter.NewClient(newAPIKey, openrouter.PRODUCT_DEFAULT_MODEL)
+				newClient.CallRecorder = callRecorder
 				holder.Swap(newClient)
 				logger.Info("LLM client hot-reloaded", "trigger_key", key)
 			}
@@ -224,19 +240,22 @@ func main() {
 			}
 		}
 
-		// Emit the raw event for any SSE listeners (monitor, execution trace, etc.)
-		srv.Broker().PublishEvent(sessionID, &evt)
-
-		// For HITL requests, also emit an A2UI review card as a stream chunk.
-		// The agent drives the UI: the backend decides what interface to show.
+		// For HITL requests, the backend drives the UI by emitting an A2UI
+		// review card as a stream chunk. Because the surface is already
+		// server-owned, we must mark the event with CustomSurface:true
+		// BEFORE publishing it, so the frontend's onHITLRequested handler
+		// suppresses its own default bubble (otherwise the reducer creates
+		// a redundant empty assistant bubble alongside the review card).
 		//
-		// When the transition already published its own A2UI surface (signaled
-		// via HITLRequestedPayload{CustomSurface:true}), the default card is
-		// suppressed — emitting both would concatenate two "$$a2ui:" chunks
-		// into one streaming assistant message, breaking JSON.parse on the
+		// When the transition itself already published an A2UI surface
+		// (e.g. t-clarify via A2UIPayloadBuilder), it signals via
+		// HITLRequestedPayload{CustomSurface:true} and we skip emitting
+		// the default card — two "$$a2ui:" chunks would concatenate into
+		// one streaming assistant message, breaking JSON.parse on the
 		// frontend and falling through to raw markdown.
 		if evt.Type == cpn.EventHITLRequested {
 			prompt := "Please review and confirm."
+			transitionOwnsSurface := false
 			switch p := evt.Payload.(type) {
 			case string:
 				if p != "" {
@@ -244,29 +263,96 @@ func main() {
 				}
 			case cpn.HITLRequestedPayload:
 				if p.CustomSurface {
-					return // transition owns the surface; skip default card
+					transitionOwnsSurface = true
 				}
 				if p.Prompt != "" {
 					prompt = p.Prompt
 				}
 			}
-			a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
-			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
-				SessionID: sessionID,
-				CPNID:     evt.CPNID,
-				CPNRole:   "review",
-				Content:   a2uiPayload,
-				Done:      false,
-			})
-			// Done sentinel for this A2UI message.
-			srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
-				SessionID: sessionID,
-				CPNID:     evt.CPNID,
-				CPNRole:   "review",
-				Content:   "",
-				Done:      true,
-			})
+
+			if !transitionOwnsSurface {
+				// Rewrite the payload so the frontend knows the surface
+				// is already on the wire and doesn't render a duplicate.
+				evt.Payload = cpn.HITLRequestedPayload{Prompt: prompt, CustomSurface: true}
+			}
+
+			srv.Broker().PublishEvent(sessionID, &evt)
+
+			if !transitionOwnsSurface {
+				// REQ-PAR-003: when the A2UI questionnaire builder on
+				// t-clarify fails (e.g. the selected model emitted
+				// undecodable JSON), fireHITL falls back to
+				// CustomSurface:false and the integration layer emits the
+				// generic Review Required card above. That alone strands
+				// the user — they see a card with no context. Here we
+				// also publish a plain-text banner (no $$a2ui: prefix, so
+				// it renders as a regular assistant bubble) explaining
+				// what happened and how to recover.
+				//
+				// Design note: we use transition identity (t-clarify) as
+				// the signal rather than a new side-channel field on
+				// HITLRequestedPayload, because the invariant "t-clarify
+				// always owns its surface on success" is already baked
+				// into the topology. A CustomSurface:false for t-clarify
+				// is therefore a reliable proxy for an A2UIPayloadBuilder
+				// failure without touching cpn/hitl.go.
+				if evt.TransitionID == "t-clarify" {
+					const banner = "Your selected model did not return a valid questionnaire. You can approve the request as-is, reject it, or change the model in Settings."
+					srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     evt.CPNID,
+						CPNRole:   "review",
+						Content:   banner,
+						Done:      false,
+					})
+					srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+						SessionID: sessionID,
+						CPNID:     evt.CPNID,
+						CPNRole:   "review",
+						Content:   "",
+						Done:      true,
+					})
+				}
+
+				// REQ-BE-003 / INV-005: reaching this branch indicates a
+				// misconfigured t-review topology (missing A2UIPayloadBuilder
+				// on the transition). The surface is still emitted so the
+				// user is not stranded, but NO history row is persisted here
+				// — only the transition-owned A2UIPayloadBuilder path in
+				// fireHITL feeds c.History. A WARN line is the regression
+				// signal on-call greps for. PAT-003. No request-scoped ctx
+				// is available inside the event-subscriber callback, so we
+				// use context.Background() — trace correlation happens via
+				// the session_id / transition_id fields below.
+				slog.WarnContext(context.Background(), "legacy review-card emit path used (NOT persisted) — t-review topology may be misconfigured",
+					"session_id", sessionID,
+					"cpn_id", evt.CPNID,
+					"transition_id", evt.TransitionID,
+					"prompt_len", len(prompt),
+				)
+
+				a2uiPayload := buildHITLReviewCard(prompt, evt.TransitionID)
+				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+					SessionID: sessionID,
+					CPNID:     evt.CPNID,
+					CPNRole:   "review",
+					Content:   a2uiPayload,
+					Done:      false,
+				})
+				// Done sentinel for this A2UI message.
+				srv.Broker().PublishStreamChunk(sessionID, cpn.StreamChunk{
+					SessionID: sessionID,
+					CPNID:     evt.CPNID,
+					CPNRole:   "review",
+					Content:   "",
+					Done:      true,
+				})
+			}
+			return
 		}
+
+		// Emit the raw event for any SSE listeners (monitor, execution trace, etc.)
+		srv.Broker().PublishEvent(sessionID, &evt)
 	})
 
 	// ── A2A protocol adapter (optional) ─────────────────────────────────
@@ -351,6 +437,61 @@ func (a *ledgerCostAdapter) SessionCostUSD(sessionID string) float64 {
 		return 0
 	}
 	return rec.TotalCostUSD
+}
+
+// llmCallRecorderAdapter bridges openrouter.CallRecorder (the LLM hot path)
+// to persist.LLMCallRepository (the Postgres audit log). Each RecordCall
+// dispatches a background goroutine with a fresh context so the LLM caller
+// never blocks on the database.
+type llmCallRecorderAdapter struct {
+	repo   persist.LLMCallRepository
+	logger *slog.Logger
+}
+
+func (a *llmCallRecorderAdapter) RecordCall(_ context.Context, rec openrouter.CallRecord) {
+	if a == nil || a.repo == nil {
+		return
+	}
+
+	msgsJSON, err := json.Marshal(rec.RequestMessages)
+	if err != nil {
+		// Fall back to an empty array so the JSONB column stays valid.
+		msgsJSON = []byte("[]")
+	}
+
+	pr := &persist.LLMCallRecord{
+		SessionID:           rec.SessionID,
+		TransitionID:        rec.TransitionID,
+		CPNID:               rec.CPNID,
+		ModelRequested:      rec.ModelRequested,
+		ModelResolved:       rec.ModelResolved,
+		Endpoint:            rec.Endpoint,
+		Streamed:            rec.Streamed,
+		InputTokens:         rec.InputTokens,
+		OutputTokens:        rec.OutputTokens,
+		CacheReadTokens:     rec.CacheReadTokens,
+		CacheCreationTokens: rec.CacheCreationTokens,
+		ReasoningTokens:     rec.ReasoningTokens,
+		CostUSD:             rec.CostUSD,
+		RequestMessages:     msgsJSON,
+		ResponseText:        rec.ResponseText,
+		FinishReason:        rec.FinishReason,
+		Error:               rec.Error,
+		DurationMs:          rec.Duration.Milliseconds(),
+		CreatedAt:           rec.CreatedAt,
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := a.repo.Record(ctx, pr); err != nil {
+			a.logger.Warn("llm call audit record failed",
+				slog.String("session_id", pr.SessionID),
+				slog.String("model", pr.ModelResolved),
+				slog.Any("error", err),
+			)
+		}
+	}()
 }
 
 // tokenLedgerAdapter adapts openrouter.TokenLedger to app.TokenLedgerReader.
@@ -447,41 +588,23 @@ func parseDuration(key string, defaultVal time.Duration) time.Duration {
 
 // buildHITLReviewCard constructs an A2UI payload for HITL review.
 // The backend drives the UI: approve, request changes, or discard.
-func buildHITLReviewCard(prompt, transitionID string) string {
-	type comp struct {
-		Type     string         `json:"type"`
-		Props    map[string]any `json:"props,omitempty"`
-		Children []comp         `json:"children,omitempty"`
-	}
-	type payload struct {
-		Components []comp `json:"components"`
-	}
-
-	p := payload{
-		Components: []comp{
-			{Type: "card", Props: map[string]any{"title": "Review Required"}, Children: []comp{
-				{Type: "text", Props: map[string]any{"content": prompt}},
-				{Type: "divider"},
-				{Type: "text", Props: map[string]any{"content": "Choose an action to continue:", "variant": "secondary"}},
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✓ Approve", "variant": "success",
-				"actionType": "hitl:approve", "id": transitionID,
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✎ Request Changes", "variant": "primary",
-				"actionType": "hitl:revise", "id": transitionID,
-			}},
-			{Type: "button", Props: map[string]any{
-				"label": "✗ Discard", "variant": "danger",
-				"actionType": "hitl:reject", "id": transitionID,
-			}},
-		},
-	}
-
-	data, err := json.Marshal(p)
+//
+// This is a thin wrapper over reviewCardPayload (topologies.go). The
+// transition-owned A2UIPayloadBuilder on t-review uses reviewCardPayload
+// directly via buildReviewA2UIPayload. This legacy-branch wrapper exists so
+// cmd/server/main.go's defensive WARN-and-emit fallback (PAT-003) produces
+// a byte-identical card shape if a future t-review ships without its
+// A2UIPayloadBuilder.
+//
+// The `prompt` argument is retained for call-site compatibility but is
+// ignored — the card's primary text is fixed in reviewCardPayload so live
+// and rehydrated renders converge. If a custom prompt is ever needed in
+// this branch, it should be threaded through reviewCardPayload instead.
+func buildHITLReviewCard(_, transitionID string) string {
+	payload := reviewCardPayload(transitionID)
+	data, err := json.Marshal(payload)
 	if err != nil {
-		return prompt // fallback to plain text
+		return "" // caller's WARN already fired; swallow to avoid stranding the SSE stream
 	}
 	return "$$a2ui:" + string(data)
 }

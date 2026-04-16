@@ -64,7 +64,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (*persist
 
 	// Load messages
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp
+		`SELECT id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, COALESCE(parent_message_id, '')
 		 FROM messages WHERE session_id = $1 ORDER BY timestamp`, sessionID,
 	)
 	if err != nil {
@@ -74,7 +74,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (*persist
 
 	for rows.Next() {
 		m := &persist.MessageRecord{}
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CPNID, &m.CPNRole, &m.CPNDepth, &m.Timestamp); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CPNID, &m.CPNRole, &m.CPNDepth, &m.Timestamp, &m.ParentMessageID); err != nil {
 			return nil, fmt.Errorf("postgres session scan message: %w", err)
 		}
 		s.Messages = append(s.Messages, m)
@@ -111,11 +111,17 @@ func (r *SessionRepository) GetByUserID(ctx context.Context, userID string) ([]*
 func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string, msg *persist.MessageRecord) error {
 	// Atomic check-and-insert: verify session is active in the same statement
 	// to avoid TOCTOU race between separate SELECT and INSERT.
+	// parent_message_id is NULL when ParentMessageID is empty so legacy rows
+	// remain distinguishable from explicitly-linked rows.
+	var parentID any
+	if msg.ParentMessageID != "" {
+		parentID = msg.ParentMessageID
+	}
 	tag, err := r.pool.Exec(ctx,
-		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp)
-		 SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, parent_message_id)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
 		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')`,
-		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp,
+		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp, parentID,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -229,19 +235,32 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 		limit = 100
 	}
 
+	// Fetch the last 10 message contents (newest-first) per session so the
+	// shared persist.RenderablePreview helper can skip raw-routing-JSON or
+	// unparseable A2UI rows and pick the first user-renderable summary
+	// (REQ-202, INV-302, spec-process-bugfix-a2ui-rehydration-completion.md).
+	const previewLookback = 10
 	query := `
 		SELECT s.id, COALESCE(s.title, ''), s.state, s.last_activity_at, s.created_at,
 		       COALESCE(s.forked_from_session_id, ''),
 		       COALESCE(tl.total_cost_usd, 0),
 		       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-		       COALESCE((SELECT content FROM messages m2 WHERE m2.session_id = s.id ORDER BY m2.timestamp DESC LIMIT 1), '')
+		       COALESCE(
+		         (SELECT array_agg(content ORDER BY ts DESC)
+		            FROM (SELECT content, timestamp AS ts
+		                    FROM messages m2
+		                   WHERE m2.session_id = s.id
+		                ORDER BY m2.timestamp DESC
+		                   LIMIT $3) recent),
+		         ARRAY[]::text[]
+		       )
 		FROM sessions s
 		LEFT JOIN token_ledger tl ON tl.session_id = s.id
 		WHERE s.user_id = $1 AND s.deleted_at IS NULL AND s.state != 'expired'
 		ORDER BY s.last_activity_at DESC
 		LIMIT $2`
 
-	rows, err := r.pool.Query(ctx, query, userID, limit+1)
+	rows, err := r.pool.Query(ctx, query, userID, limit+1, previewLookback)
 	if err != nil {
 		return nil, fmt.Errorf("postgres session listByUserID: %w", err)
 	}
@@ -251,17 +270,16 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID string, opt
 	for rows.Next() {
 		item := &persist.SessionListItem{}
 		var state string
+		var recent []string
 		if err := rows.Scan(
 			&item.ID, &item.Title, &state, &item.LastActivityAt, &item.CreatedAt,
 			&item.ForkedFromSessionID, &item.TotalCostUSD,
-			&item.MessageCount, &item.LastMessagePreview,
+			&item.MessageCount, &recent,
 		); err != nil {
 			return nil, fmt.Errorf("postgres session scan list item: %w", err)
 		}
 		item.State = persist.SessionState(state)
-		if len(item.LastMessagePreview) > 120 {
-			item.LastMessagePreview = item.LastMessagePreview[:120]
-		}
+		item.LastMessagePreview = persist.RenderablePreview(recent)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

@@ -1,18 +1,18 @@
 {
-  "title": "Configuracion de plataforma",
-  "subtitle": "Gestionar secretos y configuraciones de la plataforma",
-  "setupRequired": "Configuracion requerida: faltan algunas configuraciones obligatorias.",
+  "title": "Configuración de plataforma",
+  "subtitle": "Gestiona los secretos y la configuración de la plataforma",
+  "setupRequired": "Configuración requerida: faltan algunos ajustes obligatorios.",
   "refresh": "Actualizar",
   "categories": {
-    "llm": "Configuracion LLM",
-    "auth": "Autenticacion",
-    "server": "Configuracion del servidor",
+    "llm": "Configuración LLM",
+    "auth": "Autenticación",
+    "server": "Configuración del servidor",
     "models": "Modelos personalizados"
   },
   "source": {
     "env": "ENV",
-    "db": "DB",
-    "default": "DEFAULT"
+    "db": "BD",
+    "default": "PREDETERMINADO"
   },
   "field": {
     "save": "Guardar",
@@ -25,12 +25,12 @@
     "deleted": "Eliminado",
     "error": "Error al guardar"
   },
-  "loading": "Cargando configuracion...",
-  "error": "Error al cargar la configuracion",
+  "loading": "Cargando configuración...",
+  "error": "Error al cargar la configuración",
   "errors": {
     "forbidden": "No tienes acceso de administrador.",
-    "unavailable": "El servicio de administracion no esta disponible.",
-    "generic": "No se pudo cargar la configuracion."
+    "unavailable": "El servicio de administración no está disponible.",
+    "generic": "No se pudo cargar la configuración."
   },
   "retry": "Reintentar"
 }

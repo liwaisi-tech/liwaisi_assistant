@@ -116,6 +116,8 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
             hitlTransitionId={msg.hitlTransitionId}
             hitlActions={msg.hitlActions}
             hitlResolved={msg.hitlResolved}
+            resolvedPayload={msg.resolvedPayload}
+            resolvedAt={msg.resolvedAt}
             onHITLAction={onHITLAction}
             onOpenMonitor={onOpenMonitor}
           />

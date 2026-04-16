@@ -2,9 +2,8 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
 import type { A2UIPayload, A2UIAction } from './a2ui/types.ts';
+import { A2UI_MARKER } from './a2ui/constants.ts';
 import type { HITLAction } from '../../types/chat';
-
-const A2UI_MARKER = '$$a2ui:';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
@@ -16,21 +15,32 @@ interface MessageBubbleProps {
   hitlTransitionId?: string;
   hitlActions?: HITLAction[];
   hitlResolved?: HITLAction;
+  // Resolution props that lock an A2UI surface (e.g. the questionnaire)
+  // into a read-only state showing what the user submitted. Populated by
+  // the chat reducer on SESSION_LOADED rehydration and on live HITL
+  // submission (REQ-102..105).
+  resolvedPayload?: string;
+  resolvedAt?: Date;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   onOpenMonitor?: () => void;
 }
 
 /**
  * Parse A2UI payload from message content.
- * Returns the parsed payload if content starts with $$a2ui:, otherwise builds
- * a default text component payload for markdown rendering.
+ * Returns the parsed payload if content (after trimming leading ASCII
+ * whitespace) starts with $$a2ui:, otherwise builds a default text
+ * component payload for markdown rendering. REQ-011 / REQ-012.
+ *
+ * Fall-through preserves the ORIGINAL (untrimmed) content so that plain
+ * messages which legitimately begin with whitespace render unchanged.
  */
 function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
-  if (content.startsWith(A2UI_MARKER)) {
+  const trimmed = content.replace(/^\s+/, '');
+  if (trimmed.startsWith(A2UI_MARKER)) {
     try {
-      return JSON.parse(content.slice(A2UI_MARKER.length));
+      return JSON.parse(trimmed.slice(A2UI_MARKER.length));
     } catch {
-      // Malformed A2UI JSON — fall through to text rendering
+      // Malformed or partial A2UI JSON — fall through to text rendering
     }
   }
 
@@ -44,12 +54,17 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 
 export const MessageBubble = memo(function MessageBubble({
   role, content, cpnId, cpnRole, timestamp, isStreaming,
-  hitlTransitionId, hitlResolved, onHITLAction, onOpenMonitor,
+  hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
+  onHITLAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseText, setReviseText] = useState('');
+  // Transition id captured from the A2UI "Request Changes" button. Needed
+  // because A2UI-rendered review cards carry the id on the button component,
+  // not on the MessageBubble's hitlTransitionId prop.
+  const [reviseTransitionId, setReviseTransitionId] = useState<string | null>(null);
 
   // Build A2UI payload — either from backend A2UI content or wrapping text
   const payload = useMemo<A2UIPayload | null>(() => {
@@ -61,6 +76,7 @@ export const MessageBubble = memo(function MessageBubble({
   const handleA2UIAction = useCallback(
     (action: A2UIAction) => {
       if (action.type === 'hitl:revise') {
+        setReviseTransitionId(action.componentId ?? hitlTransitionId ?? null);
         setReviseMode(true);
         return;
       }
@@ -74,15 +90,17 @@ export const MessageBubble = memo(function MessageBubble({
         onHITLAction?.(action.componentId, hitlAction);
       }
     },
-    [onHITLAction],
+    [onHITLAction, hitlTransitionId],
   );
 
   const handleReviseSubmit = useCallback(() => {
-    if (!reviseText.trim() || !hitlTransitionId) return;
-    onHITLAction?.(hitlTransitionId, 'revise', reviseText.trim());
+    const transitionId = reviseTransitionId ?? hitlTransitionId;
+    if (!reviseText.trim() || !transitionId) return;
+    onHITLAction?.(transitionId, 'revise', reviseText.trim());
     setReviseMode(false);
     setReviseText('');
-  }, [reviseText, hitlTransitionId, onHITLAction]);
+    setReviseTransitionId(null);
+  }, [reviseText, reviseTransitionId, hitlTransitionId, onHITLAction]);
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -133,6 +151,8 @@ export const MessageBubble = memo(function MessageBubble({
             payload={payload}
             isStreaming={isStreaming ?? false}
             onAction={handleA2UIAction}
+            resolvedPayload={resolvedPayload}
+            resolvedAt={resolvedAt}
           />
         ) : null}
 
@@ -169,7 +189,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {t('messageBubble.sendChanges', 'Send Changes')}
               </button>
               <button
-                onClick={() => { setReviseMode(false); setReviseText(''); }}
+                onClick={() => { setReviseMode(false); setReviseText(''); setReviseTransitionId(null); }}
                 className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
                 style={{
                   backgroundColor: 'rgba(255, 255, 255, 0.05)',

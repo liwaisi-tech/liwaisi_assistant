@@ -14,6 +14,7 @@ const loaders: Record<string, Record<string, Loader>> = {
     tools: () => import('./locales/en/tools.json'),
     setup: () => import('./locales/en/setup.json'),
     admin: () => import('./locales/en/admin.json'),
+    settings: () => import('./locales/en/settings.json'),
   },
   es: {
     landing: () => import('./locales/es/landing.json'),
@@ -26,6 +27,7 @@ const loaders: Record<string, Record<string, Loader>> = {
     tools: () => import('./locales/es/tools.json'),
     setup: () => import('./locales/es/setup.json'),
     admin: () => import('./locales/es/admin.json'),
+    settings: () => import('./locales/es/settings.json'),
   },
 };
 

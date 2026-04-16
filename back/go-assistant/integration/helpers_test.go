@@ -41,7 +41,11 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	model := os.Getenv("DEFAULT_MODEL")
+	// INTEGRATION_MODEL: opt-in override for integration tests only. Lets
+	// the CI pipeline point tests at a cheaper model without reintroducing
+	// the removed DEFAULT_MODEL env in the production surface
+	// (REQ-CFG-002). Defaults to a known-working minimax build.
+	model := os.Getenv("INTEGRATION_MODEL")
 	if model == "" {
 		model = "minimax/minimax-m2.7"
 	}

@@ -2,9 +2,10 @@
   "progress": {
     "step1": "Welcome",
     "step2": "Language",
-    "step3": "Model",
-    "step4": "Personality",
-    "step5": "Ready"
+    "step3": "Region",
+    "step4": "Model",
+    "step5": "Personality",
+    "step6": "Ready"
   },
   "skip": "Skip Setup",
   "back": "Back",
@@ -22,19 +23,61 @@
       "greeting": "Hello! How can I help you today?"
     },
     "es": {
-      "name": "Espanol",
-      "greeting": "Hola! En que puedo ayudarte hoy?"
+      "name": "Español",
+      "greeting": "¡Hola! ¿En qué puedo ayudarte hoy?"
+    }
+  },
+  "region": {
+    "title": "Where do you write from?",
+    "description": "Helps brae read regional idioms the way you mean them. UI stays in your chosen language.",
+    "continue": "Continue",
+    "default_badge": "Default",
+    "variants": {
+      "es-CO": {
+        "label": "Spanish (Colombia)",
+        "description": "\"cuenta\" often means \"tell me\", \"regalame\" is polite \"please pass me\"."
+      },
+      "es-MX": {
+        "label": "Spanish (Mexico)",
+        "description": "\"ahorita\" is vague, \"chido\" means cool, \"mande\" replaces \"what?\"."
+      },
+      "es-AR": {
+        "label": "Spanish (Argentina)",
+        "description": "Voseo (\"vos sabes\"), \"che\", \"laburo\" for work, \"quilombo\" for mess."
+      },
+      "es-ES": {
+        "label": "Spanish (Spain)",
+        "description": "Vosotros, \"vale\", \"tio\", \"curro\" for work, \"flipar\" for being amazed."
+      },
+      "en-GB": {
+        "label": "English (UK)",
+        "description": "\"cheers\" as thanks, \"quite\" softens, \"fancy\" as want, \"brilliant\" as great."
+      },
+      "en-US": {
+        "label": "English (US)",
+        "description": "\"awesome\" as great, direct phrasing, \"fix\" prefers a solution over \"sort out\"."
+      },
+      "en-AU": {
+        "label": "English (Australia)",
+        "description": "\"no worries\", \"arvo\" for afternoon, diminutives like \"servo\", informal register."
+      }
     }
   },
   "model": {
     "title": "AI Model Preference",
-    "description": "Choose the default AI model for your conversations.",
+    "description": "This model runs every task brae performs for you. The default is Gemma 4 31B, served by Google via OpenRouter — a balanced choice for cost and capability. You can change it later from Settings.",
     "advanced": "Advanced: Per-role overrides",
-    "keepDefaults": "Keep recommended defaults"
+    "appliesToAll": "This model handles every task. Customize per-task models below if you want finer control.",
+    "keepDefaults": "Keep recommended defaults",
+    "modeSimple": "Simple mode",
+    "modeAdvanced": "Advanced mode",
+    "resetToSingle": "Reset to single model",
+    "continue": "Continue",
+    "required": "Pick a model to continue"
   },
   "personality": {
     "title": "Choose Your AI Style",
-    "description": "Select how your AI assistant should behave. You can customize this later.",
+    "description": "Select how brae should behave. You can customize this later.",
     "balanced": {
       "name": "Balanced",
       "description": "Clear, warm, and privacy-first. The recommended default."
@@ -54,9 +97,11 @@
     "description": "Your preferences have been saved. Let's start chatting.",
     "summary": "Your choices",
     "language_label": "Language",
+    "region_label": "Region",
     "model_label": "Default model",
     "personality_label": "AI style",
     "cta": "Start Chatting",
-    "saving": "Saving your preferences..."
+    "saving": "Saving your preferences...",
+    "error": "We could not save your preferences. Please try again."
   }
 }

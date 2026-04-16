@@ -27,6 +27,32 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* -- Interactive affordance (Tailwind v4 Preflight restore) --
+ * Tailwind v4 changed the default <button> cursor from `pointer` to
+ * `default` to match browser UA. This rule restores the v3 behaviour
+ * project-wide so every enabled interactive element carries a pointer
+ * cursor by default. See spec-process-bugfix-ui-affordance-cursor-focus.md.
+ */
+button:not(:disabled):not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]),
+a[href]:not([aria-disabled="true"]),
+summary,
+label[for] {
+  cursor: pointer;
+}
+
+/* Keyboard-only focus ring, using the project accent colour. Uses
+ * :focus-visible so mouse clicks do NOT leave a visible outline, while
+ * keyboard navigation always does (WCAG 2.4.7). */
+button:not(:disabled):focus-visible,
+[role="button"]:not([aria-disabled="true"]):focus-visible,
+a[href]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
 /* -- Scan-line overlay -- */
 .scan-lines::after {
   content: '';
@@ -102,6 +128,38 @@ body {
 
 .status-pulse {
   animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* -- Session resumed notice fade-in -- */
+@keyframes session-notice-in {
+  0% { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.session-notice-in {
+  animation: session-notice-in 200ms ease-out;
+}
+
+/* -- A2UI clarify-round mount fade --
+ * Applied only to A2UI bubbles whose envelope carries a `round` field.
+ * Regular bubbles keep their current (no-motion) mount to avoid visual
+ * drift across unrelated surfaces. Global prefers-reduced-motion rule
+ * above zeros the duration; keep the keyframe as fade-plus-lift so the
+ * non-reduced path matches the 180ms / 4px spec in §Motion. */
+@keyframes a2ui-round-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.a2ui-round-in {
+  animation: a2ui-round-in 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-round-in {
+    /* Fade only — no translate. Duration is already forced to 0ms by the
+     * global rule above, so this is belt-and-suspenders for clarity. */
+    animation: none;
+  }
 }
 
 /* -- Glow border -- */

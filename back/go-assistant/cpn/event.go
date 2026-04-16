@@ -66,10 +66,11 @@ type TransitionStartedPayload struct {
 
 // TransitionCompletedPayload captures results after a transition fires.
 type TransitionCompletedPayload struct {
-	OutputTokens []TokenSnapshot `json:"output_tokens"`
-	CostUSD      float64         `json:"cost_usd"`
-	DurationMs   int64           `json:"duration_ms"`
-	Error        string          `json:"error,omitempty"`
+	OutputTokens  []TokenSnapshot `json:"output_tokens"`
+	CostUSD       float64         `json:"cost_usd"`
+	DurationMs    int64           `json:"duration_ms"`
+	Error         string          `json:"error,omitempty"`
+	ExecutedModel string          `json:"executed_model,omitempty"`
 }
 
 // TokenSnapshot is a serializable, truncated representation of a Token.

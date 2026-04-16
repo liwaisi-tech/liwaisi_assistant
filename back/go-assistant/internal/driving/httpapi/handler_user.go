@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
 
@@ -28,6 +30,7 @@ type UserProfileResponse struct {
 // UserPreferencesJSON is the JSON representation of user preferences.
 type UserPreferencesJSON struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 }
@@ -37,6 +40,7 @@ type UserPreferencesJSON struct {
 // UpdatePreferencesRequest is the body for PUT /api/v1/user/preferences.
 type UpdatePreferencesRequest struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 }
@@ -44,6 +48,7 @@ type UpdatePreferencesRequest struct {
 // CompleteOnboardingRequest is the body for POST /api/v1/user/onboarding/complete.
 type CompleteOnboardingRequest struct {
 	PreferredLanguage string            `json:"preferred_language"`
+	RegionalVariant   string            `json:"regional_variant"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides"`
 	PersonalityPreset string            `json:"personality_preset"`
@@ -92,6 +97,19 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 		overrides = map[string]string{}
 	}
 
+	// REQ-ONB-004: a legacy user whose model preference is unset (empty
+	// preferred_model AND no role overrides) is treated as mid-onboarding
+	// regardless of OnboardingCompletedAt, so the frontend router routes
+	// them back into the wizard to pick a model. Once the user re-completes
+	// onboarding and sets preferred_model, OnboardingCompletedAt is what
+	// governs the flag again. We do NOT overwrite the DB — the user is
+	// allowed to keep their OnboardingCompletedAt timestamp; this flag is
+	// purely derived for the response.
+	onboardingCompleted := rec.OnboardingCompletedAt != nil
+	if rec.PreferredModel == "" && len(overrides) == 0 {
+		onboardingCompleted = false
+	}
+
 	writeJSON(w, http.StatusOK, UserProfileResponse{
 		ID:      rec.ID,
 		Email:   rec.Email,
@@ -99,10 +117,11 @@ func (h *Handlers) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
 		Picture: rec.Picture,
 		Preferences: UserPreferencesJSON{
 			PreferredLanguage: rec.PreferredLanguage,
+			RegionalVariant:   rec.RegionalVariant,
 			PreferredModel:    rec.PreferredModel,
 			ModelOverrides:    overrides,
 		},
-		OnboardingCompleted: rec.OnboardingCompletedAt != nil,
+		OnboardingCompleted: onboardingCompleted,
 		IsAdmin:             h.isAdminEmail(rec.Email),
 		CreatedAt:           rec.CreatedAt.Format(time.RFC3339),
 	})
@@ -133,10 +152,34 @@ func (h *Handlers) HandleUpdatePreferences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Validate regional variant: empty is allowed and is resolved to the
+	// language default server-side (mirrors HandleCompleteOnboarding); non-empty
+	// must be in the supported set.
+	variant := req.RegionalVariant
+	if variant == "" {
+		if req.PreferredLanguage != "" {
+			variant = prompts.DefaultVariant(req.PreferredLanguage)
+		}
+	} else if !prompts.IsSupported(variant) {
+		writeError(w, http.StatusBadRequest, "regional_variant must be one of: es-CO, es-MX, es-AR, es-ES, en-GB, en-US, en-AU")
+		return
+	}
+
 	prefs := &persist.UserPreferences{
 		PreferredLanguage: req.PreferredLanguage,
+		RegionalVariant:   variant,
 		PreferredModel:    req.PreferredModel,
 		ModelOverrides:    req.ModelOverrides,
+	}
+
+	// Ensure the user row exists before updating preferences. New users may
+	// reach this endpoint before any session has been created (the previous
+	// implicit upsert path), so UpdatePreferences would otherwise fail with
+	// ErrUserNotFound and silently drop the user's choices.
+	if err := h.ensureUserRow(r.Context(), user); err != nil {
+		h.Logger.Error("ensure user row", "user_id", user.Sub, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 
 	if err := h.UserRepo.UpdatePreferences(r.Context(), user.Sub, prefs); err != nil {
@@ -146,6 +189,23 @@ func (h *Handlers) HandleUpdatePreferences(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ensureUserRow upserts the authenticated user from token claims so that
+// subsequent UpdatePreferences / CompleteOnboarding calls find a row.
+func (h *Handlers) ensureUserRow(ctx context.Context, user *auth.AuthenticatedUser) error {
+	if h.UserRepo == nil || user == nil {
+		return nil
+	}
+	now := time.Now()
+	return h.UserRepo.Upsert(ctx, &persist.UserRecord{
+		ID:        user.Sub,
+		Email:     user.Email,
+		Name:      user.Name,
+		Picture:   user.Picture,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 // HandleCompleteOnboarding marks onboarding as complete and saves preferences + optional personality preset.
@@ -168,16 +228,47 @@ func (h *Handlers) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// REQ-ONB-003: preferred_model is REQUIRED. A silent accept of the
+	// default would undermine the privacy-adjacent moment onboarding exists
+	// to surface (see spec-architecture-model-selection-centralization.md
+	// rationale §7 "Why onboarding, not a silent default").
+	if req.PreferredModel == "" {
+		writeErrorCode(w, http.StatusBadRequest, "ONBOARDING_MODEL_REQUIRED", "preferred_model is required")
+		return
+	}
+
 	// Save preferences.
 	lang := req.PreferredLanguage
 	if lang == "" {
 		lang = "en"
 	}
+
+	// Validate regional variant: empty is allowed (resolved to language default
+	// before persisting); non-empty must be in the supported set (SEC-002).
+	variant := req.RegionalVariant
+	if variant == "" {
+		variant = prompts.DefaultVariant(lang)
+	} else if !prompts.IsSupported(variant) {
+		writeError(w, http.StatusBadRequest, "regional_variant must be one of: es-CO, es-MX, es-AR, es-ES, en-GB, en-US, en-AU")
+		return
+	}
+
 	prefs := &persist.UserPreferences{
 		PreferredLanguage: lang,
 		PreferredModel:    req.PreferredModel,
 		ModelOverrides:    req.ModelOverrides,
+		RegionalVariant:   variant,
 	}
+
+	// Ensure the user row exists before updating preferences. Onboarding can
+	// run before any session has been created (the previous implicit upsert
+	// path), so UpdatePreferences would otherwise fail with ErrUserNotFound.
+	if err := h.ensureUserRow(r.Context(), user); err != nil {
+		h.Logger.Error("ensure user row", "user_id", user.Sub, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	if err := h.UserRepo.UpdatePreferences(r.Context(), user.Sub, prefs); err != nil {
 		h.Logger.Error("save onboarding preferences", "user_id", user.Sub, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
 
@@ -12,6 +12,12 @@ interface MessageInputProps {
 export function MessageInput({ onSend, disabled, sessionState, error }: MessageInputProps) {
   const { t } = useTranslation('chat');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!disabled) {
+      textareaRef.current?.focus();
+    }
+  }, [disabled]);
 
   const handleSend = useCallback(() => {
     const value = textareaRef.current?.value.trim();
@@ -58,7 +64,7 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
             type="button"
             onClick={handleSend}
             disabled={disabled}
-            className="flex-none flex items-center justify-center w-8 h-8 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex-none flex items-center justify-center w-8 h-8 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:shadow-[0_0_12px_-2px_var(--accent-glow)] enabled:hover:brightness-110"
             style={{
               backgroundColor: disabled ? 'transparent' : 'var(--accent)',
               color: disabled ? 'var(--text-muted)' : '#fff',

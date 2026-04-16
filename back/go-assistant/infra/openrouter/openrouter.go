@@ -17,51 +17,62 @@ import (
 // Compile-time interface check.
 var _ cpn.LLMClient = (*Client)(nil)
 
+// PRODUCT_DEFAULT_MODEL is the single hard-coded default model for every
+// CPN transition. Per spec-architecture-model-selection-centralization.md
+// (REQ-CFG-001), this is the ONLY place a role's default is defined. User
+// preferences (UserRecord.PreferredModel / ModelOverrides) override this
+// at session resolve time via internal/app/session_service.go.
+//
+// When a future spec changes the default, edit this one line (CON-003).
+const PRODUCT_DEFAULT_MODEL = "google/gemma-4-31b-it"
+
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
 // DefaultModelRegistry holds the default model for each task role.
-// Using the cheapest model that can do the job operationalizes Axiom A11.
-// Override any entry via its environment variable (see ModelEnvVars).
+// Every role maps to PRODUCT_DEFAULT_MODEL (REQ-CFG-001) — there is no
+// per-role deviation from the product default. Historical ENV overrides
+// (MODEL_CLASSIFIER, MODEL_STRUCTURED, …) were removed in favour of the
+// per-user override mechanism (see UserRecord.ModelOverrides).
 var DefaultModelRegistry = map[string]string{
-	"classifier":   "google/gemini-2.0-flash-001",
-	"structured":   "anthropic/claude-sonnet-4-6",
-	"reasoning":    "anthropic/claude-sonnet-4-6",
-	"long-context": "google/gemini-2.0-flash-001",
-	"summarize":    "google/gemini-2.0-flash-001",
-	"thinking":     "anthropic/claude-opus-4-6",
+	"classifier":   PRODUCT_DEFAULT_MODEL,
+	"structured":   PRODUCT_DEFAULT_MODEL,
+	"reasoning":    PRODUCT_DEFAULT_MODEL,
+	"long-context": PRODUCT_DEFAULT_MODEL,
+	"summarize":    PRODUCT_DEFAULT_MODEL,
+	"thinking":     PRODUCT_DEFAULT_MODEL,
 }
 
 // AvailableModels lists all models offered to users for selection.
 // Ordered by provider then capability tier.
+//
+// ⚠️ DO NOT REMOVE entries from this list without explicit user confirmation.
+// The user curates this list manually and depends on it for cost control;
+// a silent deletion has previously caused regressions. Additions are fine,
+// but every removal MUST be approved by the user in the same conversation.
 var AvailableModels = []string{
+	// Anthropic
 	"anthropic/claude-opus-4-6",
 	"anthropic/claude-sonnet-4-6",
 	"anthropic/claude-haiku-4-5-20251001",
+	// Google
+	"google/gemma-4-31b-it",
+	"google/gemma-4-26b-a4b-it",
+	"google/gemini-3.1-flash-lite-preview",
+	"google/gemini-2.5-flash-lite",
 	"google/gemini-2.0-flash-001",
+	// Z.ai
+	"z-ai/glm-5.1",
 }
 
-// ModelEnvVars maps each registry key to the environment variable that overrides it.
-var ModelEnvVars = map[string]string{
-	"classifier":   "MODEL_CLASSIFIER",
-	"structured":   "MODEL_STRUCTURED",
-	"reasoning":    "MODEL_REASONING",
-	"long-context": "MODEL_LONG_CONTEXT",
-	"summarize":    "MODEL_SUMMARIZE",
-	"thinking":     "MODEL_THINKING",
-}
-
-// buildModelRegistry creates a model registry by reading environment variables
-// with fallback to defaults. The getEnv parameter enables testing without
-// manipulating real environment variables.
-func buildModelRegistry(getEnv func(string) string) map[string]string {
+// buildModelRegistry returns a copy of DefaultModelRegistry. Retained as a
+// function (rather than a direct reference) so callers get an isolated map
+// they can safely mutate for testing. No ENV reads happen here — per
+// spec-architecture-model-selection-centralization.md (REQ-CFG-002) every
+// MODEL_* variable and DEFAULT_MODEL were removed; user preferences are the
+// only legitimate override layer.
+func buildModelRegistry(_ func(string) string) map[string]string {
 	registry := make(map[string]string, len(DefaultModelRegistry))
 	for key, defaultModel := range DefaultModelRegistry {
-		if envVar, ok := ModelEnvVars[key]; ok {
-			if v := getEnv(envVar); v != "" {
-				registry[key] = v
-				continue
-			}
-		}
 		registry[key] = defaultModel
 	}
 	return registry
@@ -108,14 +119,25 @@ type Client struct {
 
 	// TokenLedger tracks per-session token usage and cost.
 	TokenLedger *TokenLedger
+
+	// CallRecorder, if set, receives a per-call audit record after every
+	// Complete / CompleteStream invocation (success or failure). Optional:
+	// when nil, no per-call records are emitted. Implementations MUST be
+	// non-blocking; see the CallRecorder interface contract.
+	CallRecorder CallRecorder
 }
 
 // NewClient returns a configured client with sensible defaults.
 // Reads from environment:
-//   - MODEL_CLASSIFIER, MODEL_STRUCTURED, MODEL_REASONING, MODEL_LONG_CONTEXT,
-//     MODEL_SUMMARIZE, MODEL_THINKING — override default model registry entries
 //   - OPENROUTER_APP_URL — sent as HTTP-Referer for app identification
 //   - OPENROUTER_APP_TITLE — sent as X-Title for app identification
+//
+// Model selection is resolved at the session layer, not here: the per-role
+// MODEL_* and DEFAULT_MODEL environment variables were removed per
+// spec-architecture-model-selection-centralization.md (REQ-CFG-002). The
+// defaultModel argument still seeds Client.DefaultModel for the rare path
+// where LLMRequest.Model is empty at dispatch time; callers SHOULD pass
+// PRODUCT_DEFAULT_MODEL when they have no user-specific preference.
 func NewClient(apiKey, defaultModel string) *Client {
 	return &Client{
 		apiKey:        apiKey,
@@ -124,9 +146,7 @@ func NewClient(apiKey, defaultModel string) *Client {
 		AppURL:        os.Getenv("OPENROUTER_APP_URL"),
 		AppTitle:      os.Getenv("OPENROUTER_APP_TITLE"),
 		BaseURL:       "https://openrouter.ai/api/v1",
-		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		HTTPClient: newResilientHTTPClient(120 * time.Second),
 		TokenLedger: NewTokenLedger(),
 	}
 }
@@ -136,14 +156,72 @@ func (c *Client) String() string {
 	return fmt.Sprintf("Client{model: %s, base: %s}", c.DefaultModel, c.BaseURL)
 }
 
+// emitCallRecord assembles a CallRecord from the request/response pair and
+// hands it to the configured CallRecorder. Safe to call from a deferred
+// function — handles nil recorder, nil request, and partial responses.
+func (c *Client) emitCallRecord(ctx context.Context, req *cpn.LLMRequest, resolvedModel string, streamed bool, startedAt time.Time, resp cpn.LLMResponse, callErr error) {
+	if c.CallRecorder == nil || req == nil {
+		return
+	}
+
+	endpointStr := "chat"
+	if req.Endpoint == cpn.EndpointMessages {
+		endpointStr = "messages"
+	}
+
+	msgs := make([]CallMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		if m == nil {
+			continue
+		}
+		msgs = append(msgs, CallMessage{Role: m.Role, Content: m.Content})
+	}
+
+	rec := CallRecord{
+		SessionID:           req.SessionID,
+		ModelRequested:      req.Model,
+		ModelResolved:       resolvedModel,
+		Endpoint:            endpointStr,
+		Streamed:            streamed,
+		RequestMessages:     msgs,
+		ResponseText:        resp.Content,
+		InputTokens:         resp.InputTokens,
+		OutputTokens:        resp.OutputTokens,
+		CacheReadTokens:     resp.CacheReadTokens,
+		CacheCreationTokens: resp.CacheCreationTokens,
+		ReasoningTokens:     resp.ReasoningTokens,
+		CostUSD:             resp.CostUSD,
+		FinishReason:        resp.StopReason,
+		Duration:            time.Since(startedAt),
+		CreatedAt:           time.Now(),
+	}
+	if callErr != nil {
+		rec.Error = callErr.Error()
+	}
+	// Trace fields, when set by the caller, carry the CPN node identity.
+	if req.Trace != nil {
+		rec.TransitionID = req.Trace.SpanName
+		rec.CPNID = req.Trace.TraceID
+	}
+
+	c.CallRecorder.RecordCall(ctx, rec)
+}
+
 // Complete sends a request to the LLM and returns the response.
 // Routes to /chat/completions (EndpointChat, default) or /messages (EndpointMessages).
-func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResponse, error) {
+func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (llmResp cpn.LLMResponse, err error) {
 	resolvedModel := c.resolveModel(req.Model)
+	startedAt := time.Now()
 
 	// Build a shallow copy with the resolved model to avoid mutating the caller's request.
 	resolved := *req
 	resolved.Model = resolvedModel
+
+	// Per-call audit emission. Always fires (success or failure) so we keep
+	// a complete trail of every LLM invocation.
+	defer func() {
+		c.emitCallRecord(ctx, req, resolvedModel, false, startedAt, llmResp, err)
+	}()
 
 	var body []byte
 	var endpoint string
@@ -189,7 +267,6 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
 	}
 
-	var llmResp cpn.LLMResponse
 	switch resolved.Endpoint {
 	case cpn.EndpointMessages:
 		llmResp, err = parseMessagesResponse(resp.Body)
@@ -219,13 +296,18 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (cpn.LLMResp
 // CompleteStream sends a streaming request to the LLM, invoking onChunk
 // for each content delta as it arrives, and returns the complete accumulated response.
 // Uses a 10-minute timeout for long-running streaming connections (CON-004).
-func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChunk func(chunk string)) (cpn.LLMResponse, error) {
+func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChunk func(chunk string)) (llmResp cpn.LLMResponse, err error) {
 	resolvedModel := c.resolveModel(req.Model)
+	startedAt := time.Now()
 
 	// Build a shallow copy with the resolved model and streaming enabled.
 	resolved := *req
 	resolved.Model = resolvedModel
 	resolved.Stream = true
+
+	defer func() {
+		c.emitCallRecord(ctx, req, resolvedModel, true, startedAt, llmResp, err)
+	}()
 
 	var body []byte
 	var endpoint string
@@ -254,6 +336,14 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	// Force identity encoding on the streaming hop. Transport.DisableCompression
+	// already stops Go from advertising gzip, but an explicit header is the
+	// authoritative signal to any CDN/edge (Cloudflare fronts OpenRouter) that
+	// MUST NOT compress this response — gzip.Reader's DEFLATE window would
+	// hold short SSE payloads until EOF and break token-by-token streaming.
+	httpReq.Header.Set("Accept-Encoding", "identity")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
 	if c.AppURL != "" {
 		httpReq.Header.Set("HTTP-Referer", c.AppURL)
 	}
@@ -277,7 +367,6 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 	}
 
 	sh := NewStreamHandler()
-	var llmResp cpn.LLMResponse
 	switch resolved.Endpoint {
 	case cpn.EndpointMessages:
 		llmResp, err = sh.ParseAnthropicSSEWithCallback(resp.Body, onChunk)
@@ -748,17 +837,29 @@ type openRouterToolFunction struct {
 }
 
 type openRouterUsage struct {
-	PromptTokens        int                  `json:"prompt_tokens"`
-	CompletionTokens    int                  `json:"completion_tokens"`
-	TotalCost           float64              `json:"total_cost"`
-	Cost                float64              `json:"cost"`
-	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	Cost                    float64                  `json:"cost"`
+	CostDetails             *costDetails             `json:"cost_details"`
+	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details"`
 }
 
-// promptTokensDetails holds cache metrics from the chat/completions endpoint.
+// promptTokensDetails holds cache + audio metrics from the chat/completions endpoint.
 type promptTokensDetails struct {
 	CachedTokens     int `json:"cached_tokens"`
 	CacheWriteTokens int `json:"cache_write_tokens"`
+	AudioTokens      int `json:"audio_tokens"`
+}
+
+// completionTokensDetails holds reasoning-token metrics for thinking-capable models.
+type completionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+// costDetails holds upstream cost breakdown for BYOK / passthrough providers.
+type costDetails struct {
+	UpstreamInferenceCost float64 `json:"upstream_inference_cost"`
 }
 
 // parseLLMResponse converts the chat/completions API response into an LLMResponse.
@@ -782,15 +883,15 @@ func parseLLMResponse(apiResp openRouterResponse) cpn.LLMResponse {
 	if apiResp.Usage != nil {
 		resp.InputTokens = apiResp.Usage.PromptTokens
 		resp.OutputTokens = apiResp.Usage.CompletionTokens
-		// OpenRouter uses "cost" at top-level; fall back to "total_cost" for compat.
 		resp.CostUSD = apiResp.Usage.Cost
-		if resp.CostUSD == 0 {
-			resp.CostUSD = apiResp.Usage.TotalCost
-		}
 		// Cache tokens from prompt_tokens_details (chat/completions format).
 		if apiResp.Usage.PromptTokensDetails != nil {
 			resp.CacheReadTokens = apiResp.Usage.PromptTokensDetails.CachedTokens
 			resp.CacheCreationTokens = apiResp.Usage.PromptTokensDetails.CacheWriteTokens
+		}
+		// Reasoning tokens from completion_tokens_details (thinking-capable models).
+		if apiResp.Usage.CompletionTokensDetails != nil {
+			resp.ReasoningTokens = apiResp.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 	}
 

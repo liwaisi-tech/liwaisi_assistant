@@ -79,6 +79,11 @@ type MessageRecord struct {
 	CPNRole   string
 	CPNDepth  int
 	Timestamp time.Time
+	// ParentMessageID, when non-empty, references the ID of an earlier
+	// MessageRecord. Populated for HITL response rows so the frontend can
+	// correlate them with the A2UI surface they answer (REQ-007/008,
+	// spec-process-bugfix-a2ui-hitl-response-persistence.md).
+	ParentMessageID string
 }
 
 // EventRecord is the persistence DTO for a CPN event.
@@ -118,6 +123,32 @@ type LedgerRecord struct {
 	TotalCostUSD  float64
 	DailyTotalUSD float64
 	LastUpdated   time.Time
+}
+
+// LLMCallRecord is the persistence DTO for a single LLM invocation.
+// One row is written per call (success or failure), independent of the
+// per-session aggregate in LedgerRecord.
+type LLMCallRecord struct {
+	ID                  string
+	SessionID           string
+	TransitionID        string
+	CPNID               string
+	ModelRequested      string
+	ModelResolved       string
+	Endpoint            string
+	Streamed            bool
+	InputTokens         int
+	OutputTokens        int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	ReasoningTokens     int
+	CostUSD             float64
+	RequestMessages     json.RawMessage // JSONB: [{"role":"...","content":"..."}, ...]
+	ResponseText        string
+	FinishReason        string
+	Error               string
+	DurationMs          int64
+	CreatedAt           time.Time
 }
 
 // LedgerAggregate holds aggregated ledger metrics over a date range.
@@ -211,6 +242,12 @@ type UserRecord struct {
 	PreferredLanguage     string            // "en", "es"; default "en".
 	PreferredModel        string            // e.g. "anthropic/claude-sonnet-4-6".
 	ModelOverrides        map[string]string // role → model override.
+
+	// RegionalVariant is a BCP-47 tag (e.g. "es-CO") used to augment LLM
+	// system prompts with a per-user "user context" preamble. "" = unset;
+	// callers SHOULD resolve via prompts.DefaultVariant(PreferredLanguage).
+	// Migration 017 added the backing column.
+	RegionalVariant string
 }
 
 // UserPreferences is the subset of user settings modifiable via the preferences API.
@@ -218,6 +255,10 @@ type UserPreferences struct {
 	PreferredLanguage string            `json:"preferred_language"`
 	PreferredModel    string            `json:"preferred_model"`
 	ModelOverrides    map[string]string `json:"model_overrides,omitempty"`
+	// RegionalVariant is a BCP-47 tag (e.g. "es-CO"). Empty string means
+	// "leave the persisted value unchanged" — repositories MUST NOT overwrite
+	// the column with NULL when this field is empty.
+	RegionalVariant string `json:"regional_variant,omitempty"`
 }
 
 // HITLPendingRequest is the persistence DTO for a pending human-in-the-loop request.

@@ -15,7 +15,19 @@ type ModelRoleResponse struct {
 }
 
 // ModelsResponse is the JSON response for GET /api/v1/models.
+//
+// Field layout (REQ-OBS-002, spec-architecture-model-selection-centralization.md):
+//   - Default          — new, spec-mandated, top-level "default" key that the
+//                        frontend reads to seed the onboarding wizard. Always
+//                        equals openrouter.PRODUCT_DEFAULT_MODEL.
+//   - DefaultModel     — legacy top-level alias of Default, retained so existing
+//                        frontends that already parse `default_model` keep
+//                        working through the transition.
+//   - AvailableModels  — the curated catalog exposed in the Settings picker.
+//   - Roles            — per-role default, surfaced for the per-role override
+//                        table in Settings.
 type ModelsResponse struct {
+	Default         string              `json:"default"`
 	DefaultModel    string              `json:"default_model"`
 	AvailableModels []string            `json:"available_models"`
 	Roles           []ModelRoleResponse `json:"roles"`
@@ -53,7 +65,8 @@ func (h *Handlers) HandleGetModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ModelsResponse{
-		DefaultModel:    "anthropic/claude-sonnet-4-6",
+		Default:         openrouter.PRODUCT_DEFAULT_MODEL,
+		DefaultModel:    openrouter.PRODUCT_DEFAULT_MODEL,
 		AvailableModels: openrouter.AvailableModels,
 		Roles:           roles,
 	})

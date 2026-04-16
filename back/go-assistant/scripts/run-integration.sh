@@ -21,7 +21,7 @@ fi
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-export DEFAULT_MODEL="${DEFAULT_MODEL:-minimax/minimax-m2.7}"
+export INTEGRATION_MODEL="${INTEGRATION_MODEL:-minimax/minimax-m2.7}"
 export LOG_LEVEL="${LOG_LEVEL:-error}"
 
 cd "$PROJECT_DIR"
@@ -29,7 +29,7 @@ cd "$PROJECT_DIR"
 echo "============================================"
 echo "  Liwaisi Integration Tests"
 echo "============================================"
-echo "  Model:     $DEFAULT_MODEL"
+echo "  Model:     $INTEGRATION_MODEL"
 echo "  Log level: $LOG_LEVEL"
 echo "  Key:       ${OPENROUTER_API_KEY:0:12}..."
 echo "============================================"

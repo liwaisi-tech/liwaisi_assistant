@@ -135,7 +135,10 @@ func TestFireLLM_ContextWindowAssembly(t *testing.T) {
 	if req.Messages[0].Role != "system" {
 		t.Errorf("expected first message role=system, got %q", req.Messages[0].Role)
 	}
-	if req.Messages[0].Content != "Classify the input." {
+	// fireLLM prepends the per-session regional-variant preamble at runtime
+	// (CON-003: it never mutates t.SystemPrompt). The static body must still
+	// appear at the end of the rendered system prompt.
+	if !strings.HasSuffix(req.Messages[0].Content, "Classify the input.") {
 		t.Errorf("unexpected system prompt: %q", req.Messages[0].Content)
 	}
 
@@ -1038,6 +1041,202 @@ func TestFireLLM_HistoryAppendIsThreadSafe(t *testing.T) {
 	}
 }
 
+// ── SkipOutputHistory dual-flag tests ────────────────────────────────────────
+// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107,
+// AC-101/102/103/104. Validates that `SkipHistory` and `SkipOutputHistory`
+// can be composed independently for the input-read vs output-append concerns.
+
+// historyAppendCase exercises one combination of (SkipHistory,
+// SkipOutputHistory) and asserts (a) whether c.History grew after fireLLM
+// returned and (b) whether the LLM request saw prior history on the input
+// side.
+type historyAppendCase struct {
+	name              string
+	skipHistory       bool
+	skipOutputHistory bool
+	wantHistoryAppend bool // whether user+assistant should be appended after the call
+	wantInputHistory  bool // whether prior c.History entries should appear in the request
+}
+
+func TestFireLLM_HistoryGuards_DualFlag(t *testing.T) {
+	cases := []historyAppendCase{
+		{
+			name:              "both_false_baseline_appends_and_reads",
+			skipHistory:       false,
+			skipOutputHistory: false,
+			wantHistoryAppend: true,
+			wantInputHistory:  true,
+		},
+		{
+			name:              "skip_history_true_suppresses_both_sides",
+			skipHistory:       true,
+			skipOutputHistory: false,
+			wantHistoryAppend: false,
+			wantInputHistory:  false,
+		},
+		{
+			name:              "skip_output_history_true_suppresses_only_output_append",
+			skipHistory:       false,
+			skipOutputHistory: true,
+			wantHistoryAppend: false,
+			wantInputHistory:  true,
+		},
+		{
+			name:              "both_true_belt_and_braces_no_append_no_read",
+			skipHistory:       true,
+			skipOutputHistory: true,
+			wantHistoryAppend: false,
+			wantInputHistory:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockLLMClient{
+				completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+					return LLMResponse{Content: `{"restated_goal":"…"}`}, nil
+				},
+			}
+			trans := newBasicLLMTransition()
+			trans.LLMConfig.SkipHistory = tc.skipHistory
+			trans.LLMConfig.SkipOutputHistory = tc.skipOutputHistory
+
+			c := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+			c.History = []*Message{
+				{Role: RoleUser, Content: "Quiero que me ayudes mañana tengo una feria"},
+				{Role: RoleAssistant, Content: "Hola. ¿En qué puedo ayudarte hoy?"},
+			}
+			startLen := len(c.History)
+
+			consumed := []Token{{Color: ColorString, Payload: "routing-token-payload"}}
+
+			if _, _, err := fireLLM(context.Background(), trans, c, consumed); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// (a) Output-side: c.History append behavior.
+			c.mu.RLock()
+			endLen := len(c.History)
+			c.mu.RUnlock()
+			grew := endLen > startLen
+			if grew != tc.wantHistoryAppend {
+				t.Errorf("c.History grew=%v (start=%d end=%d) want=%v",
+					grew, startLen, endLen, tc.wantHistoryAppend)
+			}
+
+			// (b) Input-side: did the LLM see prior conversation history?
+			calls := mock.getCalls()
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 LLM call, got %d", len(calls))
+			}
+			sawHistory := false
+			for _, m := range calls[0].Messages {
+				if m.Role == "user" && strings.Contains(m.Content, "Quiero que me ayudes mañana") {
+					sawHistory = true
+					break
+				}
+			}
+			if sawHistory != tc.wantInputHistory {
+				t.Errorf("LLM saw prior history=%v want=%v (messages=%+v)",
+					sawHistory, tc.wantInputHistory, calls[0].Messages)
+			}
+		})
+	}
+}
+
+// TestFireLLM_SkipOutputHistory_AskTransitionRegression locks in the t-ask
+// scenario: the transition MUST see the user's words on the input side AND
+// MUST NOT pollute c.History with its routing-metadata JSON output. This is
+// the exact configuration applied to t-ask in topologies.go per REQ-104.
+func TestFireLLM_SkipOutputHistory_AskTransitionRegression(t *testing.T) {
+	const userMsg = "Quiero que me ayudes mañana tengo una feria de emprendimiento"
+	const askJSON = `{"restated_goal":"Necesitas ayuda…","questions":[{"id":"q1"}]}`
+
+	mock := &mockLLMClient{
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			return LLMResponse{Content: askJSON}, nil
+		},
+	}
+	// Build a CPN with a JSON output place to mirror t-ask's real shape.
+	places := map[string]*Place{
+		"P:CLASSIFIED": {ID: "P:CLASSIFIED", Space: SpaceComputation, Color: ColorJSON},
+		"P:QUESTIONS":  {ID: "P:QUESTIONS", Space: SpaceComputation, Color: ColorJSON},
+	}
+	trans := &Transition{
+		ID:           "t-ask",
+		Kind:         NodeKindLLM,
+		InputPlaces:  []string{"P:CLASSIFIED"},
+		OutputPlaces: []string{"P:QUESTIONS"},
+		SystemPrompt: "Generate a clarifying questionnaire.",
+		LLMConfig: &LLMConfig{
+			Model:             "ask-model",
+			MaxTokens:         200,
+			RequireJSON:       true,
+			SkipHistory:       false, // must read user input (REQ-104)
+			SkipOutputHistory: true,  // must NOT persist raw JSON (REQ-104)
+		},
+	}
+
+	c := &CPN{
+		ID:                "test-cpn",
+		Role:              "worker",
+		SessionID:         "session-1",
+		LLMClient:         mock,
+		ContextWindowSize: DefaultContextWindowSize,
+		Places:            places,
+		Transitions:       map[string]*Transition{trans.ID: trans},
+	}
+	c.History = []*Message{
+		{Role: RoleUser, Content: userMsg},
+		{Role: RoleAssistant, Content: "Hola. ¿En qué puedo ayudarte hoy?"},
+		{Role: RoleUser, Content: userMsg + " (segunda)"},
+	}
+	startLen := len(c.History)
+
+	// t-ask consumes a routing-metadata JSON token (from t-classify), not the user's words.
+	consumed := []Token{{Color: ColorJSON, Payload: `{"category":"task"}`}}
+
+	tokens, _, err := fireLLM(context.Background(), trans, c, consumed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Output token is unaffected by SkipOutputHistory (REQ-106 / AC-104).
+	if len(tokens) == 0 {
+		t.Fatalf("expected at least 1 output token, got 0")
+	}
+	if tokens[0].Color != string(ColorJSON) {
+		t.Errorf("output token color: want %q got %q", ColorJSON, tokens[0].Color)
+	}
+	if !strings.Contains(tokens[0].PayloadPreview, "restated_goal") {
+		t.Errorf("output token payload preview missing askJSON content; got %q", tokens[0].PayloadPreview)
+	}
+
+	// History MUST NOT have grown.
+	c.mu.RLock()
+	endLen := len(c.History)
+	c.mu.RUnlock()
+	if endLen != startLen {
+		t.Errorf("c.History grew from %d to %d; SkipOutputHistory must suppress all appends", startLen, endLen)
+	}
+
+	// Input MUST contain the user's words (input-side semantics intact, AC-102).
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 LLM call, got %d", len(calls))
+	}
+	sawUser := false
+	for _, m := range calls[0].Messages {
+		if m.Role == "user" && strings.Contains(m.Content, "Quiero que me ayudes mañana") {
+			sawUser = true
+			break
+		}
+	}
+	if !sawUser {
+		t.Errorf("t-ask LLM did not see the user's prior message; input-side regression. Messages: %+v", calls[0].Messages)
+	}
+}
+
 // ── buildToolSchema tests ───────────────────────────────────────────────────
 
 func TestHandleToolCalls_HITLChannelClosed(t *testing.T) {
@@ -1138,5 +1337,121 @@ func TestBuildToolSchema_WithoutToolMeta(t *testing.T) {
 	}
 	if schema.Parameters != nil {
 		t.Errorf("expected nil Parameters, got %s", schema.Parameters)
+	}
+}
+
+// TestFireLLM_ResponseFmtRequiredRetry covers REQ-PAR-004: when a
+// RequireJSON+ResponseFmtRequired transition receives a response with no
+// balanced JSON object, fireLLM retries once with a terser directive
+// appended to the system prompt. Cost of the retry is attributed to the
+// same transition.
+func TestFireLLM_ResponseFmtRequiredRetry(t *testing.T) {
+	var calls int32
+	mock := &mockLLMClient{
+		completeFunc: func(_ context.Context, req *LLMRequest) (LLMResponse, error) {
+			n := atomic.AddInt32(&calls, 1)
+			if n == 1 {
+				// First call: model emits only reasoning prose, no JSON.
+				return LLMResponse{Content: "I am thinking about this...", CostUSD: 0.01}, nil
+			}
+			// Second call: must carry the retry directive.
+			sys := ""
+			for _, m := range req.Messages {
+				if m.Role == "system" {
+					sys = m.Content
+					break
+				}
+			}
+			if !strings.Contains(sys, "JSON only, no thinking, no fences") {
+				return LLMResponse{}, fmt.Errorf("retry missing directive, sys=%q", sys)
+			}
+			return LLMResponse{Content: `{"ok":true}`, CostUSD: 0.02}, nil
+		},
+	}
+	trans := &Transition{
+		ID:           "t-ask",
+		Kind:         NodeKindLLM,
+		InputPlaces:  []string{"P:INPUT"},
+		OutputPlaces: []string{"P:JSON"},
+		SystemPrompt: "You produce JSON.",
+		LLMConfig: &LLMConfig{
+			Role:                "structured",
+			MaxTokens:           256,
+			RequireJSON:         true,
+			ResponseFmtRequired: true,
+		},
+	}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.Places["P:JSON"] = &Place{ID: "P:JSON", Space: SpaceComputation, Color: ColorJSON}
+	consumed := []Token{{Color: ColorString, Payload: "hola"}}
+
+	_, costUSD, err := fireLLM(context.Background(), trans, cpn, consumed)
+	if err != nil {
+		t.Fatalf("fireLLM error: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("expected 2 LLM calls (original + retry), got %d", got)
+	}
+	// Retry cost MUST be attributed to the same transition.
+	if costUSD < 0.03 {
+		t.Errorf("expected aggregated cost >= 0.03 (0.01 + 0.02), got %v", costUSD)
+	}
+}
+
+// TestFireLLM_ResponseFmtRequiredNoRetryWhenJSONPresent covers REQ-PAR-004:
+// when the first response already contains a balanced JSON object, the
+// retry path MUST NOT fire (it would double-charge the transition).
+func TestFireLLM_ResponseFmtRequiredNoRetryWhenJSONPresent(t *testing.T) {
+	var calls int32
+	mock := &mockLLMClient{
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			atomic.AddInt32(&calls, 1)
+			return LLMResponse{Content: `{"questions":[]}`, CostUSD: 0.01}, nil
+		},
+	}
+	trans := &Transition{
+		ID:           "t-ask",
+		Kind:         NodeKindLLM,
+		InputPlaces:  []string{"P:INPUT"},
+		OutputPlaces: []string{"P:JSON"},
+		LLMConfig: &LLMConfig{
+			Role:                "structured",
+			MaxTokens:           256,
+			RequireJSON:         true,
+			ResponseFmtRequired: true,
+		},
+	}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.Places["P:JSON"] = &Place{ID: "P:JSON", Space: SpaceComputation, Color: ColorJSON}
+	consumed := []Token{{Color: ColorString, Payload: "hola"}}
+	if _, _, err := fireLLM(context.Background(), trans, cpn, consumed); err != nil {
+		t.Fatalf("fireLLM error: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("expected 1 LLM call (no retry), got %d", got)
+	}
+}
+
+// TestResponseContainsJSONObject covers the helper behind REQ-PAR-004's
+// verify step. Unit tests pin the "is there a balanced object?" signal.
+func TestResponseContainsJSONObject(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty", "", false},
+		{"prose only", "I am thinking", false},
+		{"bare object", `{"a":1}`, true},
+		{"with prose", `sure: {"a":1} done`, true},
+		{"unterminated", `{"a":1`, false},
+		{"quoted brace only", `"{"`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := responseContainsJSONObject(tc.in); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

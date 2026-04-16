@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { StreamChunkData, CPNEventData } from '../types/sse';
-import { getAuthToken } from '../services/api';
+import { getAuthToken, SessionNotFoundError } from '../services/api';
 
 interface UseSSEOptions {
   sessionId: string | null;
@@ -15,10 +15,55 @@ interface UseSSEOptions {
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
   onError?: (error: Event) => void;
+  /**
+   * Fired when the SSE stream reveals that the current session id no longer
+   * exists (e.g. ghost after restart + failed rehydration). The EventSource
+   * is closed and no reconnect is attempted for this id (REQ-104, AC-007).
+   */
+  onSessionNotFound?: (sessionId: string) => void;
 }
+
+export type SSEConnectionState = 'connected' | 'reconnecting' | 'disconnected-terminal';
 
 interface UseSSEReturn {
   isConnected: boolean;
+  /**
+   * True once `onSessionNotFound` has fired for the current session id. The
+   * UI uses this to distinguish transient reconnects from a terminal
+   * "session is dead" state.
+   */
+  isSessionDead: boolean;
+  /**
+   * Typed connection state for UI indicators (REQ-112). Derived from the
+   * other two flags: dead → terminal, open → connected, else reconnecting.
+   */
+  connectionState: SSEConnectionState;
+}
+
+/** Initial backoff base in ms. Doubles each retry, capped at MAX_BACKOFF_MS. */
+const INITIAL_BACKOFF_MS = 1000;
+/** Backoff ceiling per REQ-105. */
+const MAX_BACKOFF_MS = 30_000;
+
+/**
+ * Parse an `error` SSE event's data blob for a session-not-found signal.
+ * The backend may emit either a proper named event (`event: error`) or
+ * close the connection with a 404/410 — EventSource surfaces the latter as
+ * a plain `onerror` with no data. In both cases we rely on either an in-
+ * band JSON payload or a probe request fired by the caller to resolve the
+ * ambiguity. Returns true only if the data clearly names the ghost case.
+ */
+function isSessionNotFoundPayload(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown };
+    if (typeof parsed.error === 'string') {
+      return /^\s*session not found\s*$/i.test(parsed.error);
+    }
+  } catch {
+    // Fall through to plain-string check.
+  }
+  return /session not found/i.test(raw);
 }
 
 export function useSSE({
@@ -34,24 +79,45 @@ export function useSSE({
   onSubNetCompleted,
   onSubNetFailed,
   onError,
+  onSessionNotFound,
 }: UseSSEOptions): UseSSEReturn {
   const [isConnected, setIsConnected] = useState(false);
-  const retryDelayRef = useRef(3000);
+  const [isSessionDead, setIsSessionDead] = useState(false);
+  const retryDelayRef = useRef(INITIAL_BACKOFF_MS);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTerminalRef = useRef(false);
 
-  // Use refs for callbacks to avoid reconnection on callback changes
+  // Keep the latest callbacks accessible without triggering reconnects when
+  // the parent component re-renders (REQ-109). Components MUST still wrap
+  // their handlers in `useCallback` to avoid tearing down the SSE connection
+  // each render — `connect` only depends on stable values below.
   const callbacksRef = useRef({
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError, onSessionNotFound,
   });
   callbacksRef.current = {
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError, onSessionNotFound,
   };
 
+  /**
+   * Tear down the current EventSource and mark the session id as terminally
+   * dead (REQ-104). Caller is responsible for rotating the session id
+   * afterwards — this hook will not retry against the dead id.
+   */
+  const markSessionDead = useCallback((sid: string) => {
+    sessionTerminalRef.current = true;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setIsSessionDead(true);
+    setIsConnected(false);
+    callbacksRef.current.onSessionNotFound?.(sid);
+  }, []);
+
   const connect = useCallback((sid: string) => {
-    if (sessionTerminalRef.current) return;
+    if (sessionTerminalRef.current) return undefined;
 
     const token = getAuthToken();
     const url = token
@@ -61,7 +127,7 @@ export function useSSE({
 
     es.onopen = () => {
       setIsConnected(true);
-      retryDelayRef.current = 3000; // Reset backoff
+      retryDelayRef.current = INITIAL_BACKOFF_MS;
     };
 
     es.onerror = (evt) => {
@@ -69,13 +135,34 @@ export function useSSE({
       es.close();
       callbacksRef.current.onError?.(evt);
 
-      if (!sessionTerminalRef.current) {
-        // Exponential backoff with jitter
-        const delay = Math.min(retryDelayRef.current, 30000);
-        retryDelayRef.current = delay * 2;
-        retryTimerRef.current = setTimeout(() => connect(sid), delay + Math.random() * 1000);
-      }
+      if (sessionTerminalRef.current) return;
+
+      // Exponential backoff with jitter, capped at MAX_BACKOFF_MS (REQ-105).
+      // Jitter is added AFTER the cap so total wait is cap + [0, 1s).
+      const base = Math.min(retryDelayRef.current, MAX_BACKOFF_MS);
+      const jitter = Math.random() * 1000;
+      retryDelayRef.current = Math.min(base * 2, MAX_BACKOFF_MS);
+      retryTimerRef.current = setTimeout(() => connect(sid), base + jitter);
     };
+
+    // Some backends emit a typed `error` event to indicate a non-retriable
+    // condition (session-not-found, auth failure) while keeping the stream
+    // open. We treat any `error` event whose data matches the ghost signal
+    // as terminal (REQ-104, AC-007).
+    es.addEventListener('error', (evt) => {
+      const data = (evt as MessageEvent).data;
+      if (isSessionNotFoundPayload(data)) {
+        es.close();
+        markSessionDead(sid);
+      }
+      // Otherwise fall through — the default `onerror` path will handle
+      // transient connection drops with backoff.
+    });
+
+    es.addEventListener('session_not_found', () => {
+      es.close();
+      markSessionDead(sid);
+    });
 
     es.addEventListener('stream_chunk', (evt) => {
       try {
@@ -147,12 +234,14 @@ export function useSSE({
     });
 
     return es;
-  }, []);
+  }, [markSessionDead]);
 
   useEffect(() => {
     if (!sessionId) return;
 
     sessionTerminalRef.current = false;
+    setIsSessionDead(false);
+    retryDelayRef.current = INITIAL_BACKOFF_MS;
     const es = connect(sessionId);
 
     return () => {
@@ -165,5 +254,18 @@ export function useSSE({
     };
   }, [sessionId, connect]);
 
-  return { isConnected };
+  const connectionState: SSEConnectionState = isSessionDead
+    ? 'disconnected-terminal'
+    : isConnected
+    ? 'connected'
+    : 'reconnecting';
+
+  return { isConnected, isSessionDead, connectionState };
 }
+
+/**
+ * Re-export so sibling modules (useChat, callers that bridge SSE errors to
+ * recovery flows) can do `instanceof SessionNotFoundError` without importing
+ * from deeper in the service layer.
+ */
+export { SessionNotFoundError };

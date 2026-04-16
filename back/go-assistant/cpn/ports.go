@@ -143,6 +143,11 @@ type LLMResponse struct {
 	// CacheCreationTokens is the number of tokens used to create the cache.
 	CacheCreationTokens int
 
+	// ReasoningTokens is the number of internal reasoning/thinking tokens
+	// generated (Anthropic extended thinking, OpenAI o-series). Always 0 for
+	// non-reasoning models.
+	ReasoningTokens int
+
 	// StopReason indicates why the model stopped generating.
 	StopReason string
 }
@@ -153,9 +158,26 @@ type LLMResponse struct {
 // v1.2 replaces v1.1 — all 6 original fields remain, 8 new fields added.
 // Widening is backward-compatible: existing code using v1.1 fields compiles unchanged.
 type LLMConfig struct {
-	// Model is an OpenRouter model string or ModelRegistry key.
-	// If empty, falls back to OpenRouterClient.DefaultModel.
-	Model string
+	// Model is the concrete OpenRouter model id for this transition.
+	// Populated at session resolve time by
+	// internal/app/session_service.go::applyUserModelPreferences based on
+	// (in precedence order) the user's per-role ModelOverride, the user's
+	// global PreferredModel, or openrouter.PRODUCT_DEFAULT_MODEL.
+	//
+	// Authored LLMConfig literals in topology factories MUST leave this
+	// empty — the authoring layer expresses intent via Role, and the
+	// resolver writes Model. See spec-architecture-model-selection-centralization.md
+	// (REQ-CFG-003).
+	Model string `json:"model,omitempty"`
+
+	// Role is the logical model class this transition needs (e.g.
+	// "classifier", "structured"). It is the hook applyUserModelPreferences
+	// uses to look up per-role overrides on UserRecord.ModelOverrides. An
+	// empty Role means the transition has no role-specific requirement and
+	// inherits the user's global PreferredModel (or the product default).
+	//
+	// Role is authored; Model is derived. See REQ-CFG-004.
+	Role string `json:"role,omitempty"`
 
 	// FallbackModels lists alternative models tried in order if Model is unavailable.
 	FallbackModels []string
@@ -173,7 +195,18 @@ type LLMConfig struct {
 	StreamOutput bool
 
 	// RequireJSON sets response_format to json_object.
-	RequireJSON bool
+	RequireJSON bool `json:"require_json,omitempty"`
+
+	// ResponseFmtRequired upgrades RequireJSON from "best-effort" to
+	// "verify-and-retry". After a successful LLM response, fireLLM re-runs
+	// extractJSONObject on the content; if no balanced JSON object is
+	// present, a single retry is issued with a terse "JSON only, no
+	// thinking, no markdown fences" instruction appended to the system
+	// prompt. The retry's cost is attributed to the same transition. Set
+	// on t-ask to guard against reasoning-mode models (e.g. Gemma 4 31B)
+	// that emit <think>…</think> preambles before the JSON payload. See
+	// spec-architecture-model-selection-centralization.md (REQ-PAR-004).
+	ResponseFmtRequired bool `json:"response_fmt_required,omitempty"`
 
 	// JSONSchema configures structured JSON output with a schema.
 	JSONSchema *JSONSchemaConfig
@@ -200,7 +233,27 @@ type LLMConfig struct {
 	// conversation history. The LLM only sees its system prompt and the
 	// consumed tokens. Used by classifier transitions that must classify
 	// each message independently, without bias from prior conversation.
+	// Note: SkipHistory has dual semantics — it ALSO suppresses the
+	// post-call append of input/output to c.History (see fire_llm.go
+	// output guard). For transitions that need to READ history but
+	// must NOT pollute it on output, use SkipOutputHistory instead.
 	SkipHistory bool
+
+	// SkipOutputHistory, when true, suppresses the post-call append of
+	// the consumed-tokens "user" replay AND the LLM "assistant" output
+	// to c.History, without affecting the input-side context window.
+	// Used by transitions whose output is routing metadata consumed
+	// downstream via the CPN token pipeline (not via history) and which
+	// would otherwise pollute the conversation transcript on rehydration.
+	// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107.
+	SkipOutputHistory bool
+
+	// SkipRegionalPreamble, when true, prevents fireLLM from prepending the
+	// per-session regional-variant preamble to this transition's SystemPrompt.
+	// Default (false) is opt-in: every LLM transition gets the preamble.
+	// Set to true on transitions where dialect hints add no value (e.g.
+	// structured-JSON planners that never read the user's tone).
+	SkipRegionalPreamble bool
 }
 
 // ── v1.2 Sub-Types ──────────────────────────────────────────────────────────

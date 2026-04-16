@@ -251,8 +251,6 @@ make build
 | `LIWAISI_DB_DSN` | No | PostgreSQL connection string |
 | `LIWAISI_REDIS_URL` | No | Redis connection URL |
 | `CORS_ORIGINS` | No | Allowed CORS origins (default: `*`) |
-| `DEFAULT_MODEL` | No | Default LLM model |
-| `MODEL_*` | No | Per-role model overrides |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
 | `LOG_LEVEL` | No | Logging level |
 | `LISTEN_ADDR` | No | Server listen address |

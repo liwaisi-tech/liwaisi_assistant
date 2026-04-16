@@ -17,12 +17,14 @@ import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
 import { ChatSidebar } from '../chat/ChatSidebar';
 import { ForkDialog } from '../chat/ForkDialog';
+import { SessionResumedNotice } from '../chat/SessionResumedNotice';
 import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
 import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
 import { PersonalityPanel } from '../personality/PersonalityPanel';
 import { ToolBrowser } from '../tools/ToolBrowser';
 import { AdminSecretsPanel } from '../admin/AdminSecretsPanel';
+import { SettingsPage } from '../settings/SettingsPage';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface DesktopLayoutProps {
@@ -32,7 +34,7 @@ interface DesktopLayoutProps {
 export function DesktopLayout({ userId }: DesktopLayoutProps) {
   const { t } = useTranslation(['desktop', 'common']);
   const isMobile = useIsMobile();
-  const { isAdmin } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
 
   // Load namespaces for desktop layout
   useEffect(() => {
@@ -59,9 +61,20 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   const monitorMgr = useMonitorManager(onSessionCompleted);
 
+  // Bridge SSE ghost-session detection (REQ-102/104) into the chat-list
+  // recovery path so a dead session id is replaced exactly once without
+  // requiring a manual refresh or logout.
+  const chatOptions = useMemo(
+    () => ({
+      ...monitorMgr.sseCallbacks,
+      onSessionNotFound: chatList.recoverFromGhost,
+    }),
+    [monitorMgr.sseCallbacks, chatList.recoverFromGhost],
+  );
+
   const { messages, sessionState, sessionId, isConnected, sendMessage, resolveHITL, error } = useChat(
     chatList.activeSessionId,
-    monitorMgr.sseCallbacks,
+    chatOptions,
   );
 
   // ── Coordination effects (bridge chat <-> monitor) ──────────────────────
@@ -168,6 +181,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     navigateAndClearPanel('admin');
   }, [navigateAndClearPanel]);
 
+  const handleUserSettingsNav = useCallback(() => {
+    navigateAndClearPanel('settings');
+  }, [navigateAndClearPanel]);
+
   // ── Command Palette actions ─────────────────────────────────────────────
 
   const paletteActions: PaletteAction[] = useMemo(() => [
@@ -270,7 +287,44 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
       keywords: ['split', 'dual', 'execution'],
       handler: toggleMonitorPanel,
     },
-  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel]);
+    {
+      id: 'account-settings',
+      label: t('desktop:commandPalette.actions.openSettings'),
+      category: t('desktop:commandPalette.categories.account'),
+      shortcut: '\u2318,',
+      keywords: ['preferences', 'ajustes', 'configuración', 'settings'],
+      handler: () => navigateAndClearPanel('settings'),
+    },
+    {
+      id: 'account-language',
+      label: t('desktop:commandPalette.actions.changeLanguage'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['idioma', 'language', 'locale'],
+      handler: () => window.dispatchEvent(new CustomEvent('liwaisi:openLanguageSwitcher')),
+    },
+    {
+      id: 'account-workspace',
+      label: t('desktop:commandPalette.actions.switchWorkspace'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['workspace', 'org', 'equipo'],
+      handler: () => { /* workspace switching is a stub until multi-workspace lands */ },
+    },
+    {
+      id: 'account-billing',
+      label: t('desktop:commandPalette.actions.billing'),
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['billing', 'facturación', 'balance', 'créditos'],
+      handler: () => navigateAndClearPanel('settings'),
+    },
+    {
+      id: 'account-logout',
+      label: t('desktop:commandPalette.actions.logout'),
+      category: t('desktop:commandPalette.categories.account'),
+      shortcut: '\u2318\u21E7Q',
+      keywords: ['logout', 'salir', 'cerrar sesión', 'sign out'],
+      handler: () => logout(),
+    },
+  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel, logout]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
@@ -285,8 +339,10 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     { key: 'b', meta: true, handler: () => { if (activeApp === 'chat') setIsRailExpanded((p) => !p); } },
     { key: 'f', meta: true, shift: true, handler: toggleFlowsPanel },
     { key: 'm', meta: true, shift: true, handler: toggleMonitorPanel },
+    { key: ',', meta: true, handler: () => navigateAndClearPanel('settings'), global: true },
+    { key: 'q', meta: true, shift: true, handler: () => logout(), global: true },
     { key: 'Escape', handler: () => { if (isPaletteOpen) { closePalette(); } else if (panel.panelContent) { panel.closePanel(); } } },
-  ], [activeApp, isPaletteOpen, panel.panelContent, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, togglePalette, closePalette, toggleFlowsPanel, toggleMonitorPanel]);
+  ], [activeApp, isPaletteOpen, panel.panelContent, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, togglePalette, closePalette, toggleFlowsPanel, toggleMonitorPanel, logout]);
 
   useKeyboardShortcuts(shortcuts);
 
@@ -351,6 +407,9 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             onToolsClick={handleToolsNav}
             onAdminClick={handleAdminNav}
             sidebarContent={sidebarContent}
+            user={user}
+            onOpenUserSettings={handleUserSettingsNav}
+            onLogout={logout}
           />
         )}
 
@@ -360,6 +419,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
           <div className="flex-1 flex flex-col min-w-0">
             {activeApp === 'chat' && (
               <>
+                <SessionResumedNotice resumedAt={chatList.sessionResumedAt} />
                 <MessageList
                   messages={messages}
                   sessionState={sessionState}
@@ -403,6 +463,8 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
             {activeApp === 'tools' && <ToolBrowser />}
 
             {activeApp === 'admin' && <AdminSecretsPanel />}
+
+            {activeApp === 'settings' && <SettingsPage />}
           </div>
 
           {/* Adaptive Right Panel -- only in chat mode, desktop only */}

@@ -3,7 +3,7 @@
     "title": "Identidad del agente",
     "loading": "Cargando identidad del agente...",
     "reset": "Restablecer",
-    "resetConfirm": "Restablecer a valores predeterminados?",
+    "resetConfirm": "¿Restablecer a los valores predeterminados?",
     "resetting": "Restableciendo...",
     "confirm": "Confirmar"
   },
@@ -15,14 +15,14 @@
     "removeRuleAriaLabel": "Eliminar regla",
     "saveChanges": "Guardar cambios",
     "saving": "Guardando...",
-    "confirmSave": "Confirmar guardado?",
-    "yesSave": "Si, guardar"
+    "confirmSave": "¿Confirmar guardado?",
+    "yesSave": "Sí, guardar"
   },
   "tensionVisualizer": {
     "title": "Mapa de tensiones"
   },
   "hierarchyControl": {
-    "title": "Jerarquia de prioridad",
+    "title": "Jerarquía de prioridad",
     "positionLabels": {
       "highest": "Mayor prioridad",
       "secondary": "Secundario",
@@ -30,7 +30,7 @@
     },
     "moveUpAriaLabel": "Subir {{item}}",
     "moveDownAriaLabel": "Bajar {{item}}",
-    "eticaWarning": "Etica como Fundamento significa que las reglas eticas tienen la menor prioridad de anulacion. Considera esto con cuidado.",
+    "eticaWarning": "Ética como Fundamento significa que las reglas éticas tienen la menor prioridad de anulación. Considéralo con cuidado.",
     "saveOrder": "Guardar orden",
     "saving": "Guardando...",
     "reset": "Restablecer"

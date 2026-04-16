@@ -56,4 +56,5 @@ export interface TransitionCompletedPayload {
   cost_usd: number;
   duration_ms: number;
   error?: string;
+  executed_model?: string;
 }

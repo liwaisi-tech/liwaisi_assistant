@@ -1,14 +1,34 @@
-import { useDeferredValue, useCallback, useMemo, useState, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
 import type {
   A2UIPayload,
   A2UIComponent,
   A2UIAction,
+  A2UIRound,
   AlertSeverity,
+  ButtonSize,
+  CardVariant,
   FormField,
   ChoiceOption,
 } from './types.ts';
+
+// ── Resolution context ─────────────────────────────────────────────────────
+// ResolutionContext carries the HITL response payload paired with the
+// current A2UI surface when the backend persisted a response row after
+// submission. When present, interactive components (QuestionnaireComponent)
+// render in a read-only locked state showing the submitted answers
+// (REQ-102..105 — spec-process-bugfix-a2ui-hitl-response-persistence.md).
+// Kept narrow on purpose: only consumers that must change render shape
+// in response to resolution should read this; forward it explicitly
+// when you really need it.
+
+interface ResolutionContextValue {
+  resolvedPayload?: string;
+  resolvedAt?: Date;
+}
+
+const ResolutionContext = createContext<ResolutionContextValue>({});
 
 // ── Component Catalog ──────────────────────────────────────────────────────
 
@@ -40,9 +60,27 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   const componentId = (component.props.id as string) ?? '';
   const actionType = (component.props.actionType as string) ?? 'click';
   const variant = (component.props.variant as string) ?? 'primary';
-  const disabled = component.props.disabled === true;
+  // `size` governs tap-target scale. `sm` (default) is the existing compact
+  // button used inline inside cards / questionnaires. `lg` is used by the
+  // escape-hatch binary choice where the user is being asked to make a
+  // decisive handoff — see spec §4.4 REQ-102 and ButtonSize in types.ts.
+  const size: ButtonSize = component.props.size === 'lg' ? 'lg' : 'sm';
+  const propDisabled = component.props.disabled === true;
+
+  // When this surface has been resolved (live submit OR rehydration), every
+  // hitl:* button locks. The chosen action stays at full opacity; the
+  // others fade. Keeps the visual record of what the user picked without
+  // leaving the buttons clickable. Card-level lock for t-review.
+  const { resolvedPayload } = useContext(ResolutionContext);
+  const resolvedAction = useMemo(() => extractResolvedHITLAction(resolvedPayload), [resolvedPayload]);
+  const isHitl = actionType.startsWith('hitl:');
+  const lockedByResolution = isHitl && resolvedPayload !== undefined;
+  const isChosen = lockedByResolution && resolvedAction !== null && actionType === `hitl:${resolvedAction}`;
+  const disabled = propDisabled || lockedByResolution;
+  const dim = lockedByResolution && !isChosen;
 
   const handleClick = () => {
+    if (disabled) return;
     onAction({
       type: actionType,
       componentId,
@@ -57,36 +95,80 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
     success: { bg: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: 'rgba(16, 185, 129, 0.3)', glow: 'none' },
   };
   const s = variantStyles[variant] ?? variantStyles.primary;
+  const opacity = propDisabled ? 0.5 : dim ? 0.35 : 1;
+  // Size classes kept parallel so a single token swap gives the larger
+  // tap-target without changing the surrounding DOM.
+  const sizeClasses =
+    size === 'lg'
+      ? 'px-5 py-2.5 rounded-lg text-sm font-medium'
+      : 'px-4 py-1.5 rounded-lg text-xs font-medium';
 
   return (
     <button
       onClick={handleClick}
       disabled={disabled}
-      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
+      aria-disabled={disabled}
+      className={`${sizeClasses} transition-all`}
       style={{
         backgroundColor: s.bg,
         color: s.color,
         border: `1px solid ${s.border}`,
-        boxShadow: s.glow,
+        boxShadow: isChosen ? s.glow : 'none',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
+        opacity,
       }}
     >
-      {label}
+      {isChosen ? `✓ ${label}` : label}
     </button>
   );
+}
+
+// extractResolvedHITLAction reads the persisted HITL response content and
+// returns the action keyword (approve | revise | reject | submit) when the
+// payload is an action envelope. Returns null for questionnaire answer maps
+// (which are handled by QuestionnaireLocked) and for malformed input.
+function extractResolvedHITLAction(payload: string | undefined): string | null {
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.action === 'string') return obj.action;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 // ── card ────────────────────────────────────────────────────────────────────
 
 function CardComponent({ component, onAction }: ComponentProps) {
   const title = component.props.title as string | undefined;
+  // `variant` drives the escape-hatch card's left-rail accent. The accent
+  // tint distinguishes the two escape flavors at a glance without a new
+  // surface type: frustration uses --accent (offer of agency), contradiction
+  // uses --text-muted (neutral path-framing per REQ-124). Default is unchanged.
+  const variant: CardVariant =
+    component.props.variant === 'escape-frustration' ||
+    component.props.variant === 'escape-contradiction'
+      ? (component.props.variant as CardVariant)
+      : 'default';
+
+  const variantStyle =
+    variant === 'escape-frustration'
+      ? { borderLeft: '3px solid var(--accent)' }
+      : variant === 'escape-contradiction'
+        ? { borderLeft: '3px solid var(--text-muted)' }
+        : undefined;
+
   return (
     <div
       className="rounded-xl p-4 my-2"
       style={{
         backgroundColor: 'var(--bg-surface)',
         border: '1px solid var(--border-dim)',
+        ...variantStyle,
       }}
     >
       {title && (
@@ -284,6 +366,76 @@ function AlertComponent({ component }: ComponentProps) {
   );
 }
 
+// ── round badge ─────────────────────────────────────────────────────────────
+// RoundBadge is *chrome* — a read-only status strip that prefixes the A2UI
+// surface whenever the backend re-fires `t-clarify` via `t-reassess` and
+// stamps the outgoing A2UI envelope with a top-level `round: {n, max}` field.
+// Deliberately not registered in componentCatalog: the backend never emits a
+// `round_badge` component; this pill is derived from envelope metadata and
+// rendered by the renderer itself (REQ-100).
+//
+// Visual contract (see spec §4.3 + REQ-120/127):
+//   • Reuses BadgeComponent's pill language: 1px accent border, 8% tint,
+//     JetBrains Mono 10px uppercase tracked-widest.
+//   • Leading ◉ glyph is purely decorative (aria-hidden).
+//   • Caption after a `·` separator: "seguimiento" (active mid-loop),
+//     "última ronda" (n === max), or "respondida {{time}}" (locked).
+//   • NO tooltip — REQ-127 — silence is intentional mid-loop.
+//   • Hidden when round is absent, `n < 1`, or `max < 2` (single-round
+//     turns must look unchanged).
+//
+// Wrapped in role="status" aria-live="polite" so screen readers announce
+// "Follow-up 2 of 3, follow-up" the moment the bubble mounts, without
+// stealing focus.
+interface RoundBadgeProps {
+  round: A2UIRound;
+  resolvedAt?: Date;
+}
+
+function RoundBadge({ round, resolvedAt }: RoundBadgeProps) {
+  const { t } = useTranslation('chat');
+  // Gate on the exact conditions spelled out in REQ-100 + types.ts doc:
+  // suppress for the very first round of a turn and for single-round turns.
+  if (!round || round.n < 1 || round.max < 2) return null;
+
+  const isLocked = resolvedAt !== undefined;
+  const isFinal = round.n === round.max;
+
+  // Caption selection: locked state wins over final/active; otherwise the
+  // active surface of the last budgeted round reads "última ronda" to soften
+  // the stakes without hiding the cap.
+  const caption = isLocked
+    ? t('a2ui.clarify.badge.responded', {
+        time: resolvedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })
+    : isFinal
+      ? t('a2ui.clarify.badge.final')
+      : t('a2ui.clarify.badge.followup');
+
+  const label = t('a2ui.clarify.badge.label', { n: round.n, max: round.max });
+  const aria = t('a2ui.clarify.badge.aria', { n: round.n, max: round.max, caption });
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      aria-label={aria}
+      className="inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full mb-2 self-start"
+      style={{
+        color: 'var(--accent)',
+        border: '1px solid var(--accent)',
+        background: 'rgba(14, 165, 233, 0.08)',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}
+    >
+      <span aria-hidden="true">{'\u25C9'}</span>
+      <span>{label}</span>
+      <span aria-hidden="true" style={{ opacity: 0.5 }}>·</span>
+      <span style={{ color: 'var(--text-muted)' }}>{caption}</span>
+    </span>
+  );
+}
+
 // ── badge ───────────────────────────────────────────────────────────────────
 
 function BadgeComponent({ component }: ComponentProps) {
@@ -313,6 +465,8 @@ interface ChoiceFieldProps {
   label: string;
   options: ChoiceOption[];
   recommended?: string;
+  quoteFromUser?: string;
+  whyItMatters?: string;
   selected?: string;
   onSelect?: (optionId: string) => void;
   groupName: string;
@@ -331,6 +485,8 @@ function ChoiceField({
   label,
   options,
   recommended,
+  quoteFromUser,
+  whyItMatters,
   selected,
   onSelect,
   groupName,
@@ -348,49 +504,88 @@ function ChoiceField({
   const otherInputId = `${groupName}-${OTHER_OPTION_ID}`;
   const otherTextInputId = `${groupName}-${OTHER_OPTION_ID}-text`;
   return (
-    <fieldset
-      className="my-2 p-3 rounded-lg"
-      style={{
-        border: '1px solid var(--border-dim)',
-        backgroundColor: 'var(--bg-input)',
-      }}
-    >
+    <fieldset className="my-2">
+      {quoteFromUser && (
+        <div
+          className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium"
+          style={{
+            color: 'var(--accent)',
+            border: '1px solid rgba(14, 165, 233, 0.35)',
+            background: 'rgba(14, 165, 233, 0.08)',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          <span aria-hidden="true">{'\u201C'}</span>
+          <span className="italic">{quoteFromUser}</span>
+          <span aria-hidden="true">{'\u201D'}</span>
+        </div>
+      )}
       <legend
-        className="px-1 text-xs font-medium"
-        style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}
+        className="block text-sm font-medium mb-1 leading-snug"
+        style={{ color: 'var(--text-primary)' }}
       >
         {label}
       </legend>
-      <div className="flex flex-col gap-1.5 mt-1">
+      {whyItMatters && (
+        <p
+          className="text-[11px] mb-2.5 leading-snug"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          {whyItMatters}
+        </p>
+      )}
+      <div role="radiogroup" aria-label={label} className="flex flex-col gap-2">
         {options.map((opt) => {
           const isRecommended = recommended === opt.id;
+          const isSelected = selected === opt.id && !isFreeText;
           const inputId = `${groupName}-${opt.id}`;
           return (
             <label
               key={opt.id}
               htmlFor={inputId}
-              className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
-              style={{ color: 'var(--text-primary)' }}
+              className="group relative flex items-start gap-3 cursor-pointer rounded-xl px-3.5 py-3 text-sm transition-all duration-150 hover:-translate-y-px"
+              style={{
+                color: 'var(--text-primary)',
+                border: `1.5px solid ${isSelected ? 'var(--accent)' : 'var(--border-dim)'}`,
+                backgroundColor: isSelected ? 'rgba(14, 165, 233, 0.10)' : 'var(--bg-input)',
+                boxShadow: isSelected ? '0 0 0 3px rgba(14, 165, 233, 0.12)' : 'none',
+              }}
             >
               <input
                 id={inputId}
                 type="radio"
                 name={groupName}
                 value={opt.id}
-                checked={selected === opt.id}
+                checked={isSelected}
                 onChange={() => onSelect?.(opt.id)}
                 aria-describedby={isRecommended ? `${inputId}-rec` : undefined}
-                style={{ accentColor: 'var(--accent)' }}
+                className="sr-only"
               />
-              <span className="flex-1">{opt.label}</span>
+              {/* Custom indicator dot */}
+              <span
+                aria-hidden="true"
+                className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors"
+                style={{
+                  border: `1.5px solid ${isSelected ? 'var(--accent)' : 'var(--border-dim)'}`,
+                  backgroundColor: isSelected ? 'var(--accent)' : 'transparent',
+                }}
+              >
+                {isSelected && (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{ backgroundColor: 'var(--bg-deep)' }}
+                  />
+                )}
+              </span>
+              <span className="flex-1 leading-snug">{opt.label}</span>
               {isRecommended && (
                 <span
                   id={`${inputId}-rec`}
-                  className="inline-block text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full"
+                  className="inline-block text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full whitespace-nowrap self-start"
                   style={{
                     color: 'var(--accent)',
                     border: '1px solid var(--accent)',
-                    background: 'rgba(14, 165, 233, 0.08)',
+                    background: 'rgba(14, 165, 233, 0.10)',
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >
@@ -403,8 +598,13 @@ function ChoiceField({
         {allowFreeText && (
           <label
             htmlFor={otherInputId}
-            className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1 transition-colors"
-            style={{ color: 'var(--text-primary)' }}
+            className="group relative flex items-start gap-3 cursor-pointer rounded-xl px-3.5 py-3 text-sm transition-all duration-150 hover:-translate-y-px"
+            style={{
+              color: 'var(--text-primary)',
+              border: `1.5px dashed ${isFreeText ? 'var(--accent)' : 'var(--border-dim)'}`,
+              backgroundColor: isFreeText ? 'rgba(14, 165, 233, 0.10)' : 'transparent',
+              boxShadow: isFreeText ? '0 0 0 3px rgba(14, 165, 233, 0.12)' : 'none',
+            }}
           >
             <input
               id={otherInputId}
@@ -413,24 +613,42 @@ function ChoiceField({
               value={OTHER_OPTION_ID}
               checked={isFreeText}
               onChange={() => onFreeTextSelect?.()}
-              style={{ accentColor: 'var(--accent)' }}
+              className="sr-only"
             />
-            <span className="flex-1">{otherLabel}</span>
+            <span
+              aria-hidden="true"
+              className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+              style={{
+                border: `1.5px solid ${isFreeText ? 'var(--accent)' : 'var(--border-dim)'}`,
+                backgroundColor: isFreeText ? 'var(--accent)' : 'transparent',
+              }}
+            >
+              {isFreeText && (
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: 'var(--bg-deep)' }}
+                />
+              )}
+            </span>
+            <span className="flex-1 leading-snug italic" style={{ color: 'var(--text-secondary)' }}>
+              {otherLabel}…
+            </span>
           </label>
         )}
         {allowFreeText && isFreeText && (
           <input
             id={otherTextInputId}
             type="text"
+            autoFocus
             aria-label={`${label} — ${otherLabel}`}
             placeholder={freeTextPlaceholder ?? defaultFreeTextPlaceholder}
             value={freeTextValue}
             onChange={(e) => onFreeTextChange?.(e.target.value)}
-            className="ml-6 mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+            className="mt-1 px-3.5 py-2.5 rounded-xl text-sm outline-none transition-colors focus:ring-2"
             style={{
               backgroundColor: 'var(--bg-deep)',
               color: 'var(--text-primary)',
-              border: '1px solid var(--border-dim)',
+              border: '1.5px solid var(--accent)',
               fontFamily: "'DM Sans', system-ui, sans-serif",
             }}
           />
@@ -468,6 +686,8 @@ interface QuestionDescriptor {
   label: string;
   options: ChoiceOption[];
   recommended?: string;
+  quoteFromUser?: string;
+  whyItMatters?: string;
   allowFreeText?: boolean;
   freeTextPlaceholder?: string;
 }
@@ -484,6 +704,8 @@ function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescri
       label: (child.props.label as string) ?? '',
       options: (child.props.options as ChoiceOption[]) ?? [],
       recommended: child.props.recommended as string | undefined,
+      quoteFromUser: child.props.quoteFromUser as string | undefined,
+      whyItMatters: child.props.whyItMatters as string | undefined,
       allowFreeText: child.props.allowFreeText !== false,
       freeTextPlaceholder: child.props.freeTextPlaceholder as string | undefined,
     });
@@ -491,11 +713,186 @@ function extractQuestions(children: A2UIComponent[] | undefined): QuestionDescri
   return out;
 }
 
+// QuestionnaireLocked renders a read-only view of a resolved questionnaire.
+// Displayed labels resolve each recorded answer id back to its option label
+// (falling back to the id itself if the answer was a free-text value that
+// does not match any option). Fields with no recorded answer still render
+// with a placeholder so the frame stays stable with the active state.
+interface QuestionnaireLockedProps {
+  questions: QuestionDescriptor[];
+  restatedGoal: string;
+  assumptions: string[];
+  resolvedPayload: string;
+  resolvedAt?: Date;
+}
+
+export function parseResolvedAnswers(resolvedPayload: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(resolvedPayload);
+  } catch {
+    console.warn(
+      'parseResolvedAnswers: JSON parse error',
+      resolvedPayload.slice(0, 120),
+    );
+    return {};
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.warn(
+      'parseResolvedAnswers: non-object JSON',
+      typeof parsed,
+      String(resolvedPayload).slice(0, 120),
+    );
+    return {};
+  }
+
+  const obj = parsed as Record<string, unknown>;
+
+  // Wrapped shape — REQ-FE-001 (legacy / forward-compat).
+  if (obj.answers && typeof obj.answers === 'object' && !Array.isArray(obj.answers)) {
+    return coerceAll(obj.answers as Record<string, unknown>);
+  }
+
+  // Action envelope — REQ-FE-002. Approve/revise/reject MUST NOT be
+  // misread as a questionnaire answer map.
+  if ('action' in obj || 'content' in obj) {
+    return {};
+  }
+
+  // Flat shape — REQ-FE-001 (current emitter). Treat the top-level
+  // object as the answer map, coercing each value to string.
+  const out = coerceAll(obj);
+  if (Object.keys(out).length === 0 && Object.keys(obj).length > 0) {
+    console.warn(
+      'parseResolvedAnswers: unrecognized shape',
+      { keys: Object.keys(obj), preview: resolvedPayload.slice(0, 120) },
+    );
+  }
+  return out;
+}
+
+function coerceAll(o: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = typeof v === 'string' ? v : String(v ?? '');
+  }
+  return out;
+}
+
+function QuestionnaireLocked({
+  questions,
+  restatedGoal,
+  assumptions,
+  resolvedPayload,
+  resolvedAt,
+}: QuestionnaireLockedProps) {
+  const { t } = useTranslation('chat');
+  const answers = useMemo(() => parseResolvedAnswers(resolvedPayload), [resolvedPayload]);
+  const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
+
+  const respondedAtLabel = resolvedAt
+    ? t('a2ui.questionnaire.respondedAt', {
+        defaultValue: 'Responded at {{time}}',
+        time: resolvedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })
+    : t('a2ui.questionnaire.responded', 'Responded');
+
+  const resolveLabel = (q: QuestionDescriptor, answer: string): string => {
+    const match = q.options?.find((o) => o.id === answer);
+    return match?.label ?? answer;
+  };
+
+  return (
+    <section
+      aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
+      aria-live="polite"
+      className="flex flex-col gap-3 my-2"
+    >
+      {hasFraming && (
+        <div
+          className="rounded-xl px-3.5 py-3 flex flex-col gap-2"
+          style={{
+            backgroundColor: 'var(--bg-input)',
+            border: '1px solid var(--border-dim)',
+          }}
+        >
+          <div
+            className="text-[10px] uppercase tracking-widest font-semibold"
+            style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {t('a2ui.understoodAs', 'I understood')}
+          </div>
+          {restatedGoal && (
+            <div className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>
+              {restatedGoal}
+            </div>
+          )}
+          {assumptions.length > 0 && (
+            <ul className="flex flex-col gap-1 mt-1 list-disc pl-5">
+              {assumptions.map((a, i) => (
+                <li key={i} className="text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                  {a}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div
+        className="text-[10px] uppercase tracking-widest font-semibold"
+        style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {respondedAtLabel}
+      </div>
+
+      <ul className="flex flex-col gap-2">
+        {questions.map((q) => {
+          const answer = answers[q.id];
+          return (
+            <li
+              key={q.id}
+              className="rounded-lg px-3 py-2 flex flex-col gap-1"
+              style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-dim)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {q.label}
+              </div>
+              <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                {answer ? resolveLabel(q, answer) : '—'}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const { t } = useTranslation('chat');
   const componentId = (component.props.id as string) ?? '';
   const submitLabel = (component.props.submitLabel as string) ?? t('a2ui.submit', 'Submit');
+  const restatedGoal = (component.props.restatedGoal as string | undefined) ?? '';
+  const assumptions = (component.props.assumptions as string[] | undefined) ?? [];
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
+  const { resolvedPayload, resolvedAt } = useContext(ResolutionContext);
+
+  // REQ-102..105: when the backend has persisted a HITL response paired
+  // with this A2UI surface, render a read-only summary instead of the
+  // interactive form. Answers are parsed from the payload (submit: raw
+  // JSON object with `answers`; approve/revise: wrapped action JSON).
+  if (resolvedPayload !== undefined) {
+    return (
+      <QuestionnaireLocked
+        questions={questions}
+        restatedGoal={restatedGoal}
+        assumptions={assumptions}
+        resolvedPayload={resolvedPayload}
+        resolvedAt={resolvedAt}
+      />
+    );
+  }
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
@@ -585,8 +982,69 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
     [currentAnswered, goNext, isFinalStep],
   );
 
+  const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
+
+  const framingHeader = hasFraming ? (
+    <div
+      className="rounded-xl px-3.5 py-3 flex flex-col gap-2"
+      style={{
+        backgroundColor: 'var(--bg-input)',
+        border: '1px solid var(--border-dim)',
+      }}
+    >
+      <div
+        className="text-[10px] uppercase tracking-widest font-semibold"
+        style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {t('a2ui.understoodAs', 'I understood')}
+      </div>
+      {restatedGoal && (
+        <div className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>
+          {restatedGoal}
+        </div>
+      )}
+      {assumptions.length > 0 && (
+        <ul className="flex flex-col gap-1 mt-1 list-disc pl-5">
+          {assumptions.map((a, i) => (
+            <li key={i} className="text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+              {a}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  ) : null;
+
   if (totalSteps === 0 || !currentQuestion) {
-    return null;
+    if (!hasFraming) return null;
+    const confirmLabel = t('a2ui.confirmAndContinue', 'Confirm and continue');
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onAction({ type: 'hitl:submit', componentId, payload: { answers: {} } });
+        }}
+        aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
+        className="flex flex-col gap-3 my-2"
+      >
+        {framingHeader}
+        <div>
+          <button
+            type="submit"
+            className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
+            style={{
+              backgroundColor: 'rgba(14, 165, 233, 0.15)',
+              color: 'var(--accent)',
+              border: '1px solid rgba(14, 165, 233, 0.3)',
+              boxShadow: '0 0 8px -2px var(--accent-glow)',
+              cursor: 'pointer',
+            }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </form>
+    );
   }
 
   const previousLabel = t('a2ui.previous', 'Previous');
@@ -611,6 +1069,7 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
       aria-label={t('a2ui.questionnaireAriaLabel', 'Clarification questionnaire')}
       className="flex flex-col gap-3 my-2"
     >
+      {framingHeader}
       {!isSingleQuestion && (
         <div className="flex flex-col gap-1.5">
           <div
@@ -649,6 +1108,8 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
         label={currentQuestion.label}
         options={currentQuestion.options}
         recommended={currentQuestion.recommended}
+        quoteFromUser={currentQuestion.quoteFromUser}
+        whyItMatters={currentQuestion.whyItMatters}
         selected={answers[currentQuestion.id]}
         onSelect={(optionId) => handleSelect(currentQuestion.id, optionId)}
         groupName={`${componentId}-${currentQuestion.id}`}
@@ -751,9 +1212,17 @@ interface A2UIMessageRendererProps {
   payload: A2UIPayload;
   isStreaming: boolean;
   onAction: (action: A2UIAction) => void;
+  resolvedPayload?: string;
+  resolvedAt?: Date;
 }
 
-export function A2UIMessageRenderer({ payload, isStreaming, onAction }: A2UIMessageRendererProps) {
+export function A2UIMessageRenderer({
+  payload,
+  isStreaming,
+  onAction,
+  resolvedPayload,
+  resolvedAt,
+}: A2UIMessageRendererProps) {
   const deferredPayload = useDeferredValue(payload);
 
   const handleAction = useCallback(
@@ -763,13 +1232,32 @@ export function A2UIMessageRenderer({ payload, isStreaming, onAction }: A2UIMess
     [onAction],
   );
 
+  const resolutionValue = useMemo(
+    () => ({ resolvedPayload, resolvedAt }),
+    [resolvedPayload, resolvedAt],
+  );
+
+  // Motion — §Motion in the iterative-clarification-loop spec.
+  // Only A2UI bubbles that carry a `round` field animate on mount; other
+  // bubbles keep their current mount behavior to avoid introducing motion
+  // inconsistency across surfaces that pre-date this feature. The `.a2ui-
+  // round-in` class is defined in index.css (180ms fade + 4px lift,
+  // reduced-motion → fade only).
+  const hasRound = Boolean(deferredPayload.round);
+  const contentClass = hasRound ? 'a2ui-content a2ui-round-in' : 'a2ui-content';
+
   return (
-    <div className="a2ui-content">
-      {deferredPayload.components.map((component, i) => (
-        <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
-      ))}
-      {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
-    </div>
+    <ResolutionContext.Provider value={resolutionValue}>
+      <div className={contentClass}>
+        {deferredPayload.round ? (
+          <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+        ) : null}
+        {deferredPayload.components.map((component, i) => (
+          <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
+        ))}
+        {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
+      </div>
+    </ResolutionContext.Provider>
   );
 }
 

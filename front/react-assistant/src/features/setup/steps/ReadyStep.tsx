@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react';
 import type { TFunction } from 'i18next';
 import { completeOnboarding } from '../../../services/api';
-import type { PersonalityPreset } from '../../../types/setup';
+import type { PersonalityPreset, RegionalVariant } from '../../../types/setup';
 
 interface ReadyStepProps {
   t: TFunction;
   language: string;
+  regionalVariant: RegionalVariant;
   model: string;
   modelOverrides: Record<string, string>;
   personalityPreset: PersonalityPreset;
@@ -15,28 +16,34 @@ interface ReadyStepProps {
 export function ReadyStep({
   t,
   language,
+  regionalVariant,
   model,
   modelOverrides,
   personalityPreset,
   onComplete,
 }: ReadyStepProps) {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleFinish = useCallback(async () => {
     setSaving(true);
+    setError(null);
     try {
       await completeOnboarding({
         preferred_language: language,
+        regional_variant: regionalVariant,
         preferred_model: model,
         model_overrides: modelOverrides,
         personality_preset: personalityPreset,
       });
       onComplete();
-    } catch {
-      // If saving fails, still let the user proceed
-      onComplete();
+    } catch (e) {
+      // Surface the failure so the user can retry instead of silently
+      // proceeding with unsaved preferences.
+      setError(e instanceof Error ? e.message : t('ready.error'));
+      setSaving(false);
     }
-  }, [language, model, modelOverrides, personalityPreset, onComplete]);
+  }, [language, regionalVariant, model, modelOverrides, personalityPreset, onComplete, t]);
 
   const personalityLabel =
     personalityPreset && personalityPreset !== 'custom'
@@ -115,7 +122,25 @@ export function ReadyStep({
                 fontFamily: "'JetBrains Mono', monospace",
               }}
             >
-              {language === 'es' ? 'Espanol' : 'English'}
+              {language === 'es' ? 'Español' : 'English'}
+            </span>
+          </div>
+          <div
+            className="h-px w-full"
+            style={{ backgroundColor: 'var(--border-dim)' }}
+          />
+          <div className="flex justify-between items-center">
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {t('ready.region_label')}
+            </span>
+            <span
+              className="text-xs font-medium"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {regionalVariant}
             </span>
           </div>
           <div
@@ -156,6 +181,15 @@ export function ReadyStep({
           </div>
         </div>
       </div>
+
+      {error && (
+        <p
+          className="text-xs text-center"
+          style={{ color: '#ef4444', fontFamily: "'JetBrains Mono', monospace" }}
+        >
+          {error}
+        </p>
+      )}
 
       {/* CTA */}
       <button

@@ -1,0 +1,21 @@
+{
+  "title": "Settings",
+  "subtitle": "Manage your language, region, and default model preferences.",
+  "loadingMessage": "Loading your preferences...",
+  "errorMessage": "We could not load your preferences. Please try again.",
+  "saveButton": "Save changes",
+  "savingButton": "Saving...",
+  "savedToast": "Preferences saved.",
+  "saveError": "Could not save your preferences. Please try again.",
+  "languageLabel": "Interface language",
+  "languageHint": "Used for system messages and UI copy.",
+  "regionLabel": "Regional variant",
+  "regionHint": "Controls local tone, idioms, and spelling.",
+  "modelLabel": "Default model",
+  "modelHint": "Used for every task unless overridden below.",
+  "advancedLabel": "Advanced: Per-role overrides",
+  "useSystemDefault": "Use system default",
+  "staleModelWarning": "This model is no longer offered by the platform. Save with a different choice to avoid issues.",
+  "languageEn": "English",
+  "languageEs": "Spanish"
+}

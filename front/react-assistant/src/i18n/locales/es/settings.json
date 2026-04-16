@@ -1,0 +1,21 @@
+{
+  "title": "Configuración",
+  "subtitle": "Administra tu idioma, región y modelo predeterminado.",
+  "loadingMessage": "Cargando tus preferencias...",
+  "errorMessage": "No pudimos cargar tus preferencias. Inténtalo de nuevo.",
+  "saveButton": "Guardar cambios",
+  "savingButton": "Guardando...",
+  "savedToast": "Preferencias guardadas.",
+  "saveError": "No pudimos guardar tus preferencias. Inténtalo de nuevo.",
+  "languageLabel": "Idioma de la interfaz",
+  "languageHint": "Se usa para los mensajes del sistema y los textos de la interfaz.",
+  "regionLabel": "Variante regional",
+  "regionHint": "Controla el tono local, los modismos y la ortografía.",
+  "modelLabel": "Modelo predeterminado",
+  "modelHint": "Se usa en cada tarea, salvo que lo sobrescribas abajo.",
+  "advancedLabel": "Avanzado: ajustes por rol",
+  "useSystemDefault": "Usar el predeterminado del sistema",
+  "staleModelWarning": "Este modelo ya no está disponible en la plataforma. Guarda con otra opción para evitar problemas.",
+  "languageEn": "Inglés",
+  "languageEs": "Español"
+}

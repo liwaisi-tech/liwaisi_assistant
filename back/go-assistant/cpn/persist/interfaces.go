@@ -76,6 +76,14 @@ type EventRepository interface {
 	Count(ctx context.Context, opts *EventQueryOpts) (int64, error)
 }
 
+// LLMCallRepository persists per-call LLM audit records (one row per
+// invocation), complementing the per-session aggregate in LedgerRepository.
+type LLMCallRepository interface {
+	// Record inserts a single LLM call audit row. Implementations should be
+	// safe to call from a background goroutine on the LLM hot path.
+	Record(ctx context.Context, rec *LLMCallRecord) error
+}
+
 // LedgerRepository manages token usage and cost tracking.
 type LedgerRepository interface {
 	// Record upserts a ledger entry: creates if new, increments if existing.

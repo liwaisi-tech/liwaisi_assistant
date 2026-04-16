@@ -35,6 +35,13 @@ export function LanguageSwitcher({ variant, className = '' }: LanguageSwitcherPr
     [i18n, closeDropdown],
   );
 
+  // Auto-open when the UserMenu or CommandPalette fires the global event.
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener('liwaisi:openLanguageSwitcher', handler);
+    return () => window.removeEventListener('liwaisi:openLanguageSwitcher', handler);
+  }, []);
+
   // Close on outside click or Escape
   useEffect(() => {
     if (!open) return;

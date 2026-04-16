@@ -17,6 +17,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// writeErrorCode writes a JSON error response with a stable machine-readable
+// error code alongside the human-readable message. Used for client-facing
+// error classifications the frontend branches on (e.g.
+// ONBOARDING_MODEL_REQUIRED from REQ-ONB-003).
+func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}
+
 // SessionResponse is the JSON response for session operations.
 type SessionResponse struct {
 	ID        string `json:"id"`
@@ -33,12 +41,17 @@ type SessionDetailResponse struct {
 }
 
 // MessageResponse is a single message in the session history.
+// ParentMessageID, when present, links a HITL response row to the earlier
+// A2UI surface it answers so the frontend can lock the questionnaire
+// component on rehydration (REQ-006/REQ-101
+// — spec-process-bugfix-a2ui-hitl-response-persistence.md).
 type MessageResponse struct {
-	ID        string `json:"id"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	CPNID     string `json:"cpn_id,omitempty"`
-	Timestamp string `json:"timestamp"`
+	ID              string `json:"id"`
+	Role            string `json:"role"`
+	Content         string `json:"content"`
+	CPNID           string `json:"cpn_id,omitempty"`
+	Timestamp       string `json:"timestamp"`
+	ParentMessageID string `json:"parent_message_id,omitempty"`
 }
 
 // StatusResponse is a simple status response.

@@ -121,8 +121,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [fetchAdminStatus]);
 
   useEffect(() => {
+    // Gate on actual completion, NOT on effect entry. The previous version
+    // set `initRef.current = true` before polling for window.google, which
+    // meant a re-render during the polling window cleared the interval AND
+    // skipped re-init on the next effect call — leaving GSI uninitialized
+    // and SignInModal.renderButton() failing with "client_id is missing".
     if (initRef.current) return;
-    initRef.current = true;
 
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -136,23 +140,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         callback: handleCredentialResponse,
         auto_select: false,
       });
+      initRef.current = true; // mark complete only after successful init
     };
 
     if (window.google?.accounts) {
       initGoogle();
-    } else {
-      const checkInterval = setInterval(() => {
-        if (window.google?.accounts) {
-          clearInterval(checkInterval);
-          initGoogle();
-        }
-      }, 100);
-      return () => clearInterval(checkInterval);
+      return;
     }
+
+    const checkInterval = setInterval(() => {
+      if (window.google?.accounts) {
+        clearInterval(checkInterval);
+        initGoogle();
+      }
+    }, 100);
+    return () => clearInterval(checkInterval);
   }, [handleCredentialResponse, user]);
 
   const logout = useCallback(() => {
     if (user?.email) {
+      // Clear the unified active-session key (REQ-106, §4.4). The prefix
+      // `liwaisi_active_session_` MUST match `STORAGE_KEY_PREFIX` in
+      // `useChatList.ts` — keeping them in sync is what prevents the
+      // ghost-session bug from resurfacing across logout/login.
       localStorage.removeItem(`liwaisi_session_${user.email}`);
       localStorage.removeItem(`liwaisi_active_session_${user.email}`);
     }
@@ -164,12 +174,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.email]);
 
   // Listen for auth:expired events (fired by api.ts on 401 responses).
-  // Re-trigger Google Sign-In prompt to get a fresh token.
+  // Perform a full logout so the app re-renders to the landing page and the
+  // user can sign in again. Clearing only the token is not enough: App.tsx
+  // gates the landing view on `!user`, so leaving `user` populated keeps the
+  // authed UI mounted while every API call keeps 401-ing.
+  const logoutRef = useRef(logout);
+  useEffect(() => {
+    logoutRef.current = logout;
+  }, [logout]);
   useEffect(() => {
     const handleExpired = () => {
-      setToken(null);
-      localStorage.removeItem('liwaisi_token');
-      // Re-prompt Google Sign-In for fresh credential.
+      logoutRef.current();
       window.google?.accounts.id.prompt();
     };
     window.addEventListener('auth:expired', handleExpired);

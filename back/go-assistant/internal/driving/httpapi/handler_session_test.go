@@ -321,6 +321,49 @@ func TestHandleSendMessage_NotFound(t *testing.T) {
 	}
 }
 
+// TestDeriveClientSessionState locks in the rehydration-oriented state
+// vocabulary returned by GET /api/v1/sessions/{id} per REQ-404 of
+// spec-process-bugfix-a2ui-rehydration-completion.md. The frontend reducer
+// depends on these exact strings (idle | running | hitl_pending | terminal).
+func TestDeriveClientSessionState(t *testing.T) {
+	t.Parallel()
+
+	a2uiMsg := cpn.Message{Role: cpn.RoleAssistant, Content: cpn.A2UIMarker + `{"components":[]}`}
+	plainMsg := cpn.Message{Role: cpn.RoleAssistant, Content: "Hola, ¿cómo estás?"}
+	userMsg := cpn.Message{Role: cpn.RoleUser, Content: "Necesito ayuda"}
+
+	cases := []struct {
+		name     string
+		state    cpn.State
+		messages []cpn.Message
+		want     string
+	}{
+		{"idle_empty", cpn.StateIdle, nil, "idle"},
+		{"running_no_messages", cpn.StateRunning, nil, "running"},
+		{"running_with_user_msg", cpn.StateRunning, []cpn.Message{userMsg}, "running"},
+		{"waiting_a2ui_pending", cpn.StateWaiting, []cpn.Message{userMsg, a2uiMsg}, "hitl_pending"},
+		{"waiting_no_a2ui_falls_back_to_running", cpn.StateWaiting, []cpn.Message{userMsg, plainMsg}, "running"},
+		{"waiting_user_only", cpn.StateWaiting, []cpn.Message{userMsg}, "running"},
+		{"completed_terminal", cpn.StateCompleted, []cpn.Message{userMsg, plainMsg}, "terminal"},
+		{"failed_terminal", cpn.StateFailed, []cpn.Message{userMsg}, "terminal"},
+		{"a2ui_with_leading_whitespace_recognized", cpn.StateWaiting, []cpn.Message{
+			userMsg, {Role: cpn.RoleAssistant, Content: "  \n" + cpn.A2UIMarker + `{"components":[]}`},
+		}, "hitl_pending"},
+		{"non_assistant_a2ui_ignored", cpn.StateWaiting, []cpn.Message{
+			{Role: cpn.RoleUser, Content: cpn.A2UIMarker + `{"components":[]}`},
+		}, "running"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveClientSessionState(tc.state, tc.messages)
+			if got != tc.want {
+				t.Errorf("deriveClientSessionState(%v, …) = %q, want %q", tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleSendMessage_EmptyContent(t *testing.T) {
 	t.Parallel()
 	h := testHandlers()

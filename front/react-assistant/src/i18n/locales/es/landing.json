@@ -10,13 +10,13 @@
   "hero": {
     "logoAlt": "brae",
     "title": "brae — <accent>Being a Real AI Engineer</accent>",
-    "subtitle": "Una nueva clase de motor agentico. Ni un chatbot mas, ni otro wrapper de prompts: un runtime transparente y auditable impulsado por Coloured Petri Nets. brae ingenieria resultados en los que puedes confiar.",
+    "subtitle": "Una nueva clase de motor agéntico. Ni un chatbot más, ni otro wrapper de prompts: un runtime transparente y auditable impulsado por Coloured Petri Nets. brae diseña resultados en los que puedes confiar.",
     "earlyAccessNote": "Únete a nuestro programa de acceso anticipado. Solo B2B; te contactaremos personalmente."
   },
   "whatIs": {
     "eyebrow": "¿Qué es brae?",
-    "title": "Una nueva clase de motor agentico donde <accent>cada decisión es visible</accent>",
-    "description": "brae — Being a Real AI Engineer — no es un chatbot ni un wrapper de prompts. Es un runtime agentico construido sobre un motor de Coloured Petri Nets que orquesta flujos de trabajo de IA con precisión matemática. Cada token de datos, cada transición, cada decisión: visible y auditable en tiempo real. Tu equipo mantiene el control en cada paso.",
+    "title": "Una nueva clase de motor agéntico donde <accent>cada decisión es visible</accent>",
+    "description": "brae — Being a Real AI Engineer — no es un chatbot ni un wrapper de prompts. Es un runtime agéntico construido sobre un motor de Coloured Petri Nets que orquesta flujos de trabajo de IA con precisión matemática. Cada token de datos, cada transición, cada decisión: visible y auditable en tiempo real. Tu equipo mantiene el control en cada paso.",
     "pillars": {
       "transparent": {
         "title": "Transparente",
@@ -125,7 +125,7 @@
   },
   "footerCta": {
     "eyebrow": "Acceso anticipado",
-    "title": "¿Listo para correr un <accent>motor agentico en el que puedes confiar</accent>?",
+    "title": "¿Listo para correr un <accent>motor agéntico en el que puedes confiar</accent>?",
     "description": "brae se construye directamente con cada socio. Ingeniería real, flujos reales, responsabilidad real. Sin cajas negras. Sin sorpresas.",
     "alreadyHaveAccess": "¿Ya tienes acceso?",
     "signIn": "Iniciar sesión",

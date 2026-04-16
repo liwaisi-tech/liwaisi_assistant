@@ -24,6 +24,12 @@ type CPN struct {
 
 	SessionID string
 
+	// RegionalVariant is the BCP-47 tag for the session's user. Loaded once
+	// per session by the session service and read by fireLLM to render a
+	// per-session prompt preamble (CON-003: never mutates Transition state).
+	// Empty means "use language default" — the renderer falls back globally.
+	RegionalVariant string
+
 	// LLMClient is the LLM API client shared by all LLM transitions.
 	LLMClient LLMClient
 

@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
-import { useAuth } from '../../contexts/AuthContext';
 import { BalanceWidget } from '../billing/BalanceWidget';
 import { LanguageSwitcher } from '../i18n/LanguageSwitcher';
 
@@ -12,7 +11,7 @@ interface PersonalityBadge {
 interface StatusBarProps {
   sessionState: SessionState;
   isConnected: boolean;
-  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin';
+  activeApp?: 'chat' | 'flows' | 'monitor' | 'personality' | 'tools' | 'admin' | 'settings';
   personalityPrinciples?: PersonalityBadge[];
 }
 
@@ -31,11 +30,10 @@ const principleColors: Record<string, string> = {
 };
 
 export function StatusBar({ sessionState, isConnected, activeApp = 'chat', personalityPrinciples }: StatusBarProps) {
-  const { t } = useTranslation(['desktop', 'common']);
+  const { t } = useTranslation(['desktop', 'common', 'settings']);
   const stateClass = stateClassName[sessionState];
   const stateLabel = t(`common:status.${sessionState}`);
   const appLabel = t(`desktop:statusBar.appLabels.${activeApp}`);
-  const { user, logout } = useAuth();
 
   return (
     <header
@@ -134,30 +132,6 @@ export function StatusBar({ sessionState, isConnected, activeApp = 'chat', perso
       <div className="flex items-center gap-3">
         <LanguageSwitcher variant="desktop" />
         <BalanceWidget />
-
-        {user && (
-          <div className="flex items-center gap-2">
-            <img
-              src={user.picture}
-              alt={user.name}
-              className="w-6 h-6 rounded-full ring-1 ring-[var(--border-dim)]"
-              referrerPolicy="no-referrer"
-            />
-            <span className="text-[11px] hidden sm:inline" style={{ color: 'var(--text-secondary)' }}>
-              {user.name}
-            </span>
-            <button
-              onClick={logout}
-              className="text-[10px] px-2 py-1 rounded transition-colors"
-              style={{ color: 'var(--text-muted)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-              aria-label={t('desktop:statusBar.signOut')}
-            >
-              {t('desktop:statusBar.signOut')}
-            </button>
-          </div>
-        )}
       </div>
     </header>
   );

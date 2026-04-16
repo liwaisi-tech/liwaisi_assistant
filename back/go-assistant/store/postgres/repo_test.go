@@ -105,8 +105,8 @@ func TestSessionRepo_Get_Success(t *testing.T) {
 		WithArgs("s1").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "session_id", "role", "content",
-			"cpn_id", "cpn_role", "cpn_depth", "timestamp",
-		}).AddRow("m1", "s1", "user", "hello", "cpn1", "coordinator", 0, now))
+			"cpn_id", "cpn_role", "cpn_depth", "timestamp", "parent_message_id",
+		}).AddRow("m1", "s1", "user", "hello", "cpn1", "coordinator", 0, now, ""))
 
 	s, err := repo.Get(context.Background(), "s1")
 	if err != nil {
@@ -185,7 +185,7 @@ func TestSessionRepo_AppendMessage_Success(t *testing.T) {
 	repo := NewSessionRepository(mock)
 
 	mock.ExpectExec("INSERT INTO messages").
-		WithArgs("m1", "s1", "user", "hi", "", "", 0, pgxmock.AnyArg()).
+		WithArgs("m1", "s1", "user", "hi", "", "", 0, pgxmock.AnyArg(), nil).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	err := repo.AppendMessage(context.Background(), "s1", &persist.MessageRecord{
@@ -203,7 +203,7 @@ func TestSessionRepo_AppendMessage_SessionNotFound(t *testing.T) {
 
 	// 0 rows affected => check state
 	mock.ExpectExec("INSERT INTO messages").
-		WithArgs("m1", "missing", "user", "hi", "", "", 0, pgxmock.AnyArg()).
+		WithArgs("m1", "missing", "user", "hi", "", "", 0, pgxmock.AnyArg(), nil).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 
 	// state check fails → not found
@@ -225,7 +225,7 @@ func TestSessionRepo_AppendMessage_SessionClosed(t *testing.T) {
 	repo := NewSessionRepository(mock)
 
 	mock.ExpectExec("INSERT INTO messages").
-		WithArgs("m1", "s-closed", "user", "hi", "", "", 0, pgxmock.AnyArg()).
+		WithArgs("m1", "s-closed", "user", "hi", "", "", 0, pgxmock.AnyArg(), nil).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 
 	mock.ExpectQuery("SELECT state FROM sessions WHERE id").
@@ -246,7 +246,7 @@ func TestSessionRepo_AppendMessage_FKViolation(t *testing.T) {
 	repo := NewSessionRepository(mock)
 
 	mock.ExpectExec("INSERT INTO messages").
-		WithArgs("m1", "bad", "user", "hi", "", "", 0, pgxmock.AnyArg()).
+		WithArgs("m1", "bad", "user", "hi", "", "", 0, pgxmock.AnyArg(), nil).
 		WillReturnError(&pgconn.PgError{Code: "23503"})
 
 	err := repo.AppendMessage(context.Background(), "bad", &persist.MessageRecord{
@@ -1417,7 +1417,7 @@ func TestSessionRepo_AppendMessage_DBError(t *testing.T) {
 	repo := NewSessionRepository(mock)
 
 	mock.ExpectExec("INSERT INTO messages").
-		WithArgs("m1", "s1", "user", "hi", "", "", 0, pgxmock.AnyArg()).
+		WithArgs("m1", "s1", "user", "hi", "", "", 0, pgxmock.AnyArg(), nil).
 		WillReturnError(errors.New("generic db error"))
 
 	err := repo.AppendMessage(context.Background(), "s1", &persist.MessageRecord{

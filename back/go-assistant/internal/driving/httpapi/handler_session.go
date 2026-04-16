@@ -184,6 +184,10 @@ func (h *Handlers) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "session not found")
 			return
 		}
+		if errors.Is(err, app.ErrPersistenceUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "persistence unavailable")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -195,24 +199,69 @@ func (h *Handlers) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 	msgs := make([]MessageResponse, len(info.Messages))
 	for i, m := range info.Messages {
 		msgs[i] = MessageResponse{
-			ID:        m.ID,
-			Role:      string(m.Role),
-			Content:   m.Content,
-			CPNID:     m.CPNID,
-			Timestamp: m.Timestamp.Format(time.RFC3339),
+			ID:              m.ID,
+			Role:            string(m.Role),
+			Content:         m.Content,
+			CPNID:           m.CPNID,
+			Timestamp:       m.Timestamp.Format(time.RFC3339),
+			ParentMessageID: m.ParentMessageID,
 		}
 	}
 
 	writeJSON(w, http.StatusOK, SessionDetailResponse{
 		SessionResponse: SessionResponse{
-			ID:        info.ID,
-			UserID:    info.UserID,
-			Channel:   string(info.Channel),
-			State:     string(info.State),
+			ID:      info.ID,
+			UserID:  info.UserID,
+			Channel: string(info.Channel),
+			// Override the raw CPN state with the rehydration-oriented vocabulary
+			// the frontend reducer expects (REQ-404, AC-401/403). Mapping:
+			//   StateRunning                       → "running"
+			//   StateWaiting + last msg is $$a2ui: → "hitl_pending"
+			//   StateWaiting (no pending HITL)     → "running" (CPN paused for non-HITL reason)
+			//   StateCompleted | StateFailed       → "terminal"
+			//   default (StateIdle)                → "idle"
+			State:     deriveClientSessionState(info.State, info.Messages),
 			CreatedAt: info.CreatedAt.Format(time.RFC3339),
 		},
 		Messages: msgs,
 	})
+}
+
+// deriveClientSessionState maps the raw CPN State + last-message content
+// to the frontend-facing vocabulary used by useChat reducer's `sessionState`
+// machine. See spec-process-bugfix-a2ui-rehydration-completion.md REQ-404.
+func deriveClientSessionState(s cpn.State, messages []cpn.Message) string {
+	switch s {
+	case cpn.StateRunning:
+		return "running"
+	case cpn.StateWaiting:
+		if hasPendingA2UISurface(messages) {
+			return "hitl_pending"
+		}
+		return "running"
+	case cpn.StateCompleted, cpn.StateFailed:
+		return "terminal"
+	default:
+		return "idle"
+	}
+}
+
+// hasPendingA2UISurface returns true when the most recent assistant message
+// in the slice is an A2UI HITL surface, indicating the session is paused on
+// human input rather than mid-LLM-generation.
+func hasPendingA2UISurface(messages []cpn.Message) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m.Role != cpn.RoleAssistant {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(m.Content), cpn.A2UIMarker) {
+			return true
+		}
+		// First non-A2UI assistant message ends the lookback.
+		return false
+	}
+	return false
 }
 
 // HandleDeleteSession deletes a session and releases its resources.
@@ -229,6 +278,10 @@ func (h *Handlers) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, app.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		if errors.Is(err, app.ErrPersistenceUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "persistence unavailable")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -260,6 +313,10 @@ func (h *Handlers) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, app.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		if errors.Is(err, app.ErrPersistenceUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "persistence unavailable")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal error")

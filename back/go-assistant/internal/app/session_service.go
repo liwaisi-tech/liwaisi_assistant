@@ -5,15 +5,25 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 )
+
+// rehydrateTimeout bounds the time a single-flight rehydration can block the
+// service on a persistence round-trip. Keeps ghost-session lookups bounded so
+// a slow Postgres does not stall the handler pool. Tunable if SLOs change.
+const rehydrateTimeout = 5 * time.Second
 
 // TopologyFactory builds a CPN topology for a given session ID.
 // The returned CPN must have at least one source place (no incoming transitions)
@@ -48,6 +58,11 @@ type SessionService struct {
 	persist         *PersistDeps
 	tokenLedger     TokenLedgerReader
 	toolRegistry    *tools.Registry
+
+	// sf serializes concurrent rehydration attempts for the same session id,
+	// so N misses on a restart trigger exactly one persistence round-trip
+	// (spec REQ-004, AC-004, PAT-001).
+	sf singleflight.Group
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -118,6 +133,8 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	root := s.topologyFactory(id)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
+	s.applyUserModelPreferences(ctx, root, userID)
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -273,22 +290,57 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 
 		// Sync new history entries from CPN back to session on ALL exit paths.
 		// fireLLM appends assistant responses to c.History during execution;
-		// without this sync, those responses are lost when the CPN fails.
+		// fireHITL appends both an A2UI surface (assistant) and, on
+		// approve/submit/revise, a response row (user) with ParentMessageID
+		// pointing at the surface — both must propagate so persistence and
+		// rehydration can pair them (REQ-001/002/006). Without this sync,
+		// those responses are lost when the CPN fails.
 		if len(session.Root.History) > historyLen {
+			var newRows, assistantCount, userCount int
 			for _, m := range session.Root.History[historyLen:] {
-				if m.Role != cpn.RoleAssistant {
-					continue // user messages already in session history
+				// Assistant rows are always CPN-originated and always sync.
+				// User rows only sync when they are HITL responses (identified
+				// by ParentMessageID linking to an earlier A2UI surface). All
+				// other user rows were authored outside the CPN and are
+				// already in session.Messages.
+				if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+					continue
+				}
+				// Preserve the CPN-assigned ID when present so the response
+				// row's ParentMessageID remains resolvable across session.Messages.
+				id := m.ID
+				if id == "" {
+					id = sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano())
 				}
 				session.AppendMessage(&cpn.Message{
-					ID:        sessionID + "-sync-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					Role:      m.Role,
-					Content:   m.Content,
-					CPNID:     m.CPNID,
-					CPNRole:   m.CPNRole,
-					CPNDepth:  m.CPNDepth,
-					Timestamp: m.Timestamp,
+					ID:              id,
+					Role:            m.Role,
+					Content:         m.Content,
+					CPNID:           m.CPNID,
+					CPNRole:         m.CPNRole,
+					CPNDepth:        m.CPNDepth,
+					Timestamp:       m.Timestamp,
+					ParentMessageID: m.ParentMessageID,
 				})
+				newRows++
+				switch m.Role {
+				case cpn.RoleAssistant:
+					assistantCount++
+				case cpn.RoleUser:
+					userCount++
+				}
 			}
+			// REQ-OBS-005 (spec-process-bugfix-treview-surface-and-locked-parser.md):
+			// emit a structured delta log so operators can correlate a CPN
+			// run's History growth with the Messages table. HITL cycles
+			// should produce assistant_count >= 1 (surface) and user_count
+			// in {0, 1} (0 on reject, 1 on approve/revise/submit).
+			slog.DebugContext(bgCtx, "history sync delta",
+				"session_id", sessionID,
+				"new_rows", newRows,
+				"assistant_count", assistantCount,
+				"user_count", userCount,
+			)
 		}
 
 		if runErr != nil {
@@ -438,57 +490,110 @@ func (s *SessionService) CancelSession(sessionID string) {
 }
 
 // ResolveHITL forwards a human response to a waiting HITL transition.
+//
+// Rehydrates the session from persistence on in-memory miss (REQ-003a). If the
+// session has no in-flight execution to accept the response, returns
+// ErrSessionInactive so the caller can distinguish "ghost" from "idle" and
+// prompt the user for a new run rather than silently failing.
 func (s *SessionService) ResolveHITL(ctx context.Context, sessionID, transitionID string, resp cpn.HITLResponse) error {
+	session, _, err := s.getOrRehydrate(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	// HITL resolution requires an in-flight execution to be waiting on a
+	// human response. If no CPN run is live (Running/Waiting), any rehydrated
+	// topology is idle and there is no HITL channel registered for a real
+	// transition. Signal this explicitly so the frontend can prompt a new run.
 	s.mu.RLock()
-	session, ok := s.sessions[sessionID]
+	st := s.states[sessionID]
 	s.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	if st == nil || !isExecutionLive(st.get()) {
+		return fmt.Errorf("%w: %s", ErrSessionInactive, sessionID)
 	}
 
 	return session.ResolveHITL(ctx, transitionID, resp)
 }
 
+// isExecutionLive reports whether a session state indicates an in-flight CPN
+// execution that can accept stream chunks or HITL responses.
+func isExecutionLive(state cpn.State) bool {
+	return state == cpn.StateRunning || state == cpn.StateWaiting
+}
+
 // GetSession returns a read-only snapshot of the session.
+//
+// On in-memory miss, attempts rehydration from persistence (REQ-001). The
+// signature is preserved per spec §4.1; rehydration uses a bounded background
+// context internally because callers (HTTP handlers) do not currently thread
+// a request context into this entrypoint.
 func (s *SessionService) GetSession(sessionID string) (*SessionInfo, error) {
 	s.mu.RLock()
 	session, ok := s.sessions[sessionID]
 	st := s.states[sessionID]
 	s.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	if ok {
+		return buildSessionInfo(session, st), nil
 	}
 
-	return &SessionInfo{
-		ID:        session.ID,
-		UserID:    session.UserID,
-		Channel:   session.Channel,
-		State:     st.get(),
-		CreatedAt: session.CreatedAt,
-		Messages:  session.Messages(),
-	}, nil
+	ctx, cancel := context.WithTimeout(context.Background(), rehydrateTimeout)
+	defer cancel()
+
+	session, err := s.rehydrate(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	st = s.states[sessionID]
+	s.mu.RUnlock()
+	return buildSessionInfo(session, st), nil
 }
 
 // StreamChannel returns the session's streaming channel for SSE delivery.
+//
+// Rehydrates on miss (REQ-002). After rehydration, the returned channel is the
+// live stream channel of the rehydrated *cpn.Session.
 func (s *SessionService) StreamChannel(sessionID string) (<-chan cpn.StreamChunk, error) {
 	s.mu.RLock()
 	session, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	if ok {
+		return session.Stream, nil
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), rehydrateTimeout)
+	defer cancel()
+
+	session, err := s.rehydrate(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
 	return session.Stream, nil
 }
 
 // SendStreamChunk sends a stream chunk to the session's streaming channel.
 // Used by the CPN execution engine to deliver LLM streaming output.
+//
+// Rehydrates on miss (REQ-003a). A freshly rehydrated session has no producer
+// owning its stream buffer, so this path returns ErrSessionInactive to prevent
+// dropping chunks into a stale topology. Pre-existing in-memory sessions keep
+// their legacy behavior (direct channel send) so injecting chunks from tests
+// or future in-process callers is unaffected.
 func (s *SessionService) SendStreamChunk(sessionID string, chunk cpn.StreamChunk) error {
 	s.mu.RLock()
 	session, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+		ctx, cancel := context.WithTimeout(context.Background(), rehydrateTimeout)
+		defer cancel()
+
+		if _, err := s.rehydrate(ctx, sessionID); err != nil {
+			return err
+		}
+		// Freshly rehydrated sessions have no active producer/consumer. Spec
+		// §4.2 row 2 requires ErrSessionInactive on this specific path.
+		return fmt.Errorf("%w: %s", ErrSessionInactive, sessionID)
 	}
 
 	select {
@@ -590,6 +695,8 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 	root := s.topologyFactory(newID)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
+	s.applyUserModelPreferences(ctx, root, userID)
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -668,6 +775,76 @@ func (s *SessionService) SetEventCallback(fn func(string, cpn.Event)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onEvent = fn
+}
+
+// resolveRegionalVariant loads the user's BCP-47 regional variant from the
+// repository (cached on the root CPN by the caller). Falls back to the
+// language-default variant when the user is unknown, the field is empty, or
+// no user repository is wired (anonymous / pre-onboarding flows). The
+// returned value is always a supported BCP-47 tag, never empty (GUD-003).
+func (s *SessionService) resolveRegionalVariant(ctx context.Context, userID string) string {
+	if s.persist == nil || s.persist.Users == nil || userID == "" {
+		return prompts.DefaultVariant("")
+	}
+	rec, err := s.persist.Users.GetByID(ctx, userID)
+	if err != nil {
+		// Anonymous / pre-onboarding users are expected here; only log at debug.
+		return prompts.DefaultVariant("")
+	}
+	if prompts.IsSupported(rec.RegionalVariant) {
+		return rec.RegionalVariant
+	}
+	return prompts.DefaultVariant(rec.PreferredLanguage)
+}
+
+// applyUserModelPreferences stamps LLMConfig.Model on every transition in
+// root with the concrete OpenRouter model id the user's preferences dictate.
+//
+// Precedence (highest wins), per REQ-CFG-005:
+//  1. UserRecord.ModelOverrides[LLMConfig.Role] when Role is non-empty and
+//     the override is non-empty.
+//  2. UserRecord.PreferredModel when non-empty.
+//  3. openrouter.PRODUCT_DEFAULT_MODEL.
+//
+// This function is the ONLY legitimate mutator of LLMConfig.Model — all
+// topology authors leave it empty and express intent through Role. No ENV
+// lookup occurs here (REQ-CFG-002).
+//
+// Error handling is best-effort: if the user cannot be fetched, every LLM
+// transition is stamped with PRODUCT_DEFAULT_MODEL so the session still
+// runs with a well-defined model. Callers MUST NOT attempt to re-resolve
+// the model elsewhere (GUD-001).
+func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cpn.CPN, userID string) {
+	var rec *persist.UserRecord
+	if s.persist != nil && s.persist.Users != nil && userID != "" {
+		// Anonymous / pre-onboarding users are expected to yield an error
+		// here; we treat that as "no preference" and fall through.
+		rec, _ = s.persist.Users.GetByID(ctx, userID)
+	}
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || t.LLMConfig == nil {
+			continue
+		}
+		t.LLMConfig.Model = resolveModelForUser(rec, t.LLMConfig.Role)
+	}
+}
+
+// resolveModelForUser applies the three-level precedence cascade. Exported
+// as a package-visible helper to keep applyUserModelPreferences readable and
+// to give tests a tiny pure function to exercise precedence without building
+// a full CPN.
+func resolveModelForUser(rec *persist.UserRecord, role string) string {
+	if rec != nil {
+		if role != "" {
+			if m, ok := rec.ModelOverrides[role]; ok && m != "" {
+				return m
+			}
+		}
+		if rec.PreferredModel != "" {
+			return rec.PreferredModel
+		}
+	}
+	return openrouter.PRODUCT_DEFAULT_MODEL
 }
 
 // injectPersonality loads the user's personality and prefixes all LLM system prompts.
@@ -786,16 +963,20 @@ func (s *SessionService) persistAfterRun(sessionID string, newMessages []cpn.Mes
 		}
 	}
 
-	// 2. Persist new assistant messages.
+	// 2. Persist new assistant messages and HITL user-response rows.
+	// HITL response rows carry ParentMessageID linking to the A2UI surface
+	// — they must be persisted so rehydration can lock the questionnaire
+	// (REQ-001/002/006/007). Other user rows were already persisted at
+	// submission time in SendMessage.
 	if s.persist.Sessions != nil {
 		for i := range newMessages {
 			m := &newMessages[i]
-			if m.Role != cpn.RoleAssistant {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
 				continue
 			}
 			rec := persist.MessageToRecord(sessionID, m)
 			if err := s.persist.Sessions.AppendMessage(ctx, sessionID, rec); err != nil {
-				s.logger.Warn("persist assistant message", "session_id", sessionID, "error", err)
+				s.logger.Warn("persist cpn-sourced message", "session_id", sessionID, "error", err)
 			}
 		}
 	}
@@ -905,6 +1086,223 @@ func (s *SessionService) persistFlow(ctx context.Context, root *cpn.CPN) string 
 		return ""
 	}
 	return hash
+}
+
+// buildSessionInfo constructs a SessionInfo snapshot from an in-memory
+// *cpn.Session and its matching sessionState. Centralized to keep the hot
+// path and the post-rehydration path identical in shape (spec REQ-001).
+func buildSessionInfo(session *cpn.Session, st *sessionState) *SessionInfo {
+	state := cpn.StateIdle
+	if st != nil {
+		state = st.get()
+	}
+	return &SessionInfo{
+		ID:        session.ID,
+		UserID:    session.UserID,
+		Channel:   session.Channel,
+		State:     state,
+		CreatedAt: session.CreatedAt,
+		Messages:  session.Messages(),
+	}
+}
+
+// getOrRehydrate returns the live *cpn.Session for sessionID, rehydrating it
+// from persistence if it is not in memory. The rehydrated flag reports whether
+// the returned session was freshly reconstructed (true) or already live (false).
+//
+// Callers that only tolerate live execution state (HITL resolution, stream
+// producers) use the flag to convert a fresh rehydration into ErrSessionInactive
+// (spec REQ-003).
+func (s *SessionService) getOrRehydrate(ctx context.Context, sessionID string) (*cpn.Session, bool, error) {
+	s.mu.RLock()
+	session, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if ok {
+		return session, false, nil
+	}
+
+	session, err := s.rehydrate(ctx, sessionID)
+	if err != nil {
+		return nil, false, err
+	}
+	return session, true, nil
+}
+
+// rehydrate reconstructs an in-memory *cpn.Session from persistence when the
+// in-memory map has no entry for sessionID. It is protected by singleflight so
+// concurrent misses for the same id trigger exactly one persistence round-trip
+// (REQ-004, AC-004).
+//
+// Locking discipline (REQ-009, PAT-001):
+//   - Read the map under RLock, release before touching persistence.
+//   - On success, take Lock, re-check for a concurrently inserted entry
+//     (double-checked locking), and only then insert.
+//
+// Error contract:
+//   - Session absent or soft-deleted → ErrSessionNotFound (REQ-005).
+//   - No persistence wired → ErrSessionNotFound (REQ-007, preserves backwards
+//     compatibility with ephemeral deployments).
+//   - Persistence I/O failure → ErrPersistenceUnavailable (spec §4.2 / §9.6).
+//   - All errors are wrapped with fmt.Errorf("...: %w", ...) and are
+//     errors.Is-checkable (GUD-001).
+//
+// TODO(metrics): when a metrics library is adopted, emit
+// session_rehydration_total{result} and session_rehydration_duration_seconds
+// per REQ-011. For now the operation is recorded via structured logs (REQ-010).
+func (s *SessionService) rehydrate(ctx context.Context, sessionID string) (*cpn.Session, error) {
+	// REQ-007: no persistence → act like the pre-change code path.
+	if s.persist == nil || s.persist.Sessions == nil {
+		s.logger.Warn("session rehydrate skipped",
+			"session_id", sessionID,
+			"reason", "no_persistence",
+		)
+		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+
+	// singleflight collapses concurrent callers for the same id into one load.
+	v, err, _ := s.sf.Do(sessionID, func() (any, error) {
+		return s.loadFromPersist(ctx, sessionID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	loaded, ok := v.(*cpn.Session)
+	if !ok || loaded == nil {
+		// Defensive: loadFromPersist should either return *cpn.Session or error.
+		return nil, fmt.Errorf("rehydrate session %s: unexpected nil result", sessionID)
+	}
+
+	// Double-checked locking: another goroutine may have inserted between the
+	// singleflight call returning and us acquiring the write lock (e.g. a
+	// concurrent CreateSession with a colliding id — pathological, but cheap
+	// to guard). Never hold s.mu across persistence I/O (REQ-009).
+	s.mu.Lock()
+	if existing, ok := s.sessions[sessionID]; ok {
+		s.mu.Unlock()
+		return existing, nil
+	}
+	s.sessions[sessionID] = loaded
+	s.states[sessionID] = &sessionState{state: cpn.StateIdle}
+	s.mu.Unlock()
+
+	return loaded, nil
+}
+
+// loadFromPersist performs the actual persistence read and reconstructs a
+// live *cpn.Session from the stored record. Called from inside singleflight,
+// so exactly one goroutine executes this per (sessionID, in-flight) tuple.
+func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) (*cpn.Session, error) {
+	start := time.Now()
+
+	rec, err := s.persist.Sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, persist.ErrSessionNotFound) {
+			s.logger.Warn("session rehydrate miss",
+				"session_id", sessionID,
+				"reason", "not_in_persistence",
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+			// TODO(metrics): session_rehydration_total{result="miss"}++
+			return nil, fmt.Errorf("rehydrate session %s: %w", sessionID, ErrSessionNotFound)
+		}
+		s.logger.Error("session rehydrate persistence error",
+			"session_id", sessionID,
+			"error", err,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		// TODO(metrics): session_rehydration_total{result="error"}++
+		return nil, fmt.Errorf("rehydrate session %s: %w", sessionID, ErrPersistenceUnavailable)
+	}
+
+	// REQ-005: soft-deleted sessions must not be rehydrated.
+	if rec.DeletedAt != nil {
+		s.logger.Warn("session rehydrate soft-deleted",
+			"session_id", sessionID,
+			"reason", "soft_deleted",
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		// TODO(metrics): session_rehydration_total{result="soft_deleted"}++
+		return nil, fmt.Errorf("rehydrate session %s: %w", sessionID, ErrSessionNotFound)
+	}
+
+	// Reconstruct topology and session. The channel field is authoritative.
+	channel := cpn.ChannelType(rec.Channel)
+	root := s.topologyFactory(sessionID)
+	root.LLMClient = s.llm
+	root.Cost = s.cost
+	root.RegionalVariant = s.resolveRegionalVariant(ctx, rec.UserID)
+	s.applyUserModelPreferences(ctx, root, rec.UserID)
+	root.EventSink = func(e *cpn.Event) {
+		s.mu.RLock()
+		cb := s.onEvent
+		s.mu.RUnlock()
+		if cb != nil {
+			cb(sessionID, *e)
+		}
+		s.persistEvent(sessionID, e)
+	}
+	root.Metrics = cpn.NewMetricsRecorder()
+
+	session := cpn.NewSession(sessionID, rec.UserID, channel, root)
+	// Preserve the original CreatedAt from persistence so SessionInfo snapshots
+	// match what the client saw before the restart.
+	session.CreatedAt = rec.CreatedAt
+
+	// Wire HITL channels (topology may declare HITL transitions even if no
+	// execution is currently waiting).
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterHITL(t.ID, ch); err != nil {
+			s.logger.Error("rehydrate register HITL channel",
+				"session_id", sessionID,
+				"transition", t.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Best-effort personality and tool injection (same as CreateSession).
+	s.injectPersonality(ctx, root, rec.UserID)
+	if s.toolRegistry != nil {
+		s.toolRegistry.InjectIntoCPN(root)
+	}
+
+	// REQ-006: replay message history so SessionInfo.Messages is not silently
+	// empty after a restart. Messages are already on rec.Messages from Get().
+	for _, mr := range rec.Messages {
+		if mr == nil {
+			continue
+		}
+		session.AppendMessage(&cpn.Message{
+			ID:              mr.ID,
+			Role:            cpn.MessageRole(mr.Role),
+			Content:         mr.Content,
+			CPNID:           mr.CPNID,
+			CPNRole:         mr.CPNRole,
+			CPNDepth:        mr.CPNDepth,
+			Timestamp:       mr.Timestamp,
+			ParentMessageID: mr.ParentMessageID,
+		})
+	}
+
+	s.logger.Info("session rehydrated",
+		"session_id", sessionID,
+		"user_id", rec.UserID,
+		"source", "postgres",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"messages", len(rec.Messages),
+	)
+	// TODO(metrics): session_rehydration_total{result="hit"}++ and
+	// session_rehydration_duration_seconds.observe(duration).
+
+	return session, nil
 }
 
 // generateSessionID produces a cryptographically random 32-character hex string.

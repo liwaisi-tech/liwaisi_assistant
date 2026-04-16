@@ -18,6 +18,7 @@ export function ModelStep({
   onSelectModel,
   onSetOverrides,
 }: ModelStepProps) {
+  const hasOverrides = Object.keys(modelOverrides).length > 0;
   const [roles, setRoles] = useState<ModelRole[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -31,11 +32,16 @@ export function ModelStep({
     getModels()
       .then((res) => {
         if (cancelled) return;
-        setDefaultModel(res.default_model);
+        // Prefer the spec's canonical names (default / available) when the
+        // backend emits them; fall back to the legacy fields so the UI keeps
+        // working during the rollout window.
+        const dflt = res.default ?? res.default_model;
+        const avail = res.available ?? res.available_models ?? [dflt];
+        setDefaultModel(dflt);
         setRoles(res.roles);
-        setAvailableModels(res.available_models ?? [res.default_model]);
+        setAvailableModels(avail);
         if (!selectedModel) {
-          onSelectModel(res.default_model);
+          onSelectModel(dflt);
         }
         setLoading(false);
       })
@@ -88,6 +94,26 @@ export function ModelStep({
         <>
           {/* Default model selection */}
           <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider border"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: hasOverrides ? 'var(--accent)' : 'var(--text-secondary)',
+                  borderColor: hasOverrides ? 'var(--accent)' : 'var(--border-dim)',
+                  backgroundColor: 'transparent',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: hasOverrides ? 'var(--accent)' : 'var(--text-secondary)',
+                    boxShadow: hasOverrides ? '0 0 6px var(--accent-glow)' : 'none',
+                  }}
+                />
+                {hasOverrides ? t('model.modeAdvanced') : t('model.modeSimple')}
+              </span>
+            </div>
             <select
               value={selectedModel || defaultModel}
               onChange={(e) => onSelectModel(e.target.value)}
@@ -105,6 +131,30 @@ export function ModelStep({
                 </option>
               ))}
             </select>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {t('model.appliesToAll')}
+            </p>
+            {!selectedModel && (
+              <div
+                className="flex items-center gap-1.5 mt-1"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: '#f59e0b',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: '#f59e0b',
+                    boxShadow: '0 0 6px rgba(245,158,11,0.6)',
+                    animation: 'welcome-fade 0.4s ease-out forwards',
+                  }}
+                />
+                <span className="text-[10px] uppercase tracking-wider">
+                  {t('model.required')}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Advanced toggle */}
@@ -131,7 +181,21 @@ export function ModelStep({
               </button>
 
               {showAdvanced && (
-                <div className="flex flex-col gap-3 pl-4">
+                <div className="flex flex-col gap-3 pl-4 max-h-[40vh] overflow-y-auto pr-2">
+                  {hasOverrides && (
+                    <button
+                      onClick={() => onSetOverrides({})}
+                      className="self-start px-3 py-1 rounded-lg text-[11px] font-medium transition-colors duration-200 cursor-pointer border"
+                      style={{
+                        color: 'var(--text-secondary)',
+                        borderColor: 'var(--border-dim)',
+                        backgroundColor: 'transparent',
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      {t('model.resetToSingle')}
+                    </button>
+                  )}
                   {roles.map((role) => (
                     <div key={role.key} className="flex flex-col gap-1">
                       <label

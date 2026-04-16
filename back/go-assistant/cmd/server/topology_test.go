@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -41,9 +43,9 @@ func TestHITLTopology_HITLTransitionHasConfig(t *testing.T) {
 		t.Fatal("t-review HITLConfig is nil")
 	}
 
-	if tReview.HITLConfig.Prompt == "" {
-		t.Error("t-review HITLConfig.Prompt is empty")
-	}
+	// HITLConfig.Prompt is intentionally empty: the A2UI Review Required
+	// card labels itself and a plain-text bubble would be visual noise.
+	// See topologies.go for the rationale.
 
 	// Channel must be nil — wired by SessionService.CreateSession.
 	if tReview.HITLConfig.Channel != nil {
@@ -111,6 +113,10 @@ func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
 	}
 }
 
+// TestUnifiedTopology_ClassifierConfig asserts REQ-CFG-003/004: the
+// authored LLMConfig expresses intent via Role, NOT Model. The Model field
+// is stamped by applyUserModelPreferences at session-resolve time and MUST
+// remain empty at topology-factory time.
 func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	c := unifiedTopologyFactory("test-session")
 
@@ -121,8 +127,11 @@ func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	if tc.LLMConfig == nil {
 		t.Fatal("t-classify LLMConfig is nil")
 	}
-	if tc.LLMConfig.Model != "classifier" {
-		t.Errorf("t-classify model = %q, want 'classifier'", tc.LLMConfig.Model)
+	if tc.LLMConfig.Model != "" {
+		t.Errorf("t-classify Model = %q, want empty (resolver writes it per REQ-CFG-003)", tc.LLMConfig.Model)
+	}
+	if tc.LLMConfig.Role != "classifier" {
+		t.Errorf("t-classify Role = %q, want 'classifier' (REQ-CFG-004)", tc.LLMConfig.Role)
 	}
 	if !tc.LLMConfig.RequireJSON {
 		t.Error("t-classify should have RequireJSON=true")
@@ -132,6 +141,32 @@ func TestUnifiedTopology_ClassifierConfig(t *testing.T) {
 	}
 	if tc.LLMConfig.MaxTokens != 128 {
 		t.Errorf("t-classify MaxTokens = %d, want 128", tc.LLMConfig.MaxTokens)
+	}
+}
+
+// TestUnifiedTopology_TAskConfig asserts REQ-CFG-003/004 and REQ-PAR-004
+// for t-ask: Role="structured", Model="", ResponseFmtRequired=true.
+func TestUnifiedTopology_TAskConfig(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	tAsk, ok := c.Transitions["t-ask"]
+	if !ok {
+		t.Fatal("missing t-ask transition")
+	}
+	if tAsk.LLMConfig == nil {
+		t.Fatal("t-ask LLMConfig is nil")
+	}
+	if tAsk.LLMConfig.Model != "" {
+		t.Errorf("t-ask Model = %q, want empty (resolver writes it)", tAsk.LLMConfig.Model)
+	}
+	if tAsk.LLMConfig.Role != "structured" {
+		t.Errorf("t-ask Role = %q, want 'structured'", tAsk.LLMConfig.Role)
+	}
+	if !tAsk.LLMConfig.RequireJSON {
+		t.Error("t-ask should have RequireJSON=true")
+	}
+	if !tAsk.LLMConfig.ResponseFmtRequired {
+		t.Error("t-ask should have ResponseFmtRequired=true (REQ-PAR-004)")
 	}
 }
 
@@ -410,4 +445,92 @@ func TestDefaultTopology_StillWorks(t *testing.T) {
 	if err := cpn.Validate(c.Places, c.Transitions); err != nil {
 		t.Errorf("topology validation failed: %v", err)
 	}
+}
+
+// TestUnifiedTopology_TAskDualFlagHistory asserts the dual-flag config
+// applied to t-ask per REQ-104 of
+// spec-process-bugfix-a2ui-rehydration-completion.md:
+//
+//	SkipHistory       = false  → input-side: t-ask MUST read the user's
+//	                             message from c.History.
+//	SkipOutputHistory = true   → output-side: t-ask's raw JSON
+//	                             questionnaire MUST NOT be appended to
+//	                             c.History (consumed downstream via tokens
+//	                             only). Prevents the raw JSON from rendering
+//	                             as a stray bubble above the $$a2ui:
+//	                             surface on rehydration (INV-101).
+func TestUnifiedTopology_TAskDualFlagHistory(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	tAsk, ok := c.Transitions["t-ask"]
+	if !ok {
+		t.Fatal("missing t-ask transition in unified topology")
+	}
+	if tAsk.LLMConfig == nil {
+		t.Fatal("t-ask LLMConfig is nil")
+	}
+	if tAsk.LLMConfig.SkipHistory {
+		t.Error("t-ask LLMConfig.SkipHistory = true would blind the transition to the user message in c.History (input-side regression)")
+	}
+	if !tAsk.LLMConfig.SkipOutputHistory {
+		t.Error("t-ask LLMConfig.SkipOutputHistory = false would re-pollute the transcript with raw JSON (REQ-104, INV-101)")
+	}
+}
+
+// ── t-review A2UIPayloadBuilder wiring ──────────────────────────────────────
+// spec-process-bugfix-treview-surface-and-locked-parser.md REQ-BE-001/002.
+// Both topology factories that include t-review MUST attach a non-nil
+// A2UIPayloadBuilder that produces an A2UI payload containing all three
+// action-type strings. Missing builder → surface cannot flow through
+// c.History → legacy WARN branch fires → INV-005 violated.
+
+func assertTReviewBuilderEmitsActions(t *testing.T, factoryName string, c *cpn.CPN) {
+	t.Helper()
+
+	tReview, ok := c.Transitions["t-review"]
+	if !ok {
+		t.Fatalf("%s: missing t-review transition", factoryName)
+	}
+	if tReview.HITLConfig == nil {
+		t.Fatalf("%s: t-review HITLConfig is nil", factoryName)
+	}
+	if tReview.HITLConfig.A2UIPayloadBuilder == nil {
+		t.Fatalf("%s: t-review A2UIPayloadBuilder is nil (INV-005 regression — the legacy WARN branch would fire)", factoryName)
+	}
+	if tReview.HITLConfig.Prompt != "" {
+		t.Errorf("%s: t-review Prompt = %q, want empty string", factoryName, tReview.HITLConfig.Prompt)
+	}
+
+	payload, err := tReview.HITLConfig.A2UIPayloadBuilder(nil)
+	if err != nil {
+		t.Fatalf("%s: A2UIPayloadBuilder returned error: %v", factoryName, err)
+	}
+	if payload == nil {
+		t.Fatalf("%s: A2UIPayloadBuilder returned nil payload", factoryName)
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("%s: json.Marshal(payload) failed: %v", factoryName, err)
+	}
+	body := string(data)
+	for _, needle := range []string{"hitl:approve", "hitl:revise", "hitl:reject"} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("%s: A2UI payload missing %q; body=%s", factoryName, needle, body)
+		}
+	}
+}
+
+func TestDefaultTopologyFactory_TReview_BuilderEmitsAllActions(t *testing.T) {
+	// defaultTopologyFactory does not include t-review; skip if so. The hitl
+	// topology factory is the "default" surface that exposes t-review in
+	// the non-unified path (spec references "default topology" at line
+	// 241-245 of topologies.go — that block is inside hitlTopologyFactory).
+	c := hitlTopologyFactory("test-session")
+	assertTReviewBuilderEmitsActions(t, "hitlTopologyFactory", c)
+}
+
+func TestUnifiedTopologyFactory_TReview_BuilderEmitsAllActions(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+	assertTReviewBuilderEmitsActions(t, "unifiedTopologyFactory", c)
 }

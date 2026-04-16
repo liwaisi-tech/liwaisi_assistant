@@ -90,7 +90,11 @@ export function TransitionInspector({
           <div>
             <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>{t('transitionInspector.cost')}</div>
             <div className="text-sm font-bold" style={{ color: 'var(--accent)' }}>
-              ${completedPayload.cost_usd.toFixed(4)}
+              {completedPayload.cost_usd === 0
+                ? '$0.0000'
+                : completedPayload.cost_usd < 0.0001
+                  ? '< $0.0001'
+                  : `$${completedPayload.cost_usd.toFixed(4)}`}
             </div>
           </div>
           <div>
@@ -123,7 +127,10 @@ export function TransitionInspector({
       {/* Config */}
       {transition.llmConfig && (
         <Section title={t('transitionInspector.llmConfig')} color="var(--text-muted)">
-          <ConfigRow label={t('transitionInspector.model')} value={transition.llmConfig.model || t('transitionInspector.defaultModel')} />
+          <ConfigRow
+            label={t('transitionInspector.model')}
+            value={completedPayload?.executed_model || transition.llmConfig.model || t('transitionInspector.defaultModel')}
+          />
           {transition.llmConfig.maxTokens && <ConfigRow label={t('transitionInspector.maxTokens')} value={String(transition.llmConfig.maxTokens)} />}
           {transition.llmConfig.temperature != null && <ConfigRow label={t('transitionInspector.temperature')} value={String(transition.llmConfig.temperature)} />}
           {transition.llmConfig.streamOutput && <ConfigRow label={t('transitionInspector.stream')} value="true" />}

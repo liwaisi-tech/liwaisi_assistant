@@ -35,6 +35,10 @@ func (h *Handlers) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "session not found")
 			return
 		}
+		if errors.Is(err, app.ErrPersistenceUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "persistence unavailable")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -46,6 +50,10 @@ func (h *Handlers) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, app.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		if errors.Is(err, app.ErrPersistenceUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "persistence unavailable")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -201,14 +201,15 @@ func (r *MemorySessionRepository) ListByUserID(ctx context.Context, userID strin
 		if s.UserID != userID || s.DeletedAt != nil || s.State == SessionExpired {
 			continue
 		}
-		preview := ""
-		if len(s.Messages) > 0 {
-			last := s.Messages[len(s.Messages)-1]
-			preview = last.Content
-			if len(preview) > 120 {
-				preview = preview[:120]
-			}
+		// Compute preview via the shared helper so the marker never leaks
+		// into the sidebar (REQ-201, INV-302). Walk newest-to-oldest so
+		// legacy raw-routing-JSON rows are skipped in favor of an older
+		// renderable message.
+		contents := make([]string, 0, len(s.Messages))
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			contents = append(contents, s.Messages[i].Content)
 		}
+		preview := RenderablePreview(contents)
 		items = append(items, &SessionListItem{
 			ID:                  s.ID,
 			Title:               s.Title,

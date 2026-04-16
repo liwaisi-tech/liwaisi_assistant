@@ -1,7 +1,7 @@
 import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse, SessionListResponse, UpdateSessionRequest, ForkSessionRequest, ForkSessionResponse } from '../types/api';
 import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
 import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
-import type { UserProfile, UserPreferences, OnboardingCompleteRequest, ModelsResponse } from '../types/setup';
+import type { UserProfile, UpdatePreferencesPayload, OnboardingCompleteRequest, ModelsResponse } from '../types/setup';
 import type { AdminConfigResponse, PlatformStatusResponse } from '../types/admin';
 
 const BASE_URL = '/api/v1';
@@ -15,6 +15,27 @@ export function setTokenGetter(fn: () => string | null) {
 
 export function getAuthToken(): string | null {
   return tokenGetter?.() ?? null;
+}
+
+/**
+ * SESSION_NOT_FOUND_RE matches backend payloads signaling a ghost session
+ * (the row is gone from persistence or was soft-deleted, OR the id was wiped
+ * from the in-memory map of a restarted process and could not be rehydrated).
+ * Match is case-insensitive per REQ-101.
+ */
+const SESSION_NOT_FOUND_RE = /^\s*session not found\s*$/i;
+
+/**
+ * SESSION_INACTIVE_RE matches the 409 payload emitted by the backend when a
+ * stream-only operation (SendStreamChunk/ResolveHITL) is issued against a
+ * session that rehydrated successfully but has no live execution attached.
+ */
+const SESSION_INACTIVE_RE = /^\s*session inactive\s*$/i;
+
+/** Extract the session id from a `/sessions/{id}/...` API path. Best-effort. */
+function extractSessionId(path: string): string {
+  const match = path.match(/\/sessions\/([^/?]+)/);
+  return match ? match[1] : '';
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -39,7 +60,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new ApiError(response.status, error.error || response.statusText);
+    const errorMessage: string = typeof error?.error === 'string' ? error.error : response.statusText;
+
+    // Map typed session errors BEFORE falling back to the generic ApiError so
+    // callers can catch them narrowly (GUD-003, PAT-002).
+    if (response.status === 404 || response.status === 410) {
+      if (SESSION_NOT_FOUND_RE.test(errorMessage)) {
+        throw new SessionNotFoundError(extractSessionId(path));
+      }
+    }
+    if (response.status === 409 && SESSION_INACTIVE_RE.test(errorMessage)) {
+      throw new SessionInactiveError(extractSessionId(path));
+    }
+
+    throw new ApiError(response.status, errorMessage);
   }
   return response.json();
 }
@@ -48,6 +82,35 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+/**
+ * Thrown when the backend reports that a session id no longer exists (either
+ * absent from persistence, soft-deleted, or not rehydratable). Callers MUST
+ * treat the associated session id as dead: drop any cached reference, clear
+ * stale localStorage entries, and pick/create a fresh session. See REQ-101,
+ * REQ-102, REQ-104, §4.3.
+ */
+export class SessionNotFoundError extends Error {
+  readonly name = 'SessionNotFoundError';
+  constructor(public readonly sessionId: string) {
+    super(`session not found: ${sessionId}`);
+    // Required so `instanceof` works after transpilation down-levels.
+    Object.setPrototypeOf(this, SessionNotFoundError.prototype);
+  }
+}
+
+/**
+ * Thrown on a 409 from stream-only endpoints when the session exists but has
+ * no live execution attached. Callers can retry against a new run without
+ * abandoning the session id. See §4.3.
+ */
+export class SessionInactiveError extends Error {
+  readonly name = 'SessionInactiveError';
+  constructor(public readonly sessionId: string) {
+    super(`session inactive: ${sessionId}`);
+    Object.setPrototypeOf(this, SessionInactiveError.prototype);
   }
 }
 
@@ -212,7 +275,7 @@ export async function getUserProfile(): Promise<UserProfile> {
   return request<UserProfile>('/user/profile');
 }
 
-export async function updatePreferences(prefs: UserPreferences): Promise<{ ok: boolean }> {
+export async function updatePreferences(prefs: UpdatePreferencesPayload): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/user/preferences', {
     method: 'PUT',
     body: JSON.stringify(prefs),

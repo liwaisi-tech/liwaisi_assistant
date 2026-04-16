@@ -10,6 +10,7 @@
     "newButton": "New",
     "noConversations": "No conversations yet",
     "noMessagesYet": "No messages yet",
+    "pendingForm": "Pending form",
     "defaultTitle": "New Chat",
     "chatActions": "Chat actions",
     "rename": "Rename",
@@ -62,10 +63,56 @@
     "costZero": "$0.00"
   },
   "streaming": {
-    "thinking": "Assistant is thinking"
+    "thinking": "brae is thinking"
   },
   "a2ui": {
     "unknownComponent": "Unsupported component: {{type}}",
-    "loading": "Loading interactive content..."
+    "loading": "Loading interactive content...",
+    "questionnaire": {
+      "respondedAt": "Responded at {{time}}",
+      "responded": "Responded"
+    },
+    "clarify": {
+      "badge": {
+        "label": "Follow-up {{n}} of {{max}}",
+        "followup": "follow-up",
+        "final": "final round",
+        "responded": "responded {{time}}",
+        "aria": "Follow-up {{n}} of {{max}}, {{caption}}"
+      },
+      "escape": {
+        "frustration": {
+          "title": "I want to make sure I don't get you stuck",
+          "prompt": "Should we tighten one more question, or should I continue with reasonable assumptions?",
+          "drill": "One more question",
+          "proceed": "Continue with assumptions"
+        },
+        "contradiction": {
+          "title": "I see two possible paths",
+          "helper": "Pick the one that best fits what you want:"
+        }
+      },
+      "handoff": {
+        "proceed": "Got it. I'll continue with these assumptions and show you the plan."
+      },
+      "sr": {
+        "newRound": "New follow-up question, {{n}} of {{max}}.",
+        "escapeAppeared": "brae is offering a choice: keep asking or continue with assumptions.",
+        "locked": "Response saved. Form locked."
+      },
+      "assumptions": {
+        "parseErrorFallback": "Proceeding with the best available interpretation of your request."
+      }
+    }
+  },
+  "connection": {
+    "connected": "Connected",
+    "reconnecting": "Reconnecting\u2026",
+    "disconnected": "Disconnected"
+  },
+  "resumedNotice": {
+    "title": "Session resumed",
+    "message": "We reconnected you to a fresh chat after a server restart. Your draft is still here.",
+    "dismiss": "Dismiss notice"
   }
 }

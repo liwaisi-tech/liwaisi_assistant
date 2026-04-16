@@ -38,10 +38,16 @@ type Def struct {
 }
 
 // PlatformConfigs is the list of all known platform config keys.
+//
+// Model selection keys (default_model, model_classifier, model_structured,
+// model_reasoning, model_long_context, model_summarize, model_thinking) were
+// removed per spec-architecture-model-selection-centralization.md
+// (REQ-CFG-002). The concrete model for every LLM transition is now computed
+// from PRODUCT_DEFAULT_MODEL and the user's preferences; no operator-level
+// override remains.
 var PlatformConfigs = []Def{
 	// LLM
 	{Key: "openrouter_api_key", EnvVar: "OPENROUTER_API_KEY", IsSecret: true, Required: true, Label: "OpenRouter API Key", Category: "llm"},
-	{Key: "default_model", EnvVar: "DEFAULT_MODEL", IsSecret: false, Default: "anthropic/claude-sonnet-4-6", Label: "Default Model", Category: "llm"},
 	{Key: "openrouter_app_url", EnvVar: "OPENROUTER_APP_URL", IsSecret: false, Label: "OpenRouter App URL", Category: "llm"},
 	{Key: "openrouter_app_title", EnvVar: "OPENROUTER_APP_TITLE", IsSecret: false, Label: "OpenRouter App Title", Category: "llm"},
 
@@ -51,14 +57,6 @@ var PlatformConfigs = []Def{
 
 	// Server
 	{Key: "cors_origins", EnvVar: "CORS_ORIGINS", IsSecret: false, Default: "*", Label: "CORS Origins", Category: "server"},
-
-	// Model role overrides
-	{Key: "model_classifier", EnvVar: "MODEL_CLASSIFIER", IsSecret: false, Label: "Classifier Model", Category: "models"},
-	{Key: "model_structured", EnvVar: "MODEL_STRUCTURED", IsSecret: false, Label: "Structured Model", Category: "models"},
-	{Key: "model_reasoning", EnvVar: "MODEL_REASONING", IsSecret: false, Label: "Reasoning Model", Category: "models"},
-	{Key: "model_long_context", EnvVar: "MODEL_LONG_CONTEXT", IsSecret: false, Label: "Long Context Model", Category: "models"},
-	{Key: "model_summarize", EnvVar: "MODEL_SUMMARIZE", IsSecret: false, Label: "Summarize Model", Category: "models"},
-	{Key: "model_thinking", EnvVar: "MODEL_THINKING", IsSecret: false, Label: "Thinking Model", Category: "models"},
 }
 
 // DefByKey returns the definition for a given key, or nil if not found.
