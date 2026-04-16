@@ -180,6 +180,9 @@ func newServerFuncRegistry() *persist.FuncRegistry {
 	r.RegisterGuard("guard-needs-clarification", guardNeedsClarification)
 	r.RegisterGuard("guard-plan-task-direct", guardPlanTaskDirect)
 	r.RegisterGuard("guard-plan-task-clarified", guardPlanTaskClarified)
+	// Iterative clarification loop (spec-architecture-cpn-iterative-clarification-loop.md).
+	r.RegisterGuard("guard-residual-ambiguous", guardResidualAmbiguous)
+	r.RegisterGuard("guard-residual-resolved", guardResidualResolved)
 	return r
 }
 
