@@ -203,8 +203,12 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {/* HITL resolved badge */}
-        {hitlResolved && (
+        {/* HITL resolved badge — only for review-card actions. 'submit'
+            (questionnaire answers) is already narrated by the locked
+            questionnaire surface itself ("Respondido a las HH:MM" plus
+            the answers), so a second badge here would contradict it —
+            the reject fallback color/copy made a submit read as cancelled. */}
+        {hitlResolved && hitlResolved !== 'submit' && (
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
             <span className="text-[11px] font-medium" style={{
               color: hitlResolved === 'approve' ? '#34d399' : hitlResolved === 'revise' ? 'var(--accent)' : '#f87171',

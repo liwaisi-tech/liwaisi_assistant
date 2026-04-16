@@ -326,12 +326,18 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 	// REQ-001: seed p-round with {n:0, reset:false} so the initial marking
 	// has the counter available. Also covers REQ-051 (rehydrated
 	// pre-feature sessions default to n=0).
-	seedRound := &cpn.Token{
-		Color:   cpn.ColorJSON,
-		Space:   cpn.SpaceSurface,
-		Payload: `{"n":0,"reset":false}`,
+	//
+	// seedPRound is captured as the CPN's SeedFunc below so it also re-runs
+	// on every Reset(). SessionService.SendMessage calls Reset before each
+	// user turn; without restoring this seeded token, t-followup/t-preplanner
+	// (both consume p-round) deadlock silently after t-reassess completes.
+	seedPRound := func(c *cpn.CPN) {
+		_ = c.Places["p-round"].Deposit(&cpn.Token{
+			Color:   cpn.ColorJSON,
+			Space:   cpn.SpaceSurface,
+			Payload: `{"n":0,"reset":false}`,
+		})
 	}
-	_ = places["p-round"].Deposit(seedRound)
 
 	// t-classify: fast intent classifier using lightweight model.
 	tClassify := cpn.NewTransition("t-classify", cpn.NodeKindLLM,
@@ -808,6 +814,8 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		transitions,
 	)
 	c.ContextWindowSize = 10
+	c.SeedFunc = seedPRound
+	seedPRound(c)
 	return c
 }
 

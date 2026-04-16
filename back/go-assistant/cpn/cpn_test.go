@@ -213,6 +213,55 @@ func TestCPN_Reset(t *testing.T) {
 	}
 }
 
+// Regression: topologies with mandatory seed tokens (e.g. a counter place
+// whose emptiness would deadlock a downstream transition) must survive
+// Reset. SeedFunc is the contract that lets the factory declare those
+// invariants once and have Reset preserve them on every re-run.
+func TestCPN_Reset_InvokesSeedFunc(t *testing.T) {
+	places := map[string]*Place{
+		"P:COUNTER": NewPlace("P:COUNTER", ColorJSON, SpaceSurface),
+	}
+	c := NewCPN("test", "w", 0, ModeMAS, "s", places, nil)
+	c.SeedFunc = func(cc *CPN) {
+		_ = cc.Places["P:COUNTER"].Deposit(&Token{
+			Color: ColorJSON, Space: SpaceSurface, Payload: `{"n":0}`,
+		})
+	}
+	c.SeedFunc(c)
+
+	// Simulate a run that mutated the counter.
+	_ = places["P:COUNTER"].Deposit(&Token{
+		Color: ColorJSON, Space: SpaceSurface, Payload: `{"n":5}`,
+	})
+	if got := places["P:COUNTER"].Len(); got != 2 {
+		t.Fatalf("pre-reset counter Len = %d, want 2", got)
+	}
+
+	c.Reset()
+
+	if got := places["P:COUNTER"].Len(); got != 1 {
+		t.Fatalf("post-reset counter Len = %d, want 1 (seeded)", got)
+	}
+	snaps, _ := places["P:COUNTER"].Peek()
+	if len(snaps) == 0 || snaps[0].Payload != `{"n":0}` {
+		t.Fatalf("post-reset counter payload = %+v, want seeded {n:0}", snaps)
+	}
+}
+
+func TestCPN_Reset_NoSeedFuncIsNoop(t *testing.T) {
+	places := map[string]*Place{
+		"P:X": NewPlace("P:X", ColorString, SpaceSurface),
+	}
+	c := NewCPN("test", "w", 0, ModeMAS, "s", places, nil)
+	_ = places["P:X"].Deposit(&Token{Color: ColorString, Space: SpaceSurface, Payload: "x"})
+
+	c.Reset() // must not panic with nil SeedFunc
+
+	if got := places["P:X"].Len(); got != 0 {
+		t.Fatalf("place P:X Len = %d, want 0", got)
+	}
+}
+
 func TestCPN_SetGetState_ThreadSafety(t *testing.T) {
 	c := NewCPN("test", "w", 0, ModeMAS, "s", nil, nil)
 

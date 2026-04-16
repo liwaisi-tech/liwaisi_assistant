@@ -275,27 +275,57 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'CLEAR_ERROR':
       return { ...state, error: null };
 
-    case 'HITL_REQUESTED':
-      return {
-        ...state,
-        sessionState: 'waiting',
-        messages: action.suppressBubble
-          ? state.messages
-          : [
-              ...state.messages,
-              {
-                id: `hitl-${action.transitionId}-${Date.now()}`,
-                role: 'assistant',
-                content: action.prompt,
-                isStreaming: false,
-                cpnId: action.cpnId,
-                cpnRole: action.cpnRole,
-                timestamp: new Date(),
-                hitlTransitionId: action.transitionId,
-                hitlActions: ['approve', 'reject'],
-              },
-            ],
+    case 'HITL_REQUESTED': {
+      if (!action.suppressBubble) {
+        return {
+          ...state,
+          sessionState: 'waiting',
+          messages: [
+            ...state.messages,
+            {
+              id: `hitl-${action.transitionId}-${Date.now()}`,
+              role: 'assistant',
+              content: action.prompt,
+              isStreaming: false,
+              cpnId: action.cpnId,
+              cpnRole: action.cpnRole,
+              timestamp: new Date(),
+              hitlTransitionId: action.transitionId,
+              hitlActions: ['approve', 'reject'],
+            },
+          ],
+        };
+      }
+      // Custom-surface path: the transition already pushed an A2UI bubble
+      // through STREAM_CHUNK before this HITL_REQUESTED arrived. Stamp the
+      // transition id onto the most-recent A2UI assistant bubble for this
+      // cpnId so HITL_RESOLVED can match it and propagate resolvedPayload
+      // → ResolutionContext → QuestionnaireLocked. Without this stamp the
+      // submit button never locks, allowing a double-submit that returns
+      // 409 ErrNoHITLWaiting on the second click.
+      let stampIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        if (
+          m.role === 'assistant' &&
+          m.cpnId === action.cpnId &&
+          m.content.startsWith(A2UI_MARKER) &&
+          !m.hitlTransitionId
+        ) {
+          stampIdx = i;
+          break;
+        }
+      }
+      if (stampIdx === -1) {
+        return { ...state, sessionState: 'waiting' };
+      }
+      const stamped = [...state.messages];
+      stamped[stampIdx] = {
+        ...stamped[stampIdx],
+        hitlTransitionId: action.transitionId,
       };
+      return { ...state, sessionState: 'waiting', messages: stamped };
+    }
 
     case 'HITL_RESOLVED':
       return {

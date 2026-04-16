@@ -251,4 +251,51 @@ describe('A2UIMessageRenderer', () => {
       }),
     );
   });
+
+  // Regression: when resolvedPayload flips undefined → defined live (after a
+  // HITL submit), the questionnaire must swap to its locked view without
+  // throwing a Rules-of-Hooks "Rendered fewer hooks" error. The early
+  // locked-render must sit AFTER every useState call.
+  it('swaps to locked view live when resolvedPayload arrives without crashing', () => {
+    const payload: A2UIPayload = {
+      components: [
+        {
+          type: 'questionnaire',
+          props: { id: 't-clarify', submitLabel: 'Send answers' },
+          children: [
+            {
+              type: 'choice',
+              props: {
+                id: 'q1',
+                label: 'Pick one',
+                options: [
+                  { id: 'opt-a', label: 'Option A' },
+                  { id: 'opt-b', label: 'Option B' },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const { rerender } = render(
+      <A2UIMessageRenderer payload={payload} isStreaming={false} onAction={vi.fn()} />,
+      { wrapper },
+    );
+    expect(screen.getByText('Send answers')).toBeInTheDocument();
+
+    rerender(
+      <A2UIMessageRenderer
+        payload={payload}
+        isStreaming={false}
+        onAction={vi.fn()}
+        resolvedPayload={'{"q1":"opt-a"}'}
+        resolvedAt={new Date('2026-04-16T12:00:00Z')}
+      />,
+    );
+
+    expect(screen.queryByText('Send answers')).not.toBeInTheDocument();
+    expect(screen.getByText('Option A')).toBeInTheDocument();
+  });
 });

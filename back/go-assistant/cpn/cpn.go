@@ -82,6 +82,14 @@ type CPN struct {
 	// was already delivered via streaming (avoiding duplicate delivery).
 	StreamedOutput bool
 
+	// SeedFunc, if non-nil, deposits the topology's initial marking —
+	// tokens that must be present for the net's guards/arcs to be well-
+	// formed even on a fresh run (e.g. a counter place whose absence would
+	// deadlock a downstream transition). Invoked by Reset after Clear so
+	// seeded places survive session re-runs. Topologies with no mandatory
+	// initial marking leave this nil.
+	SeedFunc func(*CPN)
+
 	mu sync.RWMutex
 }
 
@@ -323,6 +331,11 @@ func (c *CPN) registerSubNetBus(childID string, bus <-chan Event) {
 // Called before re-running a CPN that previously failed (e.g., after HITL rejection)
 // to prevent stale tokens from interfering with the next execution.
 // Also clears History since the caller re-populates it from the session.
+//
+// After clearing, SeedFunc (if set) is invoked to restore the topology's
+// initial marking. Without this, seeded counter places (e.g. p-round in
+// the unified topology) would stay empty after Reset, silently deadlocking
+// any downstream transition whose input arc includes them.
 func (c *CPN) Reset() {
 	c.mu.Lock()
 	c.State = StateIdle
@@ -330,10 +343,14 @@ func (c *CPN) Reset() {
 	c.Mode = c.initialMode
 	c.History = nil
 	c.StreamedOutput = false
+	seed := c.SeedFunc
 	c.mu.Unlock()
 
 	for _, p := range c.Places {
 		p.Clear()
+	}
+	if seed != nil {
+		seed(c)
 	}
 }
 

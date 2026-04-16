@@ -113,6 +113,39 @@ func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
 	}
 }
 
+// Regression: SessionService.SendMessage calls CPN.Reset() before every
+// user turn. Before SeedFunc existed, Reset wiped p-round (the iterative
+// clarification counter) and never restored it. Downstream transitions
+// t-followup / t-preplanner both consume p-round as a second input arc,
+// so their CanFire check returned false and the CPN deadlocked silently
+// after t-reassess completed — the frontend saw "Ejecutando → Inactivo"
+// with no assistant bubble. This test pins the Reset → seed contract.
+func TestUnifiedTopology_ResetPreservesPRoundSeed(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	round, ok := c.Places["p-round"]
+	if !ok {
+		t.Fatal("missing place p-round")
+	}
+	if got := round.Len(); got != 1 {
+		t.Fatalf("initial p-round Len = %d, want 1 (seeded)", got)
+	}
+
+	c.Reset()
+
+	if got := round.Len(); got != 1 {
+		t.Fatalf("post-Reset p-round Len = %d, want 1 (re-seeded)", got)
+	}
+	snaps, _ := round.Peek()
+	if len(snaps) == 0 {
+		t.Fatal("post-Reset p-round has no token")
+	}
+	payload, _ := snaps[0].Payload.(string)
+	if payload != `{"n":0,"reset":false}` {
+		t.Fatalf("post-Reset p-round payload = %q, want seeded {n:0}", payload)
+	}
+}
+
 // TestUnifiedTopology_ClassifierConfig asserts REQ-CFG-003/004: the
 // authored LLMConfig expresses intent via Role, NOT Model. The Model field
 // is stamped by applyUserModelPreferences at session-resolve time and MUST

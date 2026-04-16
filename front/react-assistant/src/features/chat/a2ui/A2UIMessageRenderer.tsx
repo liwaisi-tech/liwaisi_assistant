@@ -877,22 +877,10 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const assumptions = (component.props.assumptions as string[] | undefined) ?? [];
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
   const { resolvedPayload, resolvedAt } = useContext(ResolutionContext);
-
-  // REQ-102..105: when the backend has persisted a HITL response paired
-  // with this A2UI surface, render a read-only summary instead of the
-  // interactive form. Answers are parsed from the payload (submit: raw
-  // JSON object with `answers`; approve/revise: wrapped action JSON).
-  if (resolvedPayload !== undefined) {
-    return (
-      <QuestionnaireLocked
-        questions={questions}
-        restatedGoal={restatedGoal}
-        assumptions={assumptions}
-        resolvedPayload={resolvedPayload}
-        resolvedAt={resolvedAt}
-      />
-    );
-  }
+  // All hooks MUST run on every render — when resolvedPayload flips from
+  // undefined to defined live (after HITL submit), the early return for
+  // QuestionnaireLocked would otherwise change the hook count and crash
+  // the tree under React's rules of hooks.
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
@@ -981,6 +969,21 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
     },
     [currentAnswered, goNext, isFinalStep],
   );
+
+  // REQ-102..105: when a HITL response is paired with this surface (live
+  // submission OR rehydration), render the read-only summary. Placed AFTER
+  // every hook so the hook count is identical across renders.
+  if (resolvedPayload !== undefined) {
+    return (
+      <QuestionnaireLocked
+        questions={questions}
+        restatedGoal={restatedGoal}
+        assumptions={assumptions}
+        resolvedPayload={resolvedPayload}
+        resolvedAt={resolvedAt}
+      />
+    );
+  }
 
   const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
 

@@ -130,6 +130,26 @@ describe('MessageBubble', () => {
     expect(screen.getByText('You approved this')).toBeInTheDocument();
   });
 
+  // Regression: 'submit' (questionnaire answers) must NOT render the
+  // HITL resolved badge. The locked questionnaire narrates itself via
+  // "Responded at HH:MM"; the legacy badge would fall through to the
+  // reject copy ("You cancelled this"), contradicting the locked view.
+  it('should NOT show the resolved badge for submit (questionnaire answers)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Questionnaire surface"
+        hitlTransitionId="t-clarify"
+        hitlResolved="submit"
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByText('You cancelled this')).not.toBeInTheDocument();
+    expect(screen.queryByText('You approved this')).not.toBeInTheDocument();
+    expect(screen.queryByText('You requested changes')).not.toBeInTheDocument();
+  });
+
   // ── parsePayload contract (REQ-011 / REQ-012 / AC-008..010 / CON-003) ─────
 
   it('should route to A2UI renderer when content has leading whitespace before the marker (AC-008 / REQ-011)', async () => {

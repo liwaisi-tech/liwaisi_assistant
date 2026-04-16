@@ -258,6 +258,81 @@ describe('chatReducer — STREAM_CHUNK session-id race defence', () => {
   });
 });
 
+describe('chatReducer — HITL custom-surface stamping', () => {
+  // Regression: when t-clarify pushes its A2UI questionnaire via STREAM_CHUNK
+  // and then signals HITL_REQUESTED with custom_surface=true, the reducer
+  // must stamp hitlTransitionId onto that bubble. Otherwise HITL_RESOLVED
+  // can't match it, the questionnaire never locks, and a second submit
+  // hits the backend as 409 cpn.ErrNoHITLWaiting.
+  it('stamps hitlTransitionId on the latest A2UI bubble when suppressBubble=true', () => {
+    const afterStream = chatReducer(initialState, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: a2uiContent, Done: true }),
+    });
+    expect(afterStream.messages).toHaveLength(1);
+    expect(afterStream.messages[0].hitlTransitionId).toBeUndefined();
+
+    const afterRequest = chatReducer(afterStream, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: 'ignored',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(afterRequest.messages).toHaveLength(1);
+    expect(afterRequest.messages[0].hitlTransitionId).toBe('t-clarify');
+    expect(afterRequest.sessionState).toBe('waiting');
+
+    const afterResolve = chatReducer(afterRequest, {
+      type: 'HITL_RESOLVED',
+      transitionId: 't-clarify',
+      action: 'submit',
+      resolvedPayload: '{"q1":"a","q2":"b"}',
+    });
+    expect(afterResolve.messages[0].resolvedPayload).toBe('{"q1":"a","q2":"b"}');
+    expect(afterResolve.messages[0].resolvedAt).toBeInstanceOf(Date);
+    expect(afterResolve.sessionState).toBe('running');
+  });
+
+  it('only stamps the most recent matching A2UI bubble for the cpnId', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        // Older A2UI bubble for a different cpn — must NOT be stamped
+        { id: 'a-old', role: 'assistant', content: a2uiContent, isStreaming: false,
+          cpnId: 'cpn-other', timestamp: new Date() },
+        // Most recent A2UI bubble for the target cpn — gets stamped
+        { id: 'a-target', role: 'assistant', content: a2uiContent, isStreaming: false,
+          cpnId: 'cpn-root', timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.messages[0].hitlTransitionId).toBeUndefined();
+    expect(next.messages[1].hitlTransitionId).toBe('t-clarify');
+  });
+
+  it('falls back gracefully when no A2UI bubble exists yet', () => {
+    const next = chatReducer(initialState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.messages).toHaveLength(0);
+    expect(next.sessionState).toBe('waiting');
+  });
+});
+
 describe('chatReducer — RESET hygiene', () => {
   it('clears sessionId, messages, and sessionState (REQ-301 / REQ-304 / AC-301)', () => {
     const state: ChatState = {
