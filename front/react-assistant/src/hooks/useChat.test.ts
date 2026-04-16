@@ -349,3 +349,219 @@ describe('chatReducer — RESET hygiene', () => {
     expect(next.error).toBeNull();
   });
 });
+
+describe('chatReducer — ACTIVITY_*', () => {
+  const startBase = {
+    type: 'ACTIVITY_START' as const,
+    transitionId: 't-1',
+    cpnId: 'cpn-root',
+    sessionId: 'sess-1',
+    verb: 'Thinking',
+  };
+
+  it('ACTIVITY_START sets currentActivity from a non-null DisplayLabel', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const next = chatReducer(state, startBase);
+    expect(next.currentActivity).not.toBeNull();
+    expect(next.currentActivity?.verb).toBe('Thinking');
+    expect(next.currentActivity?.transitionId).toBe('t-1');
+    expect(next.currentActivity?.cpnId).toBe('cpn-root');
+  });
+
+  it('ACTIVITY_START is idempotent — re-dispatch with same transitionId is a no-op', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const first = chatReducer(state, startBase);
+    const second = chatReducer(first, startBase);
+    expect(second).toBe(first);
+  });
+
+  it('ACTIVITY_START with detail keeps the detail on currentActivity', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const next = chatReducer(state, { ...startBase, verb: 'Calling tool', detail: 'web_search' });
+    expect(next.currentActivity?.detail).toBe('web_search');
+  });
+
+  it('ACTIVITY_START drops events whose sessionId does not match active session (REQ-020)', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-A' };
+    const next = chatReducer(state, { ...startBase, sessionId: 'sess-B' });
+    expect(next).toBe(state);
+  });
+
+  it('ACTIVITY_START is accepted while sessionId is null (pre-load grace window)', () => {
+    const state: ChatState = { ...initialState, sessionId: null };
+    const next = chatReducer(state, startBase);
+    expect(next.currentActivity).not.toBeNull();
+  });
+
+  it('ACTIVITY_END clears currentActivity and shows a receipt when totals are present', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-1',
+      sessionId: 'sess-1',
+      durationMs: 2310,
+      costUsd: 0.0041,
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).not.toBeNull();
+    expect(next.recentReceipt?.durationMs).toBe(2310);
+    expect(next.recentReceipt?.costUsd).toBe(0.0041);
+  });
+
+  it('ACTIVITY_END clears currentActivity even when totals are absent (no receipt)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Working',
+        transitionId: 't-2',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-2',
+      sessionId: 'sess-1',
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('ACTIVITY_END drops events whose sessionId does not match (REQ-020)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-A',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-1',
+      sessionId: 'sess-B',
+    });
+    expect(next).toBe(startState);
+  });
+
+  it('ACTIVITY_RECEIPT_DISMISS clears recentReceipt', () => {
+    const startState: ChatState = {
+      ...initialState,
+      recentReceipt: { durationMs: 100, costUsd: 0, shownAt: 5000 },
+    };
+    const next = chatReducer(startState, { type: 'ACTIVITY_RECEIPT_DISMISS' });
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('SESSION_COMPLETED clears any in-flight currentActivity', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionState: 'running',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, { type: 'SESSION_COMPLETED' });
+    expect(next.currentActivity).toBeNull();
+  });
+
+  it('SESSION_FAILED clears any in-flight currentActivity (no receipt either)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      currentActivity: {
+        verb: 'Working',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, { type: 'SESSION_FAILED' });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('HITL_REQUESTED clears the "Waiting for you" currentActivity (REQ-032)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Waiting for you',
+        transitionId: 't-hitl',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-hitl',
+      prompt: 'Approve?',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.sessionState).toBe('waiting');
+  });
+
+  it('HITL_REQUESTED with suppressBubble (custom-surface path) also clears currentActivity', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Waiting for you',
+        transitionId: 't-hitl',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+      messages: [
+        {
+          id: 'a2ui-1',
+          role: 'assistant',
+          content: '$$a2ui:{"components":[]}',
+          isStreaming: false,
+          cpnId: 'cpn-root',
+          timestamp: new Date(),
+        },
+      ],
+    };
+    const next = chatReducer(startState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-hitl',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.currentActivity).toBeNull();
+  });
+
+  it('RESET clears activity + receipt slices', () => {
+    const startState: ChatState = {
+      ...initialState,
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+      recentReceipt: { durationMs: 100, costUsd: 0, shownAt: 5000 },
+    };
+    const next = chatReducer(startState, { type: 'RESET' });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+});

@@ -148,7 +148,10 @@ func (c *CPN) Run(ctx context.Context) error {
 				Type:           EventTransitionStarted,
 				TransitionID:   f.transition.ID,
 				TransitionKind: f.transition.Kind,
-				Payload:        TransitionStartedPayload{InputTokens: snapshots},
+				Payload: TransitionStartedPayload{
+					InputTokens:  snapshots,
+					DisplayLabel: resolveLabelForTransition(c, f.transition),
+				},
 			})
 		}
 
@@ -175,6 +178,7 @@ func (c *CPN) Run(ctx context.Context) error {
 					CostUSD:       costUSD,
 					DurationMs:    elapsed.Milliseconds(),
 					ExecutedModel: meta.executedModel,
+					DisplayLabel:  resolveLabelForTransition(c, t),
 				}
 				if err != nil {
 					payload.Error = err.Error()

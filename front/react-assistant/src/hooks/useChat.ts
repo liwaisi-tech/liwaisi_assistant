@@ -1,10 +1,31 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { BackendSessionState, SessionState } from '../types/api';
-import type { StreamChunkData, CPNEventData } from '../types/sse';
+import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
+
+// CurrentActivity describes what the agent is doing right now, surfaced
+// by the ActivityBubble. Populated from transition_started events that
+// carry a non-null display_label.
+// See spec-design-agent-activity-indicator.md §3.3.
+export interface CurrentActivity {
+  verb: string;
+  detail?: string;
+  startedAt: number;
+  transitionId: string;
+  cpnId: string;
+}
+
+// RecentReceipt is the post-completion pill that briefly summarises the
+// just-finished work (duration + cost). Auto-dismissed by the component
+// after the spec's 4 s window.
+export interface RecentReceipt {
+  durationMs: number;
+  costUsd: number;
+  shownAt: number;
+}
 
 export interface ChatState {
   // Tracks the session whose stream we are willing to apply. STREAM_CHUNK
@@ -16,6 +37,8 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
+  currentActivity: CurrentActivity | null;
+  recentReceipt: RecentReceipt | null;
 }
 
 export type ChatAction =
@@ -33,6 +56,10 @@ export type ChatAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string; suppressBubble?: boolean }
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction; resolvedPayload?: string }
+  | { type: 'ACTIVITY_START'; transitionId: string; cpnId: string; sessionId: string; verb: string; detail?: string }
+  | { type: 'ACTIVITY_END'; transitionId: string; sessionId: string; durationMs?: number; costUsd?: number }
+  | { type: 'ACTIVITY_RECEIPT_SHOW'; durationMs: number; costUsd: number }
+  | { type: 'ACTIVITY_RECEIPT_DISMISS' }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -255,6 +282,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sessionState: 'completed',
+        currentActivity: null,
         messages: state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false } : m
         ),
@@ -264,6 +292,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sessionState: 'idle',
+        currentActivity: null,
         messages: state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false } : m
         ),
@@ -276,10 +305,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, error: null };
 
     case 'HITL_REQUESTED': {
+      // The A2UI card / HITL prompt mounts in this dispatch, becoming the
+      // user-facing affordance. Clear any "Waiting for you" activity bubble
+      // so the user does not see a duplicate signal (REQ-032).
       if (!action.suppressBubble) {
         return {
           ...state,
           sessionState: 'waiting',
+          currentActivity: null,
           messages: [
             ...state.messages,
             {
@@ -317,14 +350,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         }
       }
       if (stampIdx === -1) {
-        return { ...state, sessionState: 'waiting' };
+        return { ...state, sessionState: 'waiting', currentActivity: null };
       }
       const stamped = [...state.messages];
       stamped[stampIdx] = {
         ...stamped[stampIdx],
         hitlTransitionId: action.transitionId,
       };
-      return { ...state, sessionState: 'waiting', messages: stamped };
+      return { ...state, sessionState: 'waiting', currentActivity: null, messages: stamped };
     }
 
     case 'HITL_RESOLVED':
@@ -347,6 +380,62 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ),
       };
 
+    case 'ACTIVITY_START': {
+      // Session-id race guard (REQ-020). Drop events for sessions other
+      // than the one the user is viewing. The null branch keeps backward
+      // compat with chunk dispatch (parity with STREAM_CHUNK rule).
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      // Idempotence (REQ-016). Re-dispatch with the same transitionId is
+      // a no-op so duplicate transition_started events do not reset the
+      // visible startedAt clock.
+      if (state.currentActivity?.transitionId === action.transitionId) {
+        return state;
+      }
+      return {
+        ...state,
+        currentActivity: {
+          verb: action.verb,
+          detail: action.detail,
+          transitionId: action.transitionId,
+          cpnId: action.cpnId,
+          startedAt: Date.now(),
+        },
+      };
+    }
+
+    case 'ACTIVITY_END': {
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      const hasReceipt = action.durationMs !== undefined;
+      return {
+        ...state,
+        currentActivity: null,
+        recentReceipt: hasReceipt
+          ? {
+              durationMs: action.durationMs!,
+              costUsd: action.costUsd ?? 0,
+              shownAt: Date.now(),
+            }
+          : state.recentReceipt,
+      };
+    }
+
+    case 'ACTIVITY_RECEIPT_SHOW':
+      return {
+        ...state,
+        recentReceipt: {
+          durationMs: action.durationMs,
+          costUsd: action.costUsd,
+          shownAt: Date.now(),
+        },
+      };
+
+    case 'ACTIVITY_RECEIPT_DISMISS':
+      return { ...state, recentReceipt: null };
+
     case 'RESET':
       return { ...initialState };
 
@@ -360,6 +449,8 @@ export const initialState: ChatState = {
   messages: [],
   sessionState: 'idle',
   error: null,
+  currentActivity: null,
+  recentReceipt: null,
 };
 
 export interface UseChatOptions {
@@ -386,6 +477,9 @@ export interface UseChatReturn {
   sendMessage: (content: string) => Promise<void>;
   resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
   error: string | null;
+  currentActivity: CurrentActivity | null;
+  recentReceipt: RecentReceipt | null;
+  dismissReceipt: () => void;
 }
 
 export function useChat(sessionId: string | null, options?: UseChatOptions): UseChatReturn {
@@ -505,19 +599,65 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     });
   }, []);
 
+  // Activity-indicator wiring (REQ-017). transition_started events with a
+  // non-null display_label populate currentActivity; transition_completed
+  // clears it (and surfaces a receipt when totals are present). External
+  // callbacks (options?.onTransitionStarted/Completed) still fire so the
+  // execution monitor can subscribe independently.
+  const onTransitionStarted = useCallback(
+    (data: CPNEventData) => {
+      const payload = data.Payload as TransitionStartedPayload | undefined;
+      const label = payload?.display_label;
+      if (label?.verb) {
+        dispatch({
+          type: 'ACTIVITY_START',
+          transitionId: data.TransitionID,
+          cpnId: data.CPNID,
+          sessionId: data.SessionID,
+          verb: label.verb,
+          detail: label.detail,
+        });
+      }
+      options?.onTransitionStarted?.(data);
+    },
+    [options?.onTransitionStarted]
+  );
+
+  const onTransitionCompleted = useCallback(
+    (data: CPNEventData) => {
+      const payload = data.Payload as TransitionCompletedPayload | undefined;
+      // Only end the activity if this completion belongs to the transition
+      // currently displayed — avoids ending an unrelated activity bubble
+      // when bursts of completions arrive out of order.
+      dispatch({
+        type: 'ACTIVITY_END',
+        transitionId: data.TransitionID,
+        sessionId: data.SessionID,
+        durationMs: payload?.duration_ms,
+        costUsd: payload?.cost_usd,
+      });
+      options?.onTransitionCompleted?.(data);
+    },
+    [options?.onTransitionCompleted]
+  );
+
   const { isConnected, connectionState } = useSSE({
     sessionId,
     onStreamChunk,
     onSessionCompleted,
     onSessionFailed,
     onHITLRequested,
-    onTransitionStarted: options?.onTransitionStarted,
-    onTransitionCompleted: options?.onTransitionCompleted,
+    onTransitionStarted,
+    onTransitionCompleted,
     onSubNetStarted: options?.onSubNetStarted,
     onSubNetCompleted: options?.onSubNetCompleted,
     onSubNetFailed: options?.onSubNetFailed,
     onSessionNotFound: options?.onSessionNotFound,
   });
+
+  const dismissReceipt = useCallback(() => {
+    dispatch({ type: 'ACTIVITY_RECEIPT_DISMISS' });
+  }, []);
 
   const handleResolveHITL = useCallback(
     async (transitionId: string, action: HITLAction, content?: string) => {
@@ -583,5 +723,8 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     sendMessage,
     resolveHITL: handleResolveHITL,
     error: state.error,
+    currentActivity: state.currentActivity,
+    recentReceipt: state.recentReceipt,
+    dismissReceipt,
   };
 }

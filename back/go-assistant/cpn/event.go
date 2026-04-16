@@ -61,7 +61,8 @@ const (
 
 // TransitionStartedPayload captures input tokens consumed before firing.
 type TransitionStartedPayload struct {
-	InputTokens []TokenSnapshot `json:"input_tokens"`
+	InputTokens  []TokenSnapshot `json:"input_tokens"`
+	DisplayLabel *DisplayLabel   `json:"display_label,omitempty"`
 }
 
 // TransitionCompletedPayload captures results after a transition fires.
@@ -71,6 +72,7 @@ type TransitionCompletedPayload struct {
 	DurationMs    int64           `json:"duration_ms"`
 	Error         string          `json:"error,omitempty"`
 	ExecutedModel string          `json:"executed_model,omitempty"`
+	DisplayLabel  *DisplayLabel   `json:"display_label,omitempty"`
 }
 
 // TokenSnapshot is a serializable, truncated representation of a Token.

@@ -114,6 +114,13 @@ type Transition struct {
 	// When nil, all events (passing ObservedCPNID check) are accepted.
 	// Only meaningful when Kind == NodeKindObserver.
 	EventFilter func(e Event) bool
+
+	// Silent suppresses the DisplayLabel on this transition's lifecycle
+	// events so the UI activity indicator does not surface internal/observer
+	// firings. The events themselves are still emitted for monitoring and
+	// metrics — only the display_label JSON field is omitted.
+	// Defaults to false; observer constructors set it to true.
+	Silent bool
 }
 
 // ToolMeta carries tool metadata from the registry to the CPN execution layer.
@@ -136,12 +143,16 @@ func (t *Transition) CircuitBreaker() *CircuitBreakerState {
 
 // NewTransition creates a Transition with the given identity and arc configuration.
 // Guard and ErrorPlace can be set after construction via direct field assignment.
+//
+// Observer-kind transitions are constructed with Silent: true so their lifecycle
+// events do not surface a DisplayLabel in the activity indicator (spec REQ-007).
 func NewTransition(id string, kind NodeKind, inputPlaces, outputPlaces []string) *Transition {
 	return &Transition{
 		ID:           id,
 		Kind:         kind,
 		InputPlaces:  inputPlaces,
 		OutputPlaces: outputPlaces,
+		Silent:       kind == NodeKindObserver,
 	}
 }
 

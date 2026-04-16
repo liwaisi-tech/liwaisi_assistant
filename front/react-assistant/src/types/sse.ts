@@ -47,8 +47,20 @@ export interface TokenSnapshotData {
   origin_kind: string;
 }
 
+// DisplayLabel is the user-facing description of what a transition is
+// doing, attached to transition lifecycle events by the backend so the
+// activity indicator can render a verb (e.g. "Thinking", "Reading") with
+// an optional detail (tool name, file path, sub-net role).
+//
+// See spec-design-agent-activity-indicator.md §4.1 for the wire contract.
+export interface DisplayLabel {
+  verb: string;
+  detail?: string;
+}
+
 export interface TransitionStartedPayload {
   input_tokens: TokenSnapshotData[];
+  display_label?: DisplayLabel;
 }
 
 export interface TransitionCompletedPayload {
@@ -57,4 +69,5 @@ export interface TransitionCompletedPayload {
   duration_ms: number;
   error?: string;
   executed_model?: string;
+  display_label?: DisplayLabel;
 }

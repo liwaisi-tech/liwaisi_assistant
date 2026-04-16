@@ -30,7 +30,17 @@ export function ChatContainer({
   resumedAt = null,
   connectionState,
 }: ChatContainerProps) {
-  const { messages, sessionState, isConnected, sendMessage, resolveHITL, error } = useChat(sessionId);
+  const {
+    messages,
+    sessionState,
+    isConnected,
+    sendMessage,
+    resolveHITL,
+    error,
+    currentActivity,
+    recentReceipt,
+    dismissReceipt,
+  } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
   const canClear = sessionState !== 'running' && sessionState !== 'waiting';
@@ -64,6 +74,9 @@ export function ChatContainer({
         sessionState={sessionState}
         onSuggestionClick={sendMessage}
         onHITLAction={resolveHITL}
+        currentActivity={currentActivity}
+        recentReceipt={recentReceipt}
+        onReceiptDismiss={dismissReceipt}
       />
       <MessageInput
         onSend={sendMessage}

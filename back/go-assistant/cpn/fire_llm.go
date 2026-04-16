@@ -425,6 +425,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 						OriginID:       t.ID,
 						OriginKind:     string(NodeKindLLM),
 					}},
+					DisplayLabel: resolveLabelForTransition(c, toolTransition),
 				},
 				Timestamp: startTime,
 			})
