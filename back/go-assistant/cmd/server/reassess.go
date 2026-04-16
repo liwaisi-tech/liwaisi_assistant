@@ -120,6 +120,20 @@ type userChoiceOption struct {
 
 // ── Parsers ─────────────────────────────────────────────────────────────────
 
+// tokensByValue converts a slice of cpn.Token (as passed to ToolHandler and
+// A2UI builders) into the []*cpn.Token shape guards consume. The conversion
+// is needed because the guard and token-parsing APIs were authored
+// pointer-first for CanFire, while the tool/builder APIs were authored
+// value-first. Keeping one adapter keeps call sites one-liner.
+func tokensByValue(consumed []cpn.Token) []*cpn.Token {
+	ptrs := make([]*cpn.Token, len(consumed))
+	for i := range consumed {
+		tok := consumed[i]
+		ptrs[i] = &tok
+	}
+	return ptrs
+}
+
 // parseRoundToken decodes the first token carrying a round-token payload.
 // The payload may be:
 //   - a JSON string (the canonical shape deposited by t-followup)

@@ -694,16 +694,12 @@ OMIT conditional keys that do not apply to the chosen decision — never set the
 		[]string{"p-questions", "p-round"})
 	tFollowup.Guard = guardResidualAmbiguous
 	tFollowup.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
-		rrPtrs := make([]*cpn.Token, len(consumed))
-		for i := range consumed {
-			t := consumed[i]
-			rrPtrs[i] = &t
-		}
-		rr, ok := parseReassessResult(rrPtrs)
+		ptrs := tokensByValue(consumed)
+		rr, ok := parseReassessResult(ptrs)
 		if !ok {
 			return nil, fmt.Errorf("t-followup: unparseable reassess token")
 		}
-		rt, ok := parseRoundToken(rrPtrs)
+		rt, ok := parseRoundToken(ptrs)
 		if !ok {
 			// Defensive: if the round token is missing, start fresh.
 			rt = roundToken{}
@@ -721,11 +717,7 @@ OMIT conditional keys that do not apply to the chosen decision — never set the
 		[]string{"p-planner-input"})
 	tPreplanner.Guard = guardResidualResolved
 	tPreplanner.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
-		ptrs := make([]*cpn.Token, len(consumed))
-		for i := range consumed {
-			t := consumed[i]
-			ptrs[i] = &t
-		}
+		ptrs := tokensByValue(consumed)
 		rr, _ := parseReassessResult(ptrs) // fail-open: zero-value triggers AC-007 preamble
 		rt, _ := parseRoundToken(ptrs)
 		cfg := loadReassessConfig()
@@ -1186,12 +1178,7 @@ func firstEscapeHatchSeed(consumed []cpn.Token) (escapeHatchSeed, bool) {
 // form used by guards. Kept local to the topology package to avoid widening
 // the guard API.
 func parseRoundTokenValue(consumed []cpn.Token) (roundToken, bool) {
-	ptrs := make([]*cpn.Token, len(consumed))
-	for i := range consumed {
-		t := consumed[i]
-		ptrs[i] = &t
-	}
-	return parseRoundToken(ptrs)
+	return parseRoundToken(tokensByValue(consumed))
 }
 
 // buildClarifiedToken parses the user's structured submit response, merges it
