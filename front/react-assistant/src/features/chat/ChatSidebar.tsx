@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef, useEffect, memo } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, memo } from 'react';
+import { createPortal } from 'react-dom';
 import type { SessionListItem } from '../../types/api';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -49,8 +50,10 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(chat.title);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (isRenaming && inputRef.current) {
@@ -59,18 +62,51 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
     }
   }, [isRenaming]);
 
-  // Close menu on outside click
+  // Compute portal menu position from trigger rect (anchored to bottom-right).
+  const recomputeMenuPos = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    setMenuPos({
+      top: rect.bottom + 4,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showMenu) return;
+    recomputeMenuPos();
+  }, [showMenu, recomputeMenuPos]);
+
+  // Close menu on outside click, Esc, resize, or scroll.
   useEffect(() => {
     if (!showMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowMenu(false);
-        setConfirmDelete(false);
-      }
+    const close = () => {
+      setShowMenu(false);
+      setConfirmDelete(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu]);
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (menuRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    const onResize = () => recomputeMenuPos();
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [showMenu, recomputeMenuPos]);
 
   const handleRenameSubmit = useCallback(() => {
     const trimmed = renameValue.trim();
@@ -161,14 +197,17 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
           </span>
         )}
 
-        {/* Actions button */}
+        {/* Actions button — always visible so the user can see the affordance. */}
         <button
+          ref={triggerRef}
           onClick={(e) => {
             e.stopPropagation();
-            setShowMenu(!showMenu);
+            setShowMenu((prev) => !prev);
             setConfirmDelete(false);
           }}
-          className="flex-none opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/5"
+          className="flex-none opacity-60 group-hover:opacity-100 focus:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/5"
+          aria-haspopup="menu"
+          aria-expanded={showMenu}
           aria-label={t('chat:sidebar.chatActions')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-muted)">
@@ -197,19 +236,25 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
         </span>
       </div>
 
-      {/* Context menu */}
-      {showMenu && (
+      {/* Context menu — portaled to body so the sidebar's overflow:hidden
+          and the scroll container's overflow-y:auto never clip it. */}
+      {showMenu && menuPos && createPortal(
         <div
           ref={menuRef}
-          className="absolute right-2 top-full z-20 mt-1 py-1 rounded-lg border shadow-xl"
+          role="menu"
+          className="fixed py-1 rounded-lg border shadow-xl"
           style={{
+            top: menuPos.top,
+            right: menuPos.right,
             backgroundColor: 'var(--bg-surface)',
             borderColor: 'var(--border-dim)',
-            minWidth: '120px',
+            minWidth: '140px',
+            zIndex: 60,
           }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
+            role="menuitem"
             onClick={() => {
               setIsRenaming(true);
               setRenameValue(chat.title || t('chat:sidebar.defaultTitle'));
@@ -221,6 +266,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
             {t('chat:sidebar.rename')}
           </button>
           <button
+            role="menuitem"
             onClick={() => {
               onFork(chat.id);
               setShowMenu(false);
@@ -232,6 +278,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
           </button>
           {confirmDelete ? (
             <button
+              role="menuitem"
               onClick={() => {
                 onDelete(chat.id);
                 setShowMenu(false);
@@ -244,6 +291,7 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
             </button>
           ) : (
             <button
+              role="menuitem"
               onClick={() => setConfirmDelete(true)}
               className="w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-red-500/10"
               style={{ color: '#ef4444' }}
@@ -251,7 +299,8 @@ const ChatListItem = memo(function ChatListItem({ chat, isActive, onSelect, onRe
               {t('chat:sidebar.delete')}
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

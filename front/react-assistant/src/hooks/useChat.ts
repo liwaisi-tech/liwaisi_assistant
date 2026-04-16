@@ -60,12 +60,19 @@ function mapBackendStateToReducerState(s: BackendSessionState): SessionState {
 // response row (linked via parentMessageId) so the questionnaire component
 // can render in a locked/read-only state showing the submitted answers
 // (REQ-102..105 — spec-process-bugfix-a2ui-hitl-response-persistence.md).
-// Iterating once over the array keeps this O(n).
+// For action-envelope responses ({"action":"approve|revise|reject"}), it
+// also restores hitlResolved so the existing "You approved" badge and the
+// hitl:* button-lock pattern reappear after rehydration. Iterating once
+// over the array keeps this O(n).
 export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
-  const resolutions = new Map<string, { payload: string; at: Date }>();
+  const resolutions = new Map<string, { payload: string; at: Date; action: HITLAction | null }>();
   for (const m of messages) {
     if (m.role === 'user' && m.parentMessageId) {
-      resolutions.set(m.parentMessageId, { payload: m.content, at: m.timestamp });
+      resolutions.set(m.parentMessageId, {
+        payload: m.content,
+        at: m.timestamp,
+        action: extractEnvelopeAction(m.content),
+      });
     }
   }
   if (resolutions.size === 0) return messages;
@@ -75,9 +82,36 @@ export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
     // A2UI row's resolvedPayload, not as a standalone user bubble.
     if (m.role === 'user' && m.parentMessageId) continue;
     const hit = resolutions.get(m.id);
-    result.push(hit ? { ...m, resolvedPayload: hit.payload, resolvedAt: hit.at } : m);
+    if (!hit) {
+      result.push(m);
+      continue;
+    }
+    result.push({
+      ...m,
+      resolvedPayload: hit.payload,
+      resolvedAt: hit.at,
+      ...(hit.action ? { hitlResolved: hit.action } : {}),
+    });
   }
   return result;
+}
+
+// extractEnvelopeAction returns the HITL action keyword embedded in an
+// action-envelope response ({"action":"approve|revise|reject|submit"}).
+// Returns null for questionnaire answer maps (flat or wrapped), for
+// malformed JSON, and for any value that is not one of the known actions.
+function extractEnvelopeAction(content: string): HITLAction | null {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const a = (parsed as Record<string, unknown>).action;
+    if (a === 'approve' || a === 'revise' || a === 'reject' || a === 'submit') {
+      return a;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 function narrowToBackendState(s: SessionState | BackendSessionState): BackendSessionState {

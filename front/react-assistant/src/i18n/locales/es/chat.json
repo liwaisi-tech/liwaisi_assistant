@@ -71,6 +71,38 @@
     "questionnaire": {
       "respondedAt": "Respondido a las {{time}}",
       "responded": "Respondido"
+    },
+    "clarify": {
+      "badge": {
+        "label": "Seguimiento {{n}} de {{max}}",
+        "followup": "seguimiento",
+        "final": "última ronda",
+        "responded": "respondida {{time}}",
+        "aria": "Seguimiento {{n}} de {{max}}, {{caption}}"
+      },
+      "escape": {
+        "frustration": {
+          "title": "Quiero asegurarme de no atascarte",
+          "prompt": "¿Afinamos una pregunta más o sigo con supuestos razonables?",
+          "drill": "Una pregunta más",
+          "proceed": "Sigue con supuestos"
+        },
+        "contradiction": {
+          "title": "Hay dos caminos posibles",
+          "helper": "Escoge cuál refleja mejor lo que buscas:"
+        }
+      },
+      "handoff": {
+        "proceed": "Listo. Sigo con estos supuestos y te muestro el plan."
+      },
+      "sr": {
+        "newRound": "Nueva pregunta de seguimiento, {{n}} de {{max}}.",
+        "escapeAppeared": "brae te ofrece una opción: seguir preguntando o continuar con supuestos.",
+        "locked": "Respuesta guardada. Formulario cerrado."
+      },
+      "assumptions": {
+        "parseErrorFallback": "Avanzo con la mejor interpretación disponible de tu pedido."
+      }
     }
   },
   "connection": {

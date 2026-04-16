@@ -1,11 +1,14 @@
-import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
+import { useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, useContext, createContext, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
 import type {
   A2UIPayload,
   A2UIComponent,
   A2UIAction,
+  A2UIRound,
   AlertSeverity,
+  ButtonSize,
+  CardVariant,
   FormField,
   ChoiceOption,
 } from './types.ts';
@@ -57,9 +60,22 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   const componentId = (component.props.id as string) ?? '';
   const actionType = (component.props.actionType as string) ?? 'click';
   const variant = (component.props.variant as string) ?? 'primary';
-  const disabled = component.props.disabled === true;
+  const propDisabled = component.props.disabled === true;
+
+  // When this surface has been resolved (live submit OR rehydration), every
+  // hitl:* button locks. The chosen action stays at full opacity; the
+  // others fade. Keeps the visual record of what the user picked without
+  // leaving the buttons clickable. Card-level lock for t-review.
+  const { resolvedPayload } = useContext(ResolutionContext);
+  const resolvedAction = useMemo(() => extractResolvedHITLAction(resolvedPayload), [resolvedPayload]);
+  const isHitl = actionType.startsWith('hitl:');
+  const lockedByResolution = isHitl && resolvedPayload !== undefined;
+  const isChosen = lockedByResolution && resolvedAction !== null && actionType === `hitl:${resolvedAction}`;
+  const disabled = propDisabled || lockedByResolution;
+  const dim = lockedByResolution && !isChosen;
 
   const handleClick = () => {
+    if (disabled) return;
     onAction({
       type: actionType,
       componentId,
@@ -74,24 +90,44 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
     success: { bg: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: 'rgba(16, 185, 129, 0.3)', glow: 'none' },
   };
   const s = variantStyles[variant] ?? variantStyles.primary;
+  const opacity = propDisabled ? 0.5 : dim ? 0.35 : 1;
 
   return (
     <button
       onClick={handleClick}
       disabled={disabled}
-      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
+      aria-disabled={disabled}
+      className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all"
       style={{
         backgroundColor: s.bg,
         color: s.color,
         border: `1px solid ${s.border}`,
-        boxShadow: s.glow,
+        boxShadow: isChosen ? s.glow : 'none',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
+        opacity,
       }}
     >
-      {label}
+      {isChosen ? `✓ ${label}` : label}
     </button>
   );
+}
+
+// extractResolvedHITLAction reads the persisted HITL response content and
+// returns the action keyword (approve | revise | reject | submit) when the
+// payload is an action envelope. Returns null for questionnaire answer maps
+// (which are handled by QuestionnaireLocked) and for malformed input.
+function extractResolvedHITLAction(payload: string | undefined): string | null {
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.action === 'string') return obj.action;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 // ── card ────────────────────────────────────────────────────────────────────
