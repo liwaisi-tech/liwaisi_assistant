@@ -19,6 +19,7 @@ import { ChatSidebar } from '../chat/ChatSidebar';
 import { ForkDialog } from '../chat/ForkDialog';
 import { SessionResumedNotice } from '../chat/SessionResumedNotice';
 import { useModelAdminFlow } from '../chat/modelAdmin/useModelAdminFlow';
+import type { A2UIAction } from '../chat/a2ui/types';
 import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
 import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
@@ -83,9 +84,23 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     error,
     injectLocalMessage,
     updateMessageContent,
+    sendUserAction,
   } = useChat(chatList.activeSessionId, chatOptions);
 
   const modelAdmin = useModelAdminFlow({ injectLocalMessage, updateMessageContent });
+
+  /**
+   * A2UI fallthrough — `model:*` stays client-side, everything else flows
+   * back to the CPN via sendUserAction (REQ-GAP-REG-002 / REQ-FE-006).
+   */
+  const handleA2UIAction = useCallback(
+    (action: A2UIAction, messageId: string): boolean => {
+      if (modelAdmin.tryHandleA2UIAction(action, messageId)) return true;
+      void sendUserAction(action);
+      return true;
+    },
+    [modelAdmin, sendUserAction],
+  );
 
   // ── Coordination effects (bridge chat <-> monitor) ──────────────────────
 
@@ -436,7 +451,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
                   sessionState={sessionState}
                   onSuggestionClick={handleSendMessage}
                   onHITLAction={resolveHITL}
-                  onA2UIAction={modelAdmin.tryHandleA2UIAction}
+                  onA2UIAction={handleA2UIAction}
                   onOpenMonitor={handleOpenMonitor}
                 />
                 <div className={isMobile ? 'pb-16' : ''}>

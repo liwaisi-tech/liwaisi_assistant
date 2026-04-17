@@ -1,4 +1,4 @@
-import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, useTransition, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
 import type {
@@ -30,6 +30,37 @@ interface ResolutionContextValue {
 
 const ResolutionContext = createContext<ResolutionContextValue>({});
 
+// ── Form state context ─────────────────────────────────────────────────────
+// Threaded by the top-level renderer through any A2UI surface that includes
+// standalone `textfield` / `checkbox` / `choice` primitives bound to a
+// shared data model. Fields register + update their value by path (e.g.
+// `/form/registry_id`) so a sibling `button` with actionType=`submit_*`
+// can harvest the full bag in one shot and dispatch it via onAction.
+//
+// Design notes:
+// • Values are stored as string | boolean | number to match what A2UI v0.8
+//   primitives emit through their `value` / `text` bindings.
+// • initialValues seed the bag on first mount so pre-filled data-models
+//   (RegisterModelForm's `form.primary_route_adapter: "openrouter"`,
+//   `enable_enrichment: true`) are persisted even if the user never
+//   touches that field.
+// • getValue returns `undefined` when the path has never been set — the
+//   caller decides whether to coerce to empty string, 0, or false.
+
+type FormFieldValue = string | number | boolean | undefined;
+
+interface FormStateContextValue {
+  getValue: (path: string) => FormFieldValue;
+  setValue: (path: string, value: FormFieldValue) => void;
+  snapshot: () => Record<string, FormFieldValue>;
+}
+
+const FormStateContext = createContext<FormStateContextValue | null>(null);
+
+function useFormState(): FormStateContextValue | null {
+  return useContext(FormStateContext);
+}
+
 // ── Component Catalog ──────────────────────────────────────────────────────
 
 interface ComponentProps {
@@ -55,6 +86,55 @@ function TextComponent({ component }: ComponentProps) {
 
 // ── button ──────────────────────────────────────────────────────────────────
 
+// FORM_ACTION_TYPES is the set of unprefixed action names that, when fired
+// from a Button, harvest the surrounding form-state bag and hand it to the
+// parent as the action payload. Keeps the dispatch ergonomic: surfaces
+// describe fields + a submit button, the renderer does the book-keeping.
+// Extending this list is cheap — add the action name here, the collector
+// below picks it up automatically.
+const FORM_ACTION_TYPES = new Set<string>([
+  'submit_register',
+  'submit_default',
+  'accept_license',
+]);
+
+// REGISTER_CONTEXT_LENGTH_KEYS / REGISTER_BOOL_KEYS drive the type coercion
+// at submit time (REQ-GAP-REG-004). A2UI v0.8 TextField always reports
+// `text`/`textFieldType=number` as a string bucket through the data model,
+// so the renderer casts before dispatch so the backend never receives
+// `"262000"` where it expects `262000`.
+const REGISTER_NUMBER_KEYS = new Set<string>(['context_length']);
+const REGISTER_BOOL_KEYS = new Set<string>(['enable_enrichment']);
+
+function coerceFormValue(key: string, raw: FormFieldValue): FormFieldValue {
+  if (REGISTER_NUMBER_KEYS.has(key)) {
+    if (typeof raw === 'number') return raw;
+    const n = Number(raw ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (REGISTER_BOOL_KEYS.has(key)) {
+    return raw === true || raw === 'true';
+  }
+  return raw ?? '';
+}
+
+/**
+ * collectFormContext turns the FormState bag into the v0.8 `context` array
+ * shape the backend expects for a userAction — one `{key, value}` pair per
+ * field. Path segments are stripped to the leaf name (e.g. `/form/vendor`
+ * → `vendor`) so the backend's handler does not need path-awareness.
+ */
+function collectFormContext(
+  snapshot: Record<string, FormFieldValue>,
+): Array<{ key: string; value: FormFieldValue }> {
+  const out: Array<{ key: string; value: FormFieldValue }> = [];
+  for (const [path, raw] of Object.entries(snapshot)) {
+    const leaf = path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path;
+    out.push({ key: leaf, value: coerceFormValue(leaf, raw) });
+  }
+  return out;
+}
+
 function ButtonComponent({ component, onAction }: ComponentProps) {
   const label = (component.props.label as string) ?? '';
   const componentId = (component.props.id as string) ?? '';
@@ -76,17 +156,41 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   const isHitl = actionType.startsWith('hitl:');
   const lockedByResolution = isHitl && resolvedPayload !== undefined;
   const isChosen = lockedByResolution && resolvedAction !== null && actionType === `hitl:${resolvedAction}`;
-  const disabled = propDisabled || lockedByResolution;
+
+  // React 19 `useTransition` surfaces a pending state for the submit click
+  // without blocking the main thread. GUD-REG-001 / vercel-react-best-
+  // practices: wrap dispatch in startTransition so the rest of the form
+  // stays interactive while the parent onAction handler propagates the
+  // userAction upstream.
+  const [isPending, startTransition] = useTransition();
+  const form = useFormState();
+
+  const disabled = propDisabled || lockedByResolution || isPending;
   const dim = lockedByResolution && !isChosen;
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (disabled) return;
+    // Form-submit actions harvest the FormState bag and expose it as the
+    // v0.8 `context` array. Non-form actions pass through the propPayload
+    // unchanged for backward-compat with existing button call-sites.
+    if (FORM_ACTION_TYPES.has(actionType) && form) {
+      const snapshot = form.snapshot();
+      const context = collectFormContext(snapshot);
+      startTransition(() => {
+        onAction({
+          type: actionType,
+          componentId,
+          payload: { context, fields: snapshot },
+        });
+      });
+      return;
+    }
     onAction({
       type: actionType,
       componentId,
       payload: component.props.payload ?? null,
     });
-  };
+  }, [disabled, actionType, form, componentId, onAction, component.props.payload]);
 
   const variantStyles: Record<string, { bg: string; color: string; border: string; glow: string }> = {
     primary: { bg: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)', border: 'rgba(14, 165, 233, 0.3)', glow: '0 0 8px -2px var(--accent-glow)' },
@@ -329,6 +433,195 @@ function RowComponent({ component, onAction }: ComponentProps) {
   return (
     <div className={`flex ${wrapCls} ${alignCls} ${gapCls} my-1`}>
       {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// ── column ──────────────────────────────────────────────────────────────────
+// Vertical flex container. Sibling to `row`. a2ui v0.8 core primitive (see
+// https://a2ui.org/specification/v0.8-a2ui/ — Layout), used by every
+// management surface as the outer wrapper. Children render sequentially;
+// `gap` maps to the same spacing tokens as `row`.
+
+function ColumnComponent({ component, onAction }: ComponentProps) {
+  const gap = (component.props.gap as string) ?? 'md';
+  const align = (component.props.align as string) ?? 'stretch';
+  const gapCls = gap === 'lg' ? 'gap-3' : gap === 'sm' ? 'gap-1.5' : 'gap-2';
+  const alignCls =
+    align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : align === 'center' ? 'items-center' : 'items-stretch';
+  return (
+    <div className={`flex flex-col ${alignCls} ${gapCls} my-1`}>
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// ── textfield ───────────────────────────────────────────────────────────────
+// Standalone controlled text input — maps to a2ui v0.8 `TextField`. Writes
+// to FormStateContext by `path` so a sibling submit-button can collect the
+// full form bag in one shot. `validationRegexp` (if present) is applied as
+// a native `pattern` attribute for cheap browser-side validation; the
+// authoritative check lives on the server (REQ-A2UI-005).
+
+function TextFieldComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+  const textFieldType = (component.props.textFieldType as string) ?? 'shortText';
+  const placeholder = component.props.placeholder as string | undefined;
+  const validationRegexp = component.props.validationRegexp as string | undefined;
+  const required = component.props.required === true;
+
+  const form = useFormState();
+  // Controlled read — fall back to the seeded initial value, then to '' so
+  // React does not warn about uncontrolled → controlled swaps.
+  const rawValue = form?.getValue(path);
+  const value = rawValue === undefined || rawValue === null ? '' : String(rawValue);
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!form || !path) return;
+      if (textFieldType === 'number') {
+        const parsed = Number(e.target.value);
+        form.setValue(path, Number.isFinite(parsed) ? parsed : 0);
+        return;
+      }
+      form.setValue(path, e.target.value);
+    },
+    [form, path, textFieldType],
+  );
+
+  return (
+    <div className="flex flex-col gap-1 my-1">
+      {label && (
+        <label htmlFor={id || path} className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          {label}
+        </label>
+      )}
+      <input
+        id={id || path}
+        name={path}
+        type={textFieldType === 'number' ? 'number' : 'text'}
+        value={value}
+        onChange={handleChange}
+        placeholder={placeholder}
+        required={required}
+        pattern={validationRegexp}
+        className="px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+        style={{
+          backgroundColor: 'var(--bg-input)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-dim)',
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+        }}
+      />
+    </div>
+  );
+}
+
+// ── checkbox ────────────────────────────────────────────────────────────────
+// Standalone controlled boolean input — maps to a2ui v0.8 `CheckBox`. Like
+// `textfield`, writes to FormStateContext by `path` so a sibling submit
+// button can collect the final bag.
+
+function CheckBoxComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+
+  const form = useFormState();
+  const rawValue = form?.getValue(path);
+  const checked = rawValue === true;
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!form || !path) return;
+      form.setValue(path, e.target.checked);
+    },
+    [form, path],
+  );
+
+  return (
+    <label htmlFor={id || path} className="flex items-start gap-2 my-1 cursor-pointer text-sm"
+           style={{ color: 'var(--text-primary)' }}>
+      <input
+        id={id || path}
+        name={path}
+        type="checkbox"
+        checked={checked}
+        onChange={handleChange}
+        className="mt-0.5"
+        style={{ accentColor: 'var(--accent)' }}
+      />
+      {label && <span className="leading-snug">{label}</span>}
+    </label>
+  );
+}
+
+// ── multiplechoice ──────────────────────────────────────────────────────────
+// Select-style single-choice for `maxAllowedSelections: 1`. a2ui v0.8 core
+// primitive. Reads/writes a single string value (the selected option's
+// `value`) through FormStateContext. For multi-select (>1) this would need
+// a set-based bag; out of scope for the RegisterModelForm surface.
+
+interface MultipleChoiceOption {
+  label: string;
+  value: string;
+}
+
+function MultipleChoiceComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+  const options = (component.props.options as MultipleChoiceOption[]) ?? [];
+  const maxAllowedSelections =
+    typeof component.props.maxAllowedSelections === 'number'
+      ? (component.props.maxAllowedSelections as number)
+      : 1;
+
+  const form = useFormState();
+  const rawValue = form?.getValue(path);
+  const selected = typeof rawValue === 'string' ? rawValue : '';
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (!form || !path) return;
+      form.setValue(path, e.target.value);
+    },
+    [form, path],
+  );
+
+  // Single-select fallback renders as a native <select>. Multi-select (not
+  // currently exercised by REQ-GAP-REG-001) renders nothing interactive so
+  // we never silently accept user input the server cannot reconcile.
+  if (maxAllowedSelections !== 1) {
+    return <UnknownComponent component={component} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-1 my-1">
+      {label && (
+        <label htmlFor={id || path} className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          {label}
+        </label>
+      )}
+      <select
+        id={id || path}
+        name={path}
+        value={selected}
+        onChange={handleChange}
+        className="px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+        style={{
+          backgroundColor: 'var(--bg-input)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-dim)',
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+        }}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -1215,6 +1508,17 @@ const componentCatalog: Record<string, React.FC<ComponentProps>> = {
   form: FormComponent,
   list: ListComponent,
   row: RowComponent,
+  // a2ui v0.8 core primitives added to render the RegisterModelForm
+  // surface (REQ-GAP-REG-001). These are not new extensions — they are
+  // part of the v0.8 primitive set documented at
+  // https://a2ui.org/specification/v0.8-a2ui/ (Column, TextField,
+  // CheckBox, MultipleChoice). REQ-A2UI-002 forbids NEW catalog entries
+  // (extensions beyond the existing set); filling in missing core
+  // primitives is explicitly outside that prohibition.
+  column: ColumnComponent,
+  textfield: TextFieldComponent,
+  checkbox: CheckBoxComponent,
+  multiplechoice: MultipleChoiceComponent,
   divider: DividerComponent,
   alert: AlertComponent,
   badge: BadgeComponent,
@@ -1240,6 +1544,34 @@ interface A2UIMessageRendererProps {
   resolvedAt?: Date;
 }
 
+/**
+ * flattenInitialValues walks the payload's optional `data` bag into the
+ * path-keyed form-state map. e.g. `{form: {registry_id: "", vendor: ""}}`
+ * becomes `{"/form/registry_id": "", "/form/vendor": ""}`. This way the
+ * authors of the surface can emit a nested data-model (the shape used in
+ * the parent spec §4.6.2) and the FormState bag presents it by path
+ * without the fields having to walk into nested objects themselves.
+ * Only leaf primitives (string | number | boolean) are retained.
+ */
+function flattenInitialValues(
+  data: Record<string, unknown> | undefined,
+  prefix = '',
+): Record<string, FormFieldValue> {
+  if (!data) return {};
+  const out: Record<string, FormFieldValue> = {};
+  for (const [k, v] of Object.entries(data)) {
+    const path = `${prefix}/${k}`;
+    if (v === null || v === undefined) {
+      out[path] = '';
+    } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      out[path] = v;
+    } else if (typeof v === 'object' && !Array.isArray(v)) {
+      Object.assign(out, flattenInitialValues(v as Record<string, unknown>, path));
+    }
+  }
+  return out;
+}
+
 export function A2UIMessageRenderer({
   payload,
   isStreaming,
@@ -1261,6 +1593,29 @@ export function A2UIMessageRenderer({
     [resolvedPayload, resolvedAt],
   );
 
+  // Seed FormState once per payload identity so the user's edits survive
+  // re-renders triggered by streaming text updates. A fresh surface (e.g.
+  // after the backend emits a surfaceUpdate with the SAME surfaceId) is
+  // considered equal to the previous payload if its `data` is unchanged,
+  // and its fields therefore keep their values across validation rounds
+  // (REQ-GAP-REG-003 / AC-REG-003).
+  const [formBag, setFormBag] = useState<Record<string, FormFieldValue>>(() =>
+    flattenInitialValues(deferredPayload.data),
+  );
+
+  const getValue = useCallback(
+    (path: string): FormFieldValue => formBag[path],
+    [formBag],
+  );
+  const setValue = useCallback((path: string, value: FormFieldValue) => {
+    setFormBag((prev) => ({ ...prev, [path]: value }));
+  }, []);
+  const snapshot = useCallback(() => ({ ...formBag }), [formBag]);
+  const formContextValue = useMemo<FormStateContextValue>(
+    () => ({ getValue, setValue, snapshot }),
+    [getValue, setValue, snapshot],
+  );
+
   // Motion — §Motion in the iterative-clarification-loop spec.
   // Only A2UI bubbles that carry a `round` field animate on mount; other
   // bubbles keep their current mount behavior to avoid introducing motion
@@ -1272,15 +1627,17 @@ export function A2UIMessageRenderer({
 
   return (
     <ResolutionContext.Provider value={resolutionValue}>
-      <div className={contentClass}>
-        {deferredPayload.round ? (
-          <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
-        ) : null}
-        {deferredPayload.components.map((component, i) => (
-          <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
-        ))}
-        {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
-      </div>
+      <FormStateContext.Provider value={formContextValue}>
+        <div className={contentClass}>
+          {deferredPayload.round ? (
+            <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+          ) : null}
+          {deferredPayload.components.map((component, i) => (
+            <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
+          ))}
+          {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
+        </div>
+      </FormStateContext.Provider>
     </ResolutionContext.Provider>
   );
 }

@@ -2,9 +2,18 @@ import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { BackendSessionState, SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload } from '../types/sse';
 import type { ChatMessage, HITLAction } from '../types/chat';
+import type { A2UIAction } from '../features/chat/a2ui/types';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
+
+// A2UI_ACTION_MARKER prefixes any user message that carries a serialized
+// v0.8 userAction envelope. The CPN's `t-recv-response` transition (GAP-CPN)
+// detects this marker and parses the JSON tail as `{name, context}` per
+// REQ-GAP-REG-002 / AC-REG-002. Keeps the existing `POST /sessions/:id/
+// messages` endpoint as the single wire for "user → agent" events without
+// adding a sibling REST route.
+export const A2UI_ACTION_MARKER = '$$a2ui-action:';
 
 // CurrentActivity describes what the agent is doing right now, surfaced
 // by the ActivityBubble. Populated from transition_started events that
@@ -228,14 +237,38 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         return state;
       }
 
-      // 1. Done sentinel — no content, just signals response complete
+      // respondingModel is surfaced on the FINAL chunk (Done=true) of an
+      // LLM transition per REQ-GAP-IND-001. Support both snake_case (wire)
+      // and PascalCase (legacy reducer field) so the reducer tolerates
+      // either shape without a breaking migration. Empty string is
+      // treated as absent so older bubbles rehydrate without a badge.
+      const respondingModel =
+        (typeof data.responding_model === 'string' && data.responding_model.length > 0
+          ? data.responding_model
+          : undefined) ??
+        (typeof data.ResponsibleModel === 'string' && data.ResponsibleModel.length > 0
+          ? data.ResponsibleModel
+          : undefined);
+
+      // 1. Done sentinel — no content, just signals response complete.
+      // When the final chunk carries a respondingModel, stamp it onto the
+      // most-recent streaming assistant bubble for this CPNID before
+      // closing it (REQ-GAP-IND-003).
       if (data.Done && !data.Content) {
         return {
           ...state,
           sessionState: 'idle',
-          messages: state.messages.map((m) =>
-            m.isStreaming ? { ...m, isStreaming: false } : m
-          ),
+          messages: state.messages.map((m) => {
+            if (!m.isStreaming) return m;
+            if (respondingModel && m.cpnId === data.CPNID && m.role === 'assistant') {
+              return {
+                ...m,
+                isStreaming: false,
+                metadata: { ...m.metadata, responding_model: respondingModel },
+              };
+            }
+            return { ...m, isStreaming: false };
+          }),
         };
       }
 
@@ -247,6 +280,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         cpnId: data.CPNID,
         cpnRole: data.CPNRole,
         timestamp: new Date(),
+        ...(data.Done && respondingModel
+          ? { metadata: { responding_model: respondingModel } }
+          : {}),
       });
 
       // 2. A2UI boundary (REQ-008/009): any chunk starting with the marker
@@ -297,10 +333,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
       if (existingIdx >= 0) {
         const updated = [...state.messages];
+        const prev = updated[existingIdx];
         updated[existingIdx] = {
-          ...updated[existingIdx],
-          content: updated[existingIdx].content + data.Content,
+          ...prev,
+          content: prev.content + data.Content,
           isStreaming: !data.Done,
+          // On the final chunk of an LLM transition, persist respondingModel
+          // onto the bubble's metadata so MessageBubble can render the
+          // RoundBadge without re-reading the SSE stream (REQ-GAP-IND-003).
+          ...(data.Done && respondingModel
+            ? { metadata: { ...prev.metadata, responding_model: respondingModel } }
+            : {}),
         };
         return { ...state, messages: updated, sessionState: data.Done ? 'idle' : 'running' };
       }
@@ -544,6 +587,11 @@ export interface UseChatReturn {
   // the existing renderer picks up.
   injectLocalMessage: (id: string, content: string, cpnRole?: string) => void;
   updateMessageContent: (id: string, content: string) => void;
+  // sendUserAction serializes a v0.8 userAction envelope onto the chat
+  // message wire so the CPN's recv-response transition can act on it
+  // without the frontend calling /admin/models directly (REQ-FE-006 /
+  // REQ-GAP-REG-002).
+  sendUserAction: (action: A2UIAction) => Promise<void>;
 }
 
 export function useChat(sessionId: string | null, options?: UseChatOptions): UseChatReturn {
@@ -793,6 +841,36 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [],
   );
 
+  const sendUserAction = useCallback(
+    async (action: A2UIAction) => {
+      if (!sessionId) return;
+      // Envelope: { name, componentId, context, payload } — keeps the
+      // action name hoisted so the backend parser can switch on it
+      // without having to re-parse a nested object. `context` mirrors the
+      // a2ui v0.8 shape used in §4.6.2 (array of {key, value} pairs).
+      const rawPayload = (action.payload ?? null) as
+        | { context?: Array<{ key: string; value: unknown }>; fields?: Record<string, unknown> }
+        | null;
+      const envelope = {
+        name: action.type,
+        componentId: action.componentId,
+        context: rawPayload?.context ?? [],
+        fields: rawPayload?.fields ?? null,
+      };
+      const content = `${A2UI_ACTION_MARKER}${JSON.stringify(envelope)}`;
+      try {
+        await apiSendMessage(sessionId, content);
+      } catch (err) {
+        if (err instanceof ApiError) {
+          dispatch({ type: 'SET_ERROR', error: err.message });
+        } else {
+          dispatch({ type: 'SET_ERROR', error: 'Failed to send action' });
+        }
+      }
+    },
+    [sessionId],
+  );
+
   return {
     messages: state.messages,
     sessionState: state.sessionState,
@@ -807,5 +885,6 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     dismissReceipt,
     injectLocalMessage,
     updateMessageContent,
+    sendUserAction,
   };
 }

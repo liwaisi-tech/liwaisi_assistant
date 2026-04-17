@@ -6,6 +6,7 @@ import { MessageInput } from './MessageInput';
 import { ConfirmClearDialog } from './ConfirmClearDialog';
 import { SessionResumedNotice } from './SessionResumedNotice';
 import { useModelAdminFlow } from './modelAdmin/useModelAdminFlow';
+import type { A2UIAction } from './a2ui/types';
 
 interface ChatContainerProps {
   sessionId: string | null;
@@ -43,6 +44,7 @@ export function ChatContainer({
     dismissReceipt,
     injectLocalMessage,
     updateMessageContent,
+    sendUserAction,
   } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
@@ -57,6 +59,24 @@ export function ChatContainer({
       void sendMessage(content);
     },
     [modelAdmin, sendMessage],
+  );
+
+  /**
+   * handleA2UIAction is the MessageList → MessageBubble catch-all for A2UI
+   * buttons that don't match the HITL branches. `model:*` actions stay on
+   * the client (useModelAdminFlow's admin-REST shortcut). Every other
+   * action — e.g. the CPN-emitted `submit_register`, `apply_confirm` —
+   * becomes a v0.8 userAction envelope sent through the chat wire
+   * (REQ-GAP-REG-002 / REQ-FE-006). Always returns true once the router
+   * has handled the action so MessageBubble does not double-dispatch.
+   */
+  const handleA2UIAction = useCallback(
+    (action: A2UIAction, messageId: string): boolean => {
+      if (modelAdmin.tryHandleA2UIAction(action, messageId)) return true;
+      void sendUserAction(action);
+      return true;
+    },
+    [modelAdmin, sendUserAction],
   );
 
   const canClear = sessionState !== 'running' && sessionState !== 'waiting';
@@ -90,7 +110,7 @@ export function ChatContainer({
         sessionState={sessionState}
         onSuggestionClick={handleSend}
         onHITLAction={resolveHITL}
-        onA2UIAction={modelAdmin.tryHandleA2UIAction}
+        onA2UIAction={handleA2UIAction}
         currentActivity={currentActivity}
         recentReceipt={recentReceipt}
         onReceiptDismiss={dismissReceipt}

@@ -18,4 +18,14 @@ export interface ChatMessage {
   parentMessageId?: string;
   resolvedPayload?: string;
   resolvedAt?: Date;
+  /**
+   * Optional bag of transport-level metadata surfaced from SSE payloads.
+   * Currently the only key is `responding_model` — set by useChat when the
+   * final `stream_chunk` carries it (REQ-GAP-IND-003 / spec §4.3). The bag
+   * is designed to grow additively without breaking older rehydrated rows:
+   * every consumer MUST treat `metadata?.<key>` as possibly-undefined.
+   */
+  metadata?: {
+    responding_model?: string;
+  };
 }

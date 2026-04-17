@@ -22,6 +22,16 @@ interface MessageBubbleProps {
   // submission (REQ-102..105).
   resolvedPayload?: string;
   resolvedAt?: Date;
+  /**
+   * Transport metadata bag surfaced from SSE payloads. Today the only
+   * consumer is `metadata.responding_model`, rendered as a RoundBadge
+   * below assistant bubbles (REQ-GAP-IND-004). Absent → no badge; the
+   * badge is also suppressed for user messages and HITL surfaces
+   * (REQ-GAP-IND-005).
+   */
+  metadata?: {
+    responding_model?: string;
+  };
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   // Catch-all for non-HITL A2UI actions (e.g. the `model:*` action family
   // emitted by the in-chat model-admin surface). Called only when the
@@ -29,6 +39,19 @@ interface MessageBubbleProps {
   // same surface in place.
   onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
   onOpenMonitor?: () => void;
+}
+
+/**
+ * formatRespondingModel strips the vendor prefix from a registry id so the
+ * badge reads "claude-opus-4-6 · openrouter" instead of the full
+ * "anthropic/claude-opus-4-6 · openrouter". Returns the raw string back if
+ * no slash is present so we never swallow the adapter hint.
+ * REQ-GAP-IND-004.
+ */
+function formatRespondingModel(raw: string): string {
+  const slash = raw.indexOf('/');
+  if (slash === -1) return raw;
+  return raw.slice(slash + 1);
 }
 
 /**
@@ -61,6 +84,7 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 export const MessageBubble = memo(function MessageBubble({
   id, role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
+  metadata,
   onHITLAction, onA2UIAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
@@ -77,6 +101,24 @@ export const MessageBubble = memo(function MessageBubble({
     if (isUser) return null;
     return parsePayload(content, isStreaming ?? false);
   }, [isUser, content, isStreaming]);
+
+  // Responding-model badge (REQ-GAP-IND-004/005):
+  //   • only for assistant messages
+  //   • suppressed while streaming (value is final-chunk-only) so the badge
+  //     does not flicker in during token-by-token rendering
+  //   • suppressed on HITL surfaces — the user is reading an affordance,
+  //     not an LLM answer
+  //   • suppressed when the bubble carries a $$a2ui: payload whose
+  //     componentCatalog entries cover interactive management surfaces
+  //   • absent metadata → no badge (backward-compat for rehydrated rows)
+  const respondingModelLabel = useMemo<string | null>(() => {
+    if (isUser) return null;
+    if (isStreaming) return null;
+    if (hitlTransitionId || hitlResolved) return null;
+    const raw = metadata?.responding_model?.trim();
+    if (!raw) return null;
+    return formatRespondingModel(raw);
+  }, [isUser, isStreaming, hitlTransitionId, hitlResolved, metadata?.responding_model]);
 
   // Route A2UI actions — HITL actions dispatch to the resolver
   const handleA2UIAction = useCallback(
@@ -229,6 +271,33 @@ export const MessageBubble = memo(function MessageBubble({
                 : hitlResolved === 'revise'
                   ? t('messageBubble.youRequestedChanges', 'You requested changes')
                   : t('messageBubble.youCancelled')}
+            </span>
+          </div>
+        )}
+
+        {/* Responding-model RoundBadge — REQ-GAP-IND-004.
+            Strips the vendor prefix for scannability (e.g. "claude-opus-4-6
+            · openrouter") while preserving the full registry id on hover.
+            Rendered bottom-right of the bubble content area with caption
+            styling, using only existing design tokens (GUD-IND-001). */}
+        {respondingModelLabel && (
+          <div className="mt-2 flex justify-end">
+            <span
+              data-testid="responding-model-badge"
+              title={t('models.badge.responding_model', {
+                defaultValue: 'Responding: {{model}}',
+                model: metadata?.responding_model,
+              })}
+              className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full"
+              style={{
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-dim)',
+                background: 'var(--bg-input)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              <span aria-hidden="true" style={{ color: 'var(--accent)' }}>{'\u25C9'}</span>
+              <span>{respondingModelLabel}</span>
             </span>
           </div>
         )}

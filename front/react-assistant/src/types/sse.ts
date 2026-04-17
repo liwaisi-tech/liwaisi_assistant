@@ -4,6 +4,27 @@ export interface StreamChunkData {
   CPNRole: string;
   Content: string;
   Done: boolean;
+  // Populated only on the final chunk of an LLM transition (Done=true).
+  // Encoded as "<registry_id> · <adapter>" (e.g. "anthropic/claude-opus-4-6 · openrouter").
+  // REQ-GAP-IND-001/002, parent REQ-FE-005.
+  ResponsibleModel?: string;
+  responding_model?: string;
+}
+
+/**
+ * StreamChunkPayload mirrors the backend SSE `stream_chunk` wire shape
+ * (camelCase server → snake_case client by convention). Kept as a typed
+ * interface so tests and future adapters can import the contract without
+ * depending on the reducer's internal StreamChunkData variant.
+ * REQ-GAP-IND-002 / parent §4.2 of the gap-closure spec.
+ */
+export interface StreamChunkPayload {
+  message_id: string;
+  content: string;
+  done: boolean;
+  // Present only on the final chunk of an LLM transition; absent on every
+  // other chunk and on messages that pre-date this field.
+  responding_model?: string;
 }
 
 export interface CPNEventData {
