@@ -183,6 +183,12 @@ func main() {
 		topologyFactory = defaultTopologyFactory
 	case "hitl":
 		topologyFactory = hitlTopologyFactory
+	case "manage-models":
+		// manage-models-flow fragment — REQ-GAP-CPN-001. Selectable via env
+		// for tests and targeted dev runs; the production session service
+		// integrates the fragment into its classifier routing in a follow-up
+		// slice (see spec-process-model-admin-in-chat-gap-closure.md §12).
+		topologyFactory = manageModelsTopologyFactoryForSession
 	default:
 		topologyFactory = unifiedTopologyFactory
 	}

@@ -75,6 +75,21 @@ type classifierResult struct {
 	// Absence is treated as 1.0 for backward compatibility with classifiers
 	// that haven't been updated to emit it.
 	Confidence *float64 `json:"confidence,omitempty"`
+
+	// ManageKind is the sub-kind emitted when Intent == "manage-models"
+	// (REQ-GAP-CPN-002). One of:
+	//   list | register | toggle | set-default | review-license | delete
+	// Empty when Intent is not "manage-models" or the classifier was uncertain
+	// about the specific operation — in the latter case the manage-models
+	// topology falls through to `list` as a safe default.
+	ManageKind string `json:"manage_kind,omitempty"`
+
+	// ManageArgs carries pre-extracted arguments (e.g. registry_id) when the
+	// classifier can identify them from the user's utterance. The topology's
+	// `t-emit-*` transitions consult the map when they need to pre-fill a
+	// confirm surface (e.g. "bloquea gpt-5" → manage_args={"registry_id":"gpt-5"}).
+	// Absent when Intent != "manage-models".
+	ManageArgs map[string]any `json:"manage_args,omitempty"`
 }
 
 // confidence returns the effective confidence, defaulting to 1.0 when the
@@ -100,13 +115,23 @@ func parseClassified(tokens []*cpn.Token) (classifierResult, bool) {
 	return classifierResult{}, false
 }
 
-// guardDirectConversation fires t-direct when the classifier output does NOT contain "task".
+// guardDirectConversation fires t-direct when the classifier output is neither
+// "task" nor "manage-models". The manage-models intent routes through its own
+// topology fragment (manage-models-flow, REQ-GAP-CPN-001) and must NOT be
+// hijacked by t-direct — otherwise a "lista mis modelos" utterance would get a
+// free-form chat reply instead of the ModelCardList surface.
 func guardDirectConversation(tokens []*cpn.Token) bool {
 	r, ok := parseClassified(tokens)
 	if !ok {
 		return true // default to conversation on parse failure
 	}
-	return !strings.EqualFold(r.Intent, "task")
+	if strings.EqualFold(r.Intent, "task") {
+		return false
+	}
+	if strings.EqualFold(r.Intent, "manage-models") {
+		return false
+	}
+	return true
 }
 
 // guardPlanTask fires t-plan when the classifier output contains "task".
@@ -349,7 +374,9 @@ The message may be in any human language. Classify identically regardless of lan
 A "USER CONTEXT — REGIONAL REGISTER" preamble may be prepended to this prompt at runtime. When present, use the listed idiom glosses to resolve ambiguous imperatives in the user's regional register (e.g., a verb that looks like a command in standard usage but is conversational in that variant). Do not enumerate the idioms in your output; let them inform the conversation/task decision in Step 1.
 
 Schema (all keys required):
-{"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...],"confidence":0.0}
+{"intent":"conversation"|"task"|"manage-models","needs_clarification":bool,"missing":[string,...],"confidence":0.0,"manage_kind":"list"|"register"|"toggle"|"set-default"|"review-license"|"delete","manage_args":{}}
+
+The "manage-models" intent + manage_kind + manage_args keys are OPTIONAL; include them ONLY when intent == "manage-models". Omit when not applicable.
 
 Decision procedure — run these steps mentally, then emit JSON.
 
@@ -361,6 +388,10 @@ Detect meta-questions by SEMANTICS, not by keyword. Any phrasing in any language
 Step 1. Intent.
 - "conversation": greetings, small talk, thanks, acknowledgements, emotional reactions, single factual questions answerable in one short paragraph, follow-up questions about something already said, opinion questions, and ALL meta-questions (see Step 0).
 - "task": the user explicitly asks the assistant to PRODUCE a multi-step deliverable — build, design, plan, implement, write a document or code, analyze a dataset, research a topic in depth, refactor, teach a multi-step procedure, or otherwise hand back a structured artifact that a reasonable person would review before shipping.
+- "manage-models": the user is asking the ASSISTANT ITSELF to operate its own model registry — list/show/browse registered LLMs, register a new model, toggle a model on/off, change the product default model, review a model's license (approve/block), or delete a model. Seed utterances in any language: "list my models", "lista mis modelos", "registra un modelo nuevo", "register a model", "bloquea gpt-5", "block gpt-5", "cámbiame el modelo por defecto", "set default to claude opus", "quita/elimina ese modelo". When intent == "manage-models", emit:
+    manage_kind ∈ {list, register, toggle, set-default, review-license, delete}
+    manage_args: extract a registry_id (or its free-form candidate, e.g. "gpt-5", "claude opus 4.6") when the user named one; empty object otherwise.
+  Use "list" as a safe fallback when the sub-kind is genuinely ambiguous. Model-management intents ALWAYS set needs_clarification=false and missing=[] (Step 4 consistency still applies). confidence is your usual self-score.
 - When ambiguous, prefer "conversation". The task pipeline is expensive, adds a human-review gate, and produces poor output on under-specified inputs; a conversational reply can always offer to escalate. Misrouting a one-shot reply into the planner is a much worse failure than the reverse.
 - Do NOT classify a message as "task" merely because you don't immediately know the answer, or merely because the message contains an imperative verb. Imperatives are common in casual speech ("tell me...", "say...", "count...", "repeat...", "define...", "translate this phrase...", "give me an example...", "try streaming"). The grammatical mood is NOT the signal.
 - The real test is the EXPECTED OUTPUT SHAPE. Ask: "Could a competent assistant satisfy this in a single short turn of free-form text, with no planning, no structure, and nothing a human would want to review before it ships?" If yes → "conversation". If the user is asking for something a senior practitioner would outline, draft in sections, or iterate on → "task".
@@ -379,6 +410,7 @@ If any of (a)-(d) fails, set needs_clarification = false and missing = []. Over-
 
 Step 4. Field consistency rules (HARD):
 - intent == "conversation"     ⇒ needs_clarification = false, missing = [].
+- intent == "manage-models"    ⇒ needs_clarification = false, missing = [], manage_kind is REQUIRED.
 - needs_clarification == true  ⇒ intent MUST be "task" AND missing MUST have 1..4 entries.
 - needs_clarification == false ⇒ missing MUST be [].
 

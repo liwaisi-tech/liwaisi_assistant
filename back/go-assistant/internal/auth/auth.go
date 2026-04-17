@@ -7,6 +7,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // ── Sentinel Errors ────────────────────────────────────────────────────────
@@ -83,4 +84,32 @@ func (n *NoopVerifier) Verify(_ context.Context, _ string) (*AuthenticatedUser, 
 		Email: "dev@localhost",
 		Name:  "Developer",
 	}, nil
+}
+
+// ── Admin predicate (shared between the HTTP middleware and the CPN gate) ──
+
+// IsAdminEmail reports whether the given email matches any entry in the
+// admin-email allowlist. Comparison is case-insensitive after trimming to
+// match the semantics enforced by httpapi.AdminMiddleware — the two paths
+// MUST agree, otherwise a user who passes the HTTP admin gate could be
+// rejected by the CPN management flow or vice-versa.
+//
+// Inputs are normalized on each call to tolerate callers that pass raw
+// comma-separated env values. Empty slices and empty emails always return
+// false — admin is a positive-allowlist gate, never a default.
+func IsAdminEmail(email string, admins []string) bool {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return false
+	}
+	for _, a := range admins {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if strings.EqualFold(email, a) {
+			return true
+		}
+	}
+	return false
 }
