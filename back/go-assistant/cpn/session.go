@@ -52,6 +52,16 @@ type StreamChunk struct {
 
 	// Done indicates whether this is the final chunk in the stream.
 	Done bool
+
+	// RespondingModel, when set, identifies which model+adapter answered this
+	// turn. Populated only on the FINAL chunk of an LLM transition (Done=true)
+	// as "<registry_id> · <adapter>" (e.g. "anthropic/claude-opus-4-6 · openrouter").
+	// Earlier chunks leave it empty. Frontend reads it from the final
+	// stream_chunk and renders a RoundBadge below the assistant bubble
+	// (REQ-FE-005 / REQ-GAP-IND-001). Backward-compat: consumers that ignore
+	// the field keep working — older assistant messages render without the
+	// badge.
+	RespondingModel string `json:"responding_model,omitempty"`
 }
 
 // Message represents a single message in the session conversation history.

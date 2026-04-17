@@ -286,16 +286,26 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 
 	// Emit done sentinel if streaming was active.
 	if streamOutput {
+		// REQ-GAP-IND-001 / REQ-FE-005: stamp the final chunk with the resolved
+		// route's registry_id + adapter hint so the frontend can render a
+		// responding-model badge. Preference order for the model id: the LLM
+		// adapter's echoed resp.Model (honours mid-turn fallbacks), otherwise
+		// the authored LLMConfig.Model. Adapter is "openrouter" for the
+		// OpenRouter client which is the only driving adapter in this repo;
+		// the hint is defensive so a future direct-provider adapter can
+		// override via route metadata. Earlier chunks leave the field blank
+		// (REQ-GAP-IND-001: "Earlier chunks' values MAY be empty").
 		c.emit(&Event{
 			Type:           EventStreamChunk,
 			TransitionID:   t.ID,
 			TransitionKind: NodeKindLLM,
 			Payload: StreamChunk{
-				SessionID: c.SessionID,
-				CPNID:     c.ID,
-				CPNRole:   c.Role,
-				Content:   "",
-				Done:      true,
+				SessionID:       c.SessionID,
+				CPNID:           c.ID,
+				CPNRole:         c.Role,
+				Content:         "",
+				Done:            true,
+				RespondingModel: formatRespondingModel(resp.Model, t.LLMConfig.Model),
 			},
 		})
 	}
@@ -663,4 +673,30 @@ func inferOutputColor(requireJSON bool) ColorSet {
 		return ColorJSON
 	}
 	return ColorArtifact
+}
+
+// formatRespondingModel produces the "<registry_id> · <adapter>" label shown
+// by the frontend RoundBadge (REQ-FE-005 / REQ-GAP-IND-001). Empty input yields
+// an empty label so the frontend can branch on truthiness without introducing
+// a placeholder like "unknown · openrouter".
+//
+// Preference order for the registry id:
+//  1. The LLM adapter's echoed model — honours mid-turn fallbacks and is the
+//     real id that answered.
+//  2. The authored LLMConfig.Model — the resolved id stamped by
+//     applyUserModelPreferences; stable when the adapter did not echo a value.
+//
+// Adapter: "openrouter" is the only driving adapter at the time of this slice
+// (every Route in the registry uses ProviderAdapter="openrouter"). When direct
+// adapters land, the hint can be derived from the selected Route without
+// changing the callers of this helper.
+func formatRespondingModel(echoed, authored string) string {
+	id := strings.TrimSpace(echoed)
+	if id == "" {
+		id = strings.TrimSpace(authored)
+	}
+	if id == "" {
+		return ""
+	}
+	return id + " · openrouter"
 }
