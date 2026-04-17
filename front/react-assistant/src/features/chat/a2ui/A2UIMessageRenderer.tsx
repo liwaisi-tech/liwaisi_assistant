@@ -313,6 +313,26 @@ function FormComponent({ component, onAction }: ComponentProps) {
   );
 }
 
+// ── row ─────────────────────────────────────────────────────────────────────
+// Horizontal flex-wrap container. Fills a gap in the v0.8 primitive set for
+// cases like the model-admin surface where buttons/chips need to flow
+// horizontally and wrap to the next line on narrow screens. Children render
+// sequentially; `gap` maps to Tailwind spacing (`sm|md|lg`).
+
+function RowComponent({ component, onAction }: ComponentProps) {
+  const gap = (component.props.gap as string) ?? 'sm';
+  const wrap = component.props.wrap !== false;
+  const align = (component.props.align as string) ?? 'center';
+  const gapCls = gap === 'lg' ? 'gap-3' : gap === 'md' ? 'gap-2' : 'gap-1.5';
+  const wrapCls = wrap ? 'flex-wrap' : '';
+  const alignCls = align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : 'items-center';
+  return (
+    <div className={`flex ${wrapCls} ${alignCls} ${gapCls} my-1`}>
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
 // ── list ────────────────────────────────────────────────────────────────────
 
 function ListComponent({ component, onAction }: ComponentProps) {
@@ -1194,6 +1214,7 @@ const componentCatalog: Record<string, React.FC<ComponentProps>> = {
   progress: ProgressComponent,
   form: FormComponent,
   list: ListComponent,
+  row: RowComponent,
   divider: DividerComponent,
   alert: AlertComponent,
   badge: BadgeComponent,

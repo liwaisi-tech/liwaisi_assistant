@@ -6,6 +6,7 @@ import { ActivityBubble } from './ActivityBubble';
 import type { SessionState } from '../../types/api';
 import type { ChatMessage, HITLAction } from '../../types/chat';
 import type { CurrentActivity, RecentReceipt } from '../../hooks/useChat';
+import type { A2UIAction } from './a2ui/types';
 
 const SUGGESTION_KEYS = [
   'messageList.suggestions.explainCpn',
@@ -19,6 +20,7 @@ interface MessageListProps {
   sessionState: SessionState;
   onSuggestionClick?: (prompt: string) => void;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
+  onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
   onOpenMonitor?: () => void;
   currentActivity?: CurrentActivity | null;
   recentReceipt?: RecentReceipt | null;
@@ -30,6 +32,7 @@ export function MessageList({
   sessionState,
   onSuggestionClick,
   onHITLAction,
+  onA2UIAction,
   onOpenMonitor,
   currentActivity = null,
   recentReceipt = null,
@@ -114,6 +117,7 @@ export function MessageList({
         {messages.map((msg) => (
           <MessageBubble
             key={msg.id}
+            id={msg.id}
             role={msg.role}
             content={msg.content}
             cpnId={msg.cpnId}
@@ -126,6 +130,7 @@ export function MessageList({
             resolvedPayload={msg.resolvedPayload}
             resolvedAt={msg.resolvedAt}
             onHITLAction={onHITLAction}
+            onA2UIAction={onA2UIAction}
             onOpenMonitor={onOpenMonitor}
           />
         ))}

@@ -18,6 +18,7 @@ import { MessageInput } from '../chat/MessageInput';
 import { ChatSidebar } from '../chat/ChatSidebar';
 import { ForkDialog } from '../chat/ForkDialog';
 import { SessionResumedNotice } from '../chat/SessionResumedNotice';
+import { useModelAdminFlow } from '../chat/modelAdmin/useModelAdminFlow';
 import { FlowBrowser } from '../cpn-visualizer/FlowBrowser';
 import { FlowDetail } from '../cpn-visualizer/FlowDetail';
 import { ExecutionMonitor } from '../execution-monitor/ExecutionMonitor';
@@ -72,10 +73,19 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     [monitorMgr.sseCallbacks, chatList.recoverFromGhost],
   );
 
-  const { messages, sessionState, sessionId, isConnected, sendMessage, resolveHITL, error } = useChat(
-    chatList.activeSessionId,
-    chatOptions,
-  );
+  const {
+    messages,
+    sessionState,
+    sessionId,
+    isConnected,
+    sendMessage,
+    resolveHITL,
+    error,
+    injectLocalMessage,
+    updateMessageContent,
+  } = useChat(chatList.activeSessionId, chatOptions);
+
+  const modelAdmin = useModelAdminFlow({ injectLocalMessage, updateMessageContent });
 
   // ── Coordination effects (bridge chat <-> monitor) ──────────────────────
 
@@ -118,6 +128,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   // ── Send message handler ────────────────────────────────────────────────
   const handleSendMessage = useCallback(async (content: string) => {
+    if (modelAdmin.tryHandleSlashCommand(content)) return;
     if (sessionState === 'completed') {
       const newId = await chatList.createChat();
       if (newId) {
@@ -126,7 +137,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
     } else {
       sendMessage(content);
     }
-  }, [sessionState, chatList.createChat, sendMessage]);
+  }, [modelAdmin, sessionState, chatList.createChat, sendMessage]);
 
   const handleOpenMonitor = useCallback(() => {
     setActiveApp('monitor');
@@ -425,6 +436,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
                   sessionState={sessionState}
                   onSuggestionClick={handleSendMessage}
                   onHITLAction={resolveHITL}
+                  onA2UIAction={modelAdmin.tryHandleA2UIAction}
                   onOpenMonitor={handleOpenMonitor}
                 />
                 <div className={isMobile ? 'pb-16' : ''}>

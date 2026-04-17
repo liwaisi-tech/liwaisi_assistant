@@ -30,6 +30,7 @@ function buildHITLContent(prompt: string, transitionId: string): string {
 
 describe('MessageBubble', () => {
   const baseProps = {
+    id: 'msg-test-1',
     timestamp: new Date('2025-01-15T10:30:00Z'),
   };
 

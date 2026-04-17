@@ -6,6 +6,7 @@ import { A2UI_MARKER } from './a2ui/constants.ts';
 import type { HITLAction } from '../../types/chat';
 
 interface MessageBubbleProps {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
   cpnId?: string;
@@ -22,6 +23,11 @@ interface MessageBubbleProps {
   resolvedPayload?: string;
   resolvedAt?: Date;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
+  // Catch-all for non-HITL A2UI actions (e.g. the `model:*` action family
+  // emitted by the in-chat model-admin surface). Called only when the
+  // HITL branches don't match; the messageId lets the handler update the
+  // same surface in place.
+  onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
   onOpenMonitor?: () => void;
 }
 
@@ -53,9 +59,9 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 }
 
 export const MessageBubble = memo(function MessageBubble({
-  role, content, cpnId, cpnRole, timestamp, isStreaming,
+  id, role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
-  onHITLAction, onOpenMonitor,
+  onHITLAction, onA2UIAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
@@ -88,9 +94,14 @@ export const MessageBubble = memo(function MessageBubble({
       if (action.type.startsWith('hitl:') && action.componentId) {
         const hitlAction = action.type.replace('hitl:', '') as HITLAction;
         onHITLAction?.(action.componentId, hitlAction);
+        return;
       }
+      // Fallback for non-HITL A2UI actions (e.g. `model:*`). If no handler
+      // claims the action, it is silently dropped — consistent with the
+      // existing HITL branch's no-op when hitlTransitionId is missing.
+      onA2UIAction?.(action, id);
     },
-    [onHITLAction, hitlTransitionId],
+    [onHITLAction, hitlTransitionId, onA2UIAction, id],
   );
 
   const handleReviseSubmit = useCallback(() => {

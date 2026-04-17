@@ -60,6 +60,8 @@ export type ChatAction =
   | { type: 'ACTIVITY_END'; transitionId: string; sessionId: string; durationMs?: number; costUsd?: number }
   | { type: 'ACTIVITY_RECEIPT_SHOW'; durationMs: number; costUsd: number }
   | { type: 'ACTIVITY_RECEIPT_DISMISS' }
+  | { type: 'INJECT_LOCAL_MESSAGE'; id: string; content: string; cpnRole?: string }
+  | { type: 'UPDATE_MESSAGE_CONTENT'; id: string; content: string }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -468,6 +470,30 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'ACTIVITY_RECEIPT_DISMISS':
       return { ...state, recentReceipt: null };
 
+    case 'INJECT_LOCAL_MESSAGE':
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: action.id,
+            role: 'assistant',
+            content: action.content,
+            isStreaming: false,
+            cpnRole: action.cpnRole,
+            timestamp: new Date(),
+          },
+        ],
+      };
+
+    case 'UPDATE_MESSAGE_CONTENT':
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.id ? { ...m, content: action.content } : m,
+        ),
+      };
+
     case 'RESET':
       return { ...initialState };
 
@@ -512,6 +538,12 @@ export interface UseChatReturn {
   currentActivity: CurrentActivity | null;
   recentReceipt: RecentReceipt | null;
   dismissReceipt: () => void;
+  // Local message injection — used by the in-chat A2UI model-admin
+  // fragment to drop a synthetic assistant bubble without a backend
+  // round-trip. The bubble's content carries a `$$a2ui:` payload which
+  // the existing renderer picks up.
+  injectLocalMessage: (id: string, content: string, cpnRole?: string) => void;
+  updateMessageContent: (id: string, content: string) => void;
 }
 
 export function useChat(sessionId: string | null, options?: UseChatOptions): UseChatReturn {
@@ -747,6 +779,20 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [sessionId]
   );
 
+  const injectLocalMessage = useCallback(
+    (id: string, content: string, cpnRole?: string) => {
+      dispatch({ type: 'INJECT_LOCAL_MESSAGE', id, content, cpnRole });
+    },
+    [],
+  );
+
+  const updateMessageContent = useCallback(
+    (id: string, content: string) => {
+      dispatch({ type: 'UPDATE_MESSAGE_CONTENT', id, content });
+    },
+    [],
+  );
+
   return {
     messages: state.messages,
     sessionState: state.sessionState,
@@ -759,5 +805,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     currentActivity: state.currentActivity,
     recentReceipt: state.recentReceipt,
     dismissReceipt,
+    injectLocalMessage,
+    updateMessageContent,
   };
 }

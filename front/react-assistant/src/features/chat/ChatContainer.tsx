@@ -5,6 +5,7 @@ import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { ConfirmClearDialog } from './ConfirmClearDialog';
 import { SessionResumedNotice } from './SessionResumedNotice';
+import { useModelAdminFlow } from './modelAdmin/useModelAdminFlow';
 
 interface ChatContainerProps {
   sessionId: string | null;
@@ -40,8 +41,23 @@ export function ChatContainer({
     currentActivity,
     recentReceipt,
     dismissReceipt,
+    injectLocalMessage,
+    updateMessageContent,
   } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
+
+  const modelAdmin = useModelAdminFlow({ injectLocalMessage, updateMessageContent });
+
+  // Intercept model-admin slash commands before hitting the backend. A
+  // recognized command is handled entirely client-side — we never call
+  // sendMessage, so no user bubble is emitted for the `/models` token.
+  const handleSend = useCallback(
+    (content: string) => {
+      if (modelAdmin.tryHandleSlashCommand(content)) return;
+      void sendMessage(content);
+    },
+    [modelAdmin, sendMessage],
+  );
 
   const canClear = sessionState !== 'running' && sessionState !== 'waiting';
 
@@ -72,14 +88,15 @@ export function ChatContainer({
       <MessageList
         messages={messages}
         sessionState={sessionState}
-        onSuggestionClick={sendMessage}
+        onSuggestionClick={handleSend}
         onHITLAction={resolveHITL}
+        onA2UIAction={modelAdmin.tryHandleA2UIAction}
         currentActivity={currentActivity}
         recentReceipt={recentReceipt}
         onReceiptDismiss={dismissReceipt}
       />
       <MessageInput
-        onSend={sendMessage}
+        onSend={handleSend}
         disabled={sessionState === 'running' || sessionState === 'waiting'}
         sessionState={sessionState}
         error={error}
