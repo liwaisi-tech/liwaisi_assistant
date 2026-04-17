@@ -152,6 +152,10 @@ func main() {
 		serviceOpts = append(serviceOpts,
 			app.WithTokenLedger(&tokenLedgerAdapter{ledger: llmClient.TokenLedger}),
 			app.WithToolRegistry(toolReg),
+			// REQ-GATE-001: validate every resolved model against the DB-backed
+			// registry at session-creation time. Falls back to product default
+			// with a WARN log when the gate fails (REQ-OBS-004).
+			app.WithModelRegistry(store.ModelRegistry()),
 		)
 	}
 

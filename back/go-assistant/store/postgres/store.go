@@ -35,6 +35,7 @@ type Store struct {
 	users         persist.UserRepository
 	personalities persist.PersonalityRepository
 	waitlist      persist.WaitlistRepository
+	modelRegistry *ModelRegistryRepository
 }
 
 // NewStore creates all persistence backends, runs migrations, and returns the facade.
@@ -80,6 +81,7 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 		users:         NewUserRepository(pool),
 		personalities: NewPersonalityStore(pool),
 		waitlist:      NewWaitlistRepository(pool),
+		modelRegistry: NewModelRegistryRepository(pool),
 	}
 
 	return s, nil
@@ -152,6 +154,9 @@ func (s *Store) Personalities() persist.PersonalityRepository { return s.persona
 
 // Waitlist returns the waitlist repository (Postgres).
 func (s *Store) Waitlist() persist.WaitlistRepository { return s.waitlist }
+
+// ModelRegistry returns the DB-backed LLM model registry (Postgres).
+func (s *Store) ModelRegistry() *ModelRegistryRepository { return s.modelRegistry }
 
 // Pool returns the underlying pgx pool for creating additional repositories.
 func (s *Store) Pool() pgxPool { return s.pool }

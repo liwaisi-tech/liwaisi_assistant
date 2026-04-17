@@ -58,6 +58,7 @@ type SessionService struct {
 	persist         *PersistDeps
 	tokenLedger     TokenLedgerReader
 	toolRegistry    *tools.Registry
+	modelRegistry   cpn.ModelRegistry // optional; enables REQ-GATE-001 runtime validation
 
 	// sf serializes concurrent rehydration attempts for the same session id,
 	// so N misses on a restart trigger exactly one persistence round-trip
@@ -101,6 +102,15 @@ func WithTokenLedger(reader TokenLedgerReader) SessionServiceOption {
 // WithToolRegistry sets the tool registry for personality injection and tool resolution.
 func WithToolRegistry(reg *tools.Registry) SessionServiceOption {
 	return func(s *SessionService) { s.toolRegistry = reg }
+}
+
+// WithModelRegistry wires the DB-backed model registry for runtime validation
+// of every resolved model ID. When set, each resolved candidate (from the
+// per-role override → preferred → role-default → product-default cascade) is
+// checked against REQ-GATE-001 (lifecycle=active AND license approved) and
+// falls back to the product default with a WARN log if the gate fails.
+func WithModelRegistry(reg cpn.ModelRegistry) SessionServiceOption {
+	return func(s *SessionService) { s.modelRegistry = reg }
 }
 
 // NewSessionService creates a SessionService with the given dependencies.
@@ -907,8 +917,107 @@ func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cp
 		if t.Kind != cpn.NodeKindLLM || t.LLMConfig == nil {
 			continue
 		}
-		t.LLMConfig.Model = resolveModelForUser(rec, t.LLMConfig.Role)
+		t.LLMConfig.Model = s.resolveModelWithGate(ctx, rec, t.LLMConfig.Role)
 	}
+}
+
+// resolveModelWithGate runs the REQ-CFG-005 precedence cascade AND, if a
+// ModelRegistry is wired, validates each candidate against REQ-GATE-001.
+//
+// Cascade (highest wins):
+//  1. UserRecord.ModelOverrides[role]          (per-role override)
+//  2. UserRecord.PreferredModel                (global user preference)
+//  3. ModelRegistry role default (when role != "" and registry is wired)
+//  4. ModelRegistry product default / openrouter.PRODUCT_DEFAULT_MODEL
+//
+// When the registry is wired, steps 1-3 each get validated with GetInvokable
+// and fall through on ErrModelNotInvokable / ErrModelNotFound. A WARN log is
+// emitted for each fallback so REQ-OBS-004 has a trail to read.
+//
+// When the registry is NOT wired (tests, legacy bootstrap), behavior exactly
+// matches the pre-registry resolveModelForUser helper.
+func (s *SessionService) resolveModelWithGate(ctx context.Context, rec *persist.UserRecord, role string) string {
+	if s.modelRegistry == nil {
+		// Legacy path. Parity with pre-registry behavior is what the existing
+		// session_service_model_prefs_test.go asserts — don't touch.
+		return resolveModelForUser(rec, role)
+	}
+
+	// Step 1 — per-role override
+	if rec != nil && role != "" {
+		if m, ok := rec.ModelOverrides[role]; ok && m != "" {
+			if s.validateInvokable(ctx, m, "user override", role) {
+				return m
+			}
+		}
+	}
+
+	// Step 2 — global preferred
+	if rec != nil && rec.PreferredModel != "" {
+		if s.validateInvokable(ctx, rec.PreferredModel, "user preferred", role) {
+			return rec.PreferredModel
+		}
+	}
+
+	// Step 3 — role default from registry
+	if role != "" {
+		if roleID, err := s.modelRegistry.GetRoleDefault(ctx, role); err == nil && roleID != "" {
+			if s.validateInvokable(ctx, roleID, "role default", role) {
+				return roleID
+			}
+		}
+	}
+
+	// Step 4 — product default
+	def, err := s.modelRegistry.GetProductDefault(ctx)
+	if err != nil {
+		// Infrastructure failure — keep the session running on the hardcoded
+		// constant. Frontier case; the schema guarantees the row exists.
+		s.logger.Error("model registry product default unreachable; using compile-time constant",
+			"role", role,
+			"err", err,
+			"fallback_model", openrouter.PRODUCT_DEFAULT_MODEL,
+		)
+		return openrouter.PRODUCT_DEFAULT_MODEL
+	}
+	return def.RegistryID
+}
+
+// validateInvokable returns true when the candidate passes REQ-GATE-001.
+// A false return means the caller should try the next level of the cascade;
+// a WARN has already been logged.
+func (s *SessionService) validateInvokable(ctx context.Context, candidate, source, role string) bool {
+	if s.modelRegistry == nil {
+		return true
+	}
+	_, err := s.modelRegistry.GetInvokable(ctx, candidate)
+	if err == nil {
+		return true
+	}
+	var reason string
+	switch {
+	case errors.Is(err, cpn.ErrModelNotInvokable):
+		reason = "lifecycle or license gate failed"
+	case errors.Is(err, cpn.ErrModelNotFound):
+		reason = "model not registered"
+	default:
+		// Infrastructure failure — don't silently advance. Prefer the registered
+		// product default over a possibly-invokable-but-unverified candidate.
+		s.logger.Error("model registry GetInvokable failed; falling back",
+			"source", source,
+			"role", role,
+			"candidate", candidate,
+			"err", err,
+		)
+		return false
+	}
+	s.logger.Warn("model not invokable; falling back",
+		"source", source,
+		"role", role,
+		"candidate", candidate,
+		"reason", reason,
+	)
+	return false
 }
 
 // resolveModelForUser applies the three-level precedence cascade. Exported
