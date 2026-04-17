@@ -91,7 +91,10 @@ function mapBackendStateToReducerState(s: BackendSessionState): SessionState {
 // also restores hitlResolved so the existing "You approved" badge and the
 // hitl:* button-lock pattern reappear after rehydration. Iterating once
 // over the array keeps this O(n).
-export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
+export function enrichWithResolutions(
+  messages: ChatMessage[],
+  sessionState?: BackendSessionState,
+): ChatMessage[] {
   const resolutions = new Map<string, { payload: string; at: Date; action: HITLAction | null }>();
   for (const m of messages) {
     if (m.role === 'user' && m.parentMessageId) {
@@ -102,23 +105,52 @@ export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
       });
     }
   }
-  if (resolutions.size === 0) return messages;
+
+  // FIX-HITL-PERSIST: Detect A2UI surfaces that have no paired response row
+  // AND the session is not in an active HITL-waiting state. These are "stale"
+  // surfaces from a previous CPN run that was interrupted (user logged out
+  // while HITL was pending). Mark them as expired so the renderer disables
+  // the buttons instead of showing an interactive form that can't be resolved.
+  const isHITLActive = sessionState === 'hitl_pending';
+
   const result: ChatMessage[] = [];
   for (const m of messages) {
     // Drop HITL response rows — their content is surfaced via the parent
     // A2UI row's resolvedPayload, not as a standalone user bubble.
     if (m.role === 'user' && m.parentMessageId) continue;
+
+    // Check if this is a resolved A2UI surface.
     const hit = resolutions.get(m.id);
-    if (!hit) {
-      result.push(m);
+    if (hit) {
+      result.push({
+        ...m,
+        resolvedPayload: hit.payload,
+        resolvedAt: hit.at,
+        ...(hit.action ? { hitlResolved: hit.action } : {}),
+      });
       continue;
     }
-    result.push({
-      ...m,
-      resolvedPayload: hit.payload,
-      resolvedAt: hit.at,
-      ...(hit.action ? { hitlResolved: hit.action } : {}),
-    });
+
+    // Check if this is an unresolved A2UI surface that should be expired.
+    if (
+      !isHITLActive &&
+      m.role === 'assistant' &&
+      m.content.trimStart().startsWith(A2UI_MARKER) &&
+      !resolutions.has(m.id)
+    ) {
+      // Set resolvedPayload to a sentinel so the renderer locks the surface.
+      // Use a JSON envelope with action "expired" so buttons are dimmed
+      // and the questionnaire shows a stale state. No hitlResolved badge
+      // since no human action was taken.
+      result.push({
+        ...m,
+        resolvedPayload: '{"action":"expired"}',
+        resolvedAt: m.timestamp,
+      });
+      continue;
+    }
+
+    result.push(m);
   }
   return result;
 }
@@ -515,7 +547,8 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
         // (linked via parent_message_id) so the questionnaire can render
         // locked with the answers the user submitted
         // (spec-process-bugfix-a2ui-hitl-response-persistence.md).
-        const enriched = enrichWithResolutions(messages);
+        const backendState = narrowToBackendState(session.state);
+        const enriched = enrichWithResolutions(messages, backendState);
         dispatch({
           type: 'SESSION_LOADED',
           sessionId: sessionId!,
@@ -525,7 +558,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           // BackendSessionState. Narrow defensively at the seam: any legacy
           // SessionState value (waiting/completed/failed) maps to 'idle' from
           // the reducer's perspective.
-          state: narrowToBackendState(session.state),
+          state: backendState,
         });
       } catch (err) {
         if (cancelled) return;

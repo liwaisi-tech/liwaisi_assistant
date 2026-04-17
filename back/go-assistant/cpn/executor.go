@@ -242,6 +242,24 @@ func (c *CPN) Run(ctx context.Context) error {
 			return fr.err
 		}
 
+		// FIX-HITL-PERSIST: Flush accumulated history after each batch of
+		// transition firings. This covers LLM streaming output, tool results,
+		// subnet summaries — any message appended to c.History during the
+		// firings that just completed. The callback is invoked only when
+		// History actually grew to avoid no-op overhead.
+		if c.OnHistoryChanged != nil {
+			c.mu.RLock()
+			hLen := len(c.History)
+			c.mu.RUnlock()
+			if hLen > 0 {
+				c.mu.RLock()
+				snap := make([]*Message, hLen)
+				copy(snap, c.History)
+				c.mu.RUnlock()
+				c.OnHistoryChanged(snap)
+			}
+		}
+
 		// REQ-012 (Block 16): Evaluate mode transition rules after each firing round.
 		// checkModeSwitch runs after wg.Wait() + error processing, ensuring all
 		// firings are complete and token deposits are visible.

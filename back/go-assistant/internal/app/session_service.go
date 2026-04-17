@@ -276,6 +276,82 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		}
 	}
 
+	// FIX-HITL-PERSIST: Wire flush callbacks so that messages accumulated
+	// during a CPN run are persisted immediately — before blocking on
+	// human input (HITL) and after each batch of transitions completes.
+	// Without this, a user who disconnects while HITL is pending or during
+	// a long-running execution loses all LLM responses, A2UI surfaces,
+	// and tool results from the current run (persistAfterRun only fires
+	// after Run returns).
+	//
+	// The callback tracks which messages have already been flushed via
+	// lastFlushed to avoid duplicate inserts on successive callbacks
+	// within the same run (e.g. t-classify → t-direct → t-clarify → t-review).
+	var lastFlushed int
+	flushHistory := func(historySnapshot []*cpn.Message, source string) {
+		if s.persist == nil || s.persist.Sessions == nil {
+			return
+		}
+		// Only persist messages newer than what we've already flushed.
+		startIdx := historyLen
+		if lastFlushed > startIdx {
+			startIdx = lastFlushed
+		}
+		if startIdx >= len(historySnapshot) {
+			return
+		}
+		newMsgs := historySnapshot[startIdx:]
+
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+
+		flushed := 0
+		for _, m := range newMsgs {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+				continue
+			}
+			rec := persist.MessageToRecord(sessionID, m)
+			if err := s.persist.Sessions.AppendMessage(flushCtx, sessionID, rec); err != nil {
+				s.logger.Warn("mid-run flush persist message", "session_id", sessionID, "msg_id", m.ID, "source", source, "error", err)
+			} else {
+				flushed++
+			}
+		}
+		lastFlushed = len(historySnapshot)
+
+		// Also sync the flushed messages into session.Messages so
+		// rehydration from the in-memory session is consistent.
+		for _, m := range newMsgs {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+				continue
+			}
+			session.AppendMessage(m)
+		}
+
+		if flushed > 0 {
+			s.logger.Info("mid-run flush persisted messages",
+				"session_id", sessionID,
+				"source", source,
+				"flushed", flushed,
+				"history_len", len(historySnapshot),
+			)
+		}
+
+		// Touch activity timestamp.
+		touchCtx, touchCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer touchCancel()
+		_ = s.persist.Sessions.Touch(touchCtx, sessionID)
+	}
+
+	// Called before HITL transitions block on human input.
+	session.Root.OnHITLWaiting = func(historySnapshot []*cpn.Message) {
+		flushHistory(historySnapshot, "hitl-waiting")
+	}
+	// Called after each batch of transition firings completes in the executor.
+	session.Root.OnHistoryChanged = func(historySnapshot []*cpn.Message) {
+		flushHistory(historySnapshot, "executor-batch")
+	}
+
 	bgCtx, cancel := context.WithCancel(context.Background())
 	st.mu.Lock()
 	st.cancel = cancel
@@ -295,9 +371,15 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		// pointing at the surface — both must propagate so persistence and
 		// rehydration can pair them (REQ-001/002/006). Without this sync,
 		// those responses are lost when the CPN fails.
-		if len(session.Root.History) > historyLen {
+		// FIX-HITL-PERSIST: Start syncing from lastFlushed when the HITL
+		// callback already promoted some entries to session.Messages + DB.
+		syncStart := historyLen
+		if lastFlushed > syncStart {
+			syncStart = lastFlushed
+		}
+		if len(session.Root.History) > syncStart {
 			var newRows, assistantCount, userCount int
-			for _, m := range session.Root.History[historyLen:] {
+			for _, m := range session.Root.History[syncStart:] {
 				// Assistant rows are always CPN-originated and always sync.
 				// User rows only sync when they are HITL responses (identified
 				// by ParentMessageID linking to an earlier A2UI surface). All

@@ -82,6 +82,21 @@ type CPN struct {
 	// was already delivered via streaming (avoiding duplicate delivery).
 	StreamedOutput bool
 
+	// OnHITLWaiting, if non-nil, is called just before a HITL transition
+	// blocks on human input. It receives a snapshot of c.History at that
+	// moment so the caller can flush accumulated messages to persistence.
+	// This closes the gap where messages streamed during a CPN run are
+	// lost if the user disconnects while HITL is pending (the normal
+	// persistAfterRun path only fires after Run returns).
+	OnHITLWaiting func(historySnapshot []*Message)
+
+	// OnHistoryChanged, if non-nil, is called by the executor after each
+	// batch of transition firings completes (post-wg.Wait). It receives a
+	// snapshot of c.History so the caller can flush newly accumulated
+	// messages to persistence. This covers ALL transition types — LLM
+	// streaming, tool calls, subnet completion — not just HITL.
+	OnHistoryChanged func(historySnapshot []*Message)
+
 	// SeedFunc, if non-nil, deposits the topology's initial marking —
 	// tokens that must be present for the net's guards/arcs to be well-
 	// formed even on a fresh run (e.g. a counter place whose absence would

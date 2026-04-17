@@ -112,6 +112,13 @@ func (r *MemorySessionRepository) AppendMessage(ctx context.Context, sessionID s
 	if s.State == SessionClosed || s.State == SessionExpired {
 		return ErrSessionClosed
 	}
+	// Idempotent: skip if a message with this ID already exists (mirrors
+	// the ON CONFLICT DO NOTHING behavior of the PostgreSQL store).
+	for _, existing := range s.Messages {
+		if existing.ID == msg.ID {
+			return nil
+		}
+	}
 	mc := *msg
 	s.Messages = append(s.Messages, &mc)
 	return nil

@@ -120,7 +120,8 @@ func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string,
 	tag, err := r.pool.Exec(ctx,
 		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, parent_message_id)
 		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
-		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')`,
+		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')
+		 ON CONFLICT (id) DO NOTHING`,
 		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp, parentID,
 	)
 	if err != nil {

@@ -451,6 +451,16 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 
 				c.setState(StateWaiting)
 
+				// FIX-HITL-PERSIST: Flush history before blocking on
+				// tool-HITL approval (same pattern as fireHITL).
+				if c.OnHITLWaiting != nil {
+					c.mu.RLock()
+					snap := make([]*Message, len(c.History))
+					copy(snap, c.History)
+					c.mu.RUnlock()
+					c.OnHITLWaiting(snap)
+				}
+
 				if t.HITLConfig != nil && t.HITLConfig.Channel != nil {
 					select {
 					case <-ctx.Done():
