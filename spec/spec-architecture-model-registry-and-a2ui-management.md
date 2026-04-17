@@ -109,19 +109,19 @@ Backend, frontend, and UX engineers implementing the feature. The document is wr
 - **REQ-SEED-001**: Migration `020_model_registry.up.sql` MUST insert one row per entry of the current hardcoded `AvailableModels` slice in `back/go-assistant/infra/openrouter/openrouter.go:43-54`. Pricing is copied from the `ModelCosts` map (`openrouter.go:81-90`) converted to per-token NUMERIC. Modalities / capabilities / tokenizer / supported_parameters / license fields are populated from a hand-authored `scripts/seed-registry/seed_data.json` committed to the repo. License is **hand-curated per row** per REQ-SEED-006 (not a blanket `unreviewed`) so the upgrade does not silently break a running chat session with models that are known-safe. The `is_product_default` boolean does not appear on the table — see REQ-REG-008; the singleton pointer is set separately in REQ-SEED-002.
 - **REQ-SEED-006**: The 9 currently-hardcoded models MUST be seeded with the following curated licenses and lifecycle states. `huggingface_fetched_at` is NULL at seed time (curation is manual; the weekly refresh job from REQ-LIC-004 will enrich HF-backed rows on its first run). Any model in this list whose license is flagged as `unreviewed` MUST seed with `lifecycle = 'registered'` (not `active`) and therefore is NOT invokable until an admin reviews via `POST /api/v1/admin/models/:id/license/review`.
 
-| registry_id | license.kind | license.spdx_id / name | license.status | lifecycle | reviewed_by |
+| registry_id | license.kind | license.name / slug | license.status | lifecycle | reviewed_by |
 |---|---|---|---|---|---|
-| `google/gemma-4-31b-it` | community | `apache-2.0` | approved-commercial | active | `seed-migration-014` |
-| `anthropic/claude-opus-4-6` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-014` |
-| `anthropic/claude-sonnet-4-6` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-014` |
-| `anthropic/claude-haiku-4-5` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-014` |
-| `openai/gpt-4o-mini` | proprietary-api | OpenAI Business Terms | approved-commercial | active | `seed-migration-014` |
-| `openai/gpt-5-mini` | proprietary-api | OpenAI Business Terms | approved-commercial | active | `seed-migration-014` |
-| `google/gemini-2.5-flash` | proprietary-api | Google Generative AI Additional Terms | approved-commercial | active | `seed-migration-014` |
-| `meta-llama/llama-3.3-70b-instruct` | community | `llama3.3` | unreviewed | registered | NULL |
-| `qwen/qwen-2.5-72b-instruct` | community | `qwen` | unreviewed | registered | NULL |
+| `anthropic/claude-opus-4-6` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-020` |
+| `anthropic/claude-sonnet-4-6` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-020` |
+| `anthropic/claude-haiku-4-5-20251001` | proprietary-api | Anthropic Commercial Terms | approved-commercial | active | `seed-migration-020` |
+| `google/gemma-4-31b-it` | community | Gemma Terms of Use (`gemma`) | approved-commercial | active | `seed-migration-020` |
+| `google/gemma-4-26b-a4b-it` | community | Gemma Terms of Use (`gemma`) | approved-commercial | active | `seed-migration-020` |
+| `google/gemini-3.1-flash-lite-preview` | proprietary-api | Google Generative AI Additional Terms | approved-commercial | active | `seed-migration-020` |
+| `google/gemini-2.5-flash-lite` | proprietary-api | Google Generative AI Additional Terms | approved-commercial | active | `seed-migration-020` |
+| `google/gemini-2.0-flash-001` | proprietary-api | Google Generative AI Additional Terms | approved-commercial | active | `seed-migration-020` |
+| `z-ai/glm-5.1` | community | GLM License | unreviewed | registered | NULL |
 
-Rationale: the four Anthropic/OpenAI/Google proprietary rows use well-known commercial API terms that the product already relies upon (parent spec COM-001). Gemma has a permissive community license that has been reviewed and approved as the product default. Llama-3.3 and Qwen ship `unreviewed` because both carry provider-specific community terms (Llama 3.3 Community License, Qwen License) that include acceptable-use clauses and field-of-use restrictions that require a human reviewer sign-off before enabling. An admin MUST approve these before they can be invoked; emergency rollback path is `license.status = 'blocked'` which is rejected by REQ-GATE-001 even for models otherwise `active`.
+This table reflects the **actual** `AvailableModels` list in `back/go-assistant/infra/openrouter/openrouter.go:52-65`. Rationale: the Anthropic and Google closed-API rows use well-known commercial API terms that the product already relies upon (parent spec COM-001). The two Gemma rows ship under the Gemma Terms of Use, which have been reviewed and cleared for commercial use. The GLM row from Z.ai ships `unreviewed` because the GLM license carries provider-specific field-of-use clauses that require a human reviewer sign-off before enabling. An admin MUST approve it before it can be invoked; emergency rollback path is `license.status = 'blocked'` which is rejected by REQ-GATE-001 even for models otherwise `active`.
 
 Emergency rollback: any admin can pull a model by `PATCH /api/v1/admin/models/:id` with `{"license":{"status":"blocked"}}`. The next session-resolution call falls back to the product default and emits the REQ-OBS-004 WARN.
 - **REQ-SEED-002**: The seed MUST promote `registry_id = 'google/gemma-4-31b-it'` to `lifecycle = 'active'` and `license.status = 'approved-commercial'` (per parent spec `spec-architecture-model-selection-centralization.md:COM-001`). The seed MUST then `INSERT INTO registry_config (id=1, product_default_model_id=<gemma.id>)` to establish the singleton default. This Gemma row is the only one that enters `active` at seed time unless REQ-SEED-006 curated licenses are applied; all other non-curated rows remain in `registered`.
