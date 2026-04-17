@@ -57,12 +57,14 @@ func TestMigration_020_ModelRegistry(t *testing.T) {
 	})
 
 	t.Run("AC_REG_001_seed_counts", func(t *testing.T) {
+		// 9 rows from migration 020 + 9 rows from migration 021 = 18.
+		const wantModels = 18
 		var modelCount int
 		if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM models").Scan(&modelCount); err != nil {
 			t.Fatalf("count models: %v", err)
 		}
-		if modelCount != 9 {
-			t.Fatalf("AC-REG-001: expected 9 seed models, got %d", modelCount)
+		if modelCount != wantModels {
+			t.Fatalf("AC-REG-001: expected %d seed models, got %d", wantModels, modelCount)
 		}
 
 		var cfgCount int
@@ -129,32 +131,42 @@ func TestMigration_020_ModelRegistry(t *testing.T) {
 			t.Fatalf("AC-REG-003: expected 6 role defaults, got %d", count)
 		}
 
+		// Migration 022 repoints each role at its cost/effectiveness-optimal
+		// registry_id. 020 seeded all six to gemma; this assertion reflects
+		// the full chain.
+		wantRoles := map[string]string{
+			"classifier":   "google/gemini-2.5-flash-lite",
+			"structured":   "google/gemini-2.5-flash",
+			"reasoning":    "google/gemini-2.5-pro",
+			"long-context": "google/gemini-2.5-flash",
+			"summarize":    "google/gemini-2.5-flash-lite",
+			"thinking":     "anthropic/claude-opus-4-7",
+		}
+
 		rows, err := pool.Query(ctx, "SELECT role, registry_id FROM model_role_defaults ORDER BY role")
 		if err != nil {
 			t.Fatalf("query role defaults: %v", err)
 		}
 		defer rows.Close()
 
-		wantRoles := map[string]bool{
-			"classifier": false, "structured": false, "reasoning": false,
-			"long-context": false, "summarize": false, "thinking": false,
-		}
+		seen := map[string]bool{}
 		for rows.Next() {
 			var role, registryID string
 			if err := rows.Scan(&role, &registryID); err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			if _, ok := wantRoles[role]; !ok {
+			want, ok := wantRoles[role]
+			if !ok {
 				t.Fatalf("unexpected role %q", role)
 			}
-			wantRoles[role] = true
-			if registryID != "google/gemma-4-31b-it" {
-				t.Fatalf("AC-REG-003: role %q points to %q, want google/gemma-4-31b-it", role, registryID)
+			seen[role] = true
+			if registryID != want {
+				t.Errorf("role %q points to %q, want %q", role, registryID, want)
 			}
 		}
-		for r, saw := range wantRoles {
-			if !saw {
-				t.Fatalf("AC-REG-003: role %q missing from seed", r)
+		for r := range wantRoles {
+			if !seen[r] {
+				t.Errorf("role %q missing", r)
 			}
 		}
 	})
@@ -172,7 +184,8 @@ func TestMigration_020_ModelRegistry(t *testing.T) {
 			{"anthropic/claude-haiku-4-5-20251001", "approved-commercial", "active"},
 			{"google/gemma-4-31b-it", "approved-commercial", "active"},
 			{"google/gemma-4-26b-a4b-it", "approved-commercial", "active"},
-			{"google/gemini-3.1-flash-lite-preview", "approved-commercial", "active"},
+			// Migration 021 deprecates this row in favour of google/gemini-3-flash-preview.
+			{"google/gemini-3.1-flash-lite-preview", "approved-commercial", "deprecated"},
 			{"google/gemini-2.5-flash-lite", "approved-commercial", "active"},
 			{"google/gemini-2.0-flash-001", "approved-commercial", "active"},
 			{"z-ai/glm-5.1", "unreviewed", "registered"},
@@ -196,7 +209,8 @@ func TestMigration_020_ModelRegistry(t *testing.T) {
 	})
 
 	t.Run("Idempotent", func(t *testing.T) {
-		// Running the migration a second time must not error or duplicate rows.
+		// Running the migrations a second time must not error or duplicate rows.
+		const wantModels = 18
 		if err := RunMigrations(dsn, migrationsPath()); err != nil {
 			t.Fatalf("second migration run: %v", err)
 		}
@@ -204,8 +218,8 @@ func TestMigration_020_ModelRegistry(t *testing.T) {
 		if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM models").Scan(&count); err != nil {
 			t.Fatalf("count after second run: %v", err)
 		}
-		if count != 9 {
-			t.Fatalf("idempotent seed broken: got %d models after second run, want 9", count)
+		if count != wantModels {
+			t.Fatalf("idempotent seed broken: got %d models after second run, want %d", count, wantModels)
 		}
 	})
 }

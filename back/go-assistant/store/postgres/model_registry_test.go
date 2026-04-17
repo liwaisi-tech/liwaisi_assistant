@@ -123,9 +123,13 @@ func TestModelRegistryRepository_ListInvokable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListInvokable: %v", err)
 	}
-	// Per seed: 8 are active+approved; glm-5.1 is registered+unreviewed.
-	if len(rows) != 8 {
-		t.Fatalf("ListInvokable returned %d rows, want 8", len(rows))
+	// Per seeds 020 + 021: 18 total rows.
+	//   Non-invokable: z-ai/glm-5.1 (unreviewed license) and
+	//                  google/gemini-3.1-flash-lite-preview (deprecated by 021).
+	//   Invokable:     18 - 2 = 16.
+	const wantInvokable = 16
+	if len(rows) != wantInvokable {
+		t.Fatalf("ListInvokable returned %d rows, want %d", len(rows), wantInvokable)
 	}
 	for _, e := range rows {
 		if !e.Invokable() {
@@ -137,13 +141,27 @@ func TestModelRegistryRepository_ListInvokable(t *testing.T) {
 func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 	r, ctx := setupRegistryRepo(t)
 
-	t.Run("All_nine", func(t *testing.T) {
+	// Seeds 020 + 021 land 18 rows.
+	//   6 anthropic (opus-4-6, sonnet-4-6, haiku-4-5-20251001, opus-4-7, sonnet-4-5, haiku-4-5)
+	//   4 gemma     (4-31b-it, 4-26b-a4b-it, 3-27b-it, 3-12b-it)
+	//   7 gemini    (3.1-flash-lite-preview [deprecated], 2.5-flash-lite, 2.0-flash-001,
+	//                3-pro-preview, 3-flash-preview, 2.5-pro, 2.5-flash)
+	//   1 z-ai      (glm-5.1, unreviewed)
+	// Non-invokable: z-ai/glm-5.1 + google/gemini-3.1-flash-lite-preview = 2.
+	const (
+		wantTotal        = 18
+		wantAnthropic    = 6
+		wantGeminiSearch = 7
+		wantInvokable    = 16
+	)
+
+	t.Run("All_rows", func(t *testing.T) {
 		rows, err := r.ListAll(ctx, cpn.ModelListFilter{})
 		if err != nil {
 			t.Fatalf("ListAll: %v", err)
 		}
-		if len(rows) != 9 {
-			t.Fatalf("expected 9 seeded rows, got %d", len(rows))
+		if len(rows) != wantTotal {
+			t.Fatalf("expected %d seeded rows, got %d", wantTotal, len(rows))
 		}
 	})
 
@@ -152,8 +170,8 @@ func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListAll vendor: %v", err)
 		}
-		if len(rows) != 3 {
-			t.Fatalf("anthropic rows = %d, want 3", len(rows))
+		if len(rows) != wantAnthropic {
+			t.Fatalf("anthropic rows = %d, want %d", len(rows), wantAnthropic)
 		}
 	})
 
@@ -163,8 +181,8 @@ func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListAll invokable=true: %v", err)
 		}
-		if len(rows) != 8 {
-			t.Fatalf("invokable rows = %d, want 8", len(rows))
+		if len(rows) != wantInvokable {
+			t.Fatalf("invokable rows = %d, want %d", len(rows), wantInvokable)
 		}
 	})
 
@@ -174,8 +192,24 @@ func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListAll invokable=false: %v", err)
 		}
-		if len(rows) != 1 || rows[0].RegistryID != "z-ai/glm-5.1" {
-			t.Fatalf("non-invokable rows = %+v, want [glm-5.1]", registryIDs(rows))
+		got := registryIDs(rows)
+		want := map[string]bool{
+			"google/gemini-3.1-flash-lite-preview": false,
+			"z-ai/glm-5.1":                         false,
+		}
+		if len(got) != len(want) {
+			t.Fatalf("non-invokable rows = %v, want keys %v", got, want)
+		}
+		for _, id := range got {
+			if _, ok := want[id]; !ok {
+				t.Fatalf("unexpected non-invokable row %q (have %v)", id, got)
+			}
+			want[id] = true
+		}
+		for id, saw := range want {
+			if !saw {
+				t.Fatalf("missing non-invokable row %q (got %v)", id, got)
+			}
 		}
 	})
 
@@ -184,12 +218,13 @@ func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListAll search: %v", err)
 		}
-		if len(rows) != 3 {
-			t.Fatalf("gemini search rows = %d, want 3", len(rows))
+		if len(rows) != wantGeminiSearch {
+			t.Fatalf("gemini search rows = %d, want %d", len(rows), wantGeminiSearch)
 		}
 	})
 
 	t.Run("Pagination", func(t *testing.T) {
+		// 18 total at pageSize=4 → pages of 4,4,4,4,2.
 		page1, err := r.ListAll(ctx, cpn.ModelListFilter{Page: 1, PageSize: 4})
 		if err != nil {
 			t.Fatalf("ListAll page1: %v", err)
@@ -197,12 +232,12 @@ func TestModelRegistryRepository_ListAll_Filters(t *testing.T) {
 		if len(page1) != 4 {
 			t.Fatalf("page1 len = %d, want 4", len(page1))
 		}
-		page3, err := r.ListAll(ctx, cpn.ModelListFilter{Page: 3, PageSize: 4})
+		page5, err := r.ListAll(ctx, cpn.ModelListFilter{Page: 5, PageSize: 4})
 		if err != nil {
-			t.Fatalf("ListAll page3: %v", err)
+			t.Fatalf("ListAll page5: %v", err)
 		}
-		if len(page3) != 1 {
-			t.Fatalf("page3 len = %d, want 1 (9 total, 4+4+1)", len(page3))
+		if len(page5) != 2 {
+			t.Fatalf("page5 len = %d, want 2 (18 total, 4+4+4+4+2)", len(page5))
 		}
 	})
 }
@@ -413,14 +448,23 @@ func TestModelRegistryRepository_SetLicenseReview(t *testing.T) {
 func TestModelRegistryRepository_RoleDefaults(t *testing.T) {
 	r, ctx := setupRegistryRepo(t)
 
-	t.Run("Seeded_roles_resolve_to_gemma", func(t *testing.T) {
-		for _, role := range []string{"classifier", "structured", "reasoning", "long-context", "summarize", "thinking"} {
+	t.Run("Seeded_roles_resolve_to_optimized_models", func(t *testing.T) {
+		// Migration 022 sets each role default to its cost/effectiveness pick.
+		want := map[string]string{
+			"classifier":   "google/gemini-2.5-flash-lite",
+			"structured":   "google/gemini-2.5-flash",
+			"reasoning":    "google/gemini-2.5-pro",
+			"long-context": "google/gemini-2.5-flash",
+			"summarize":    "google/gemini-2.5-flash-lite",
+			"thinking":     "anthropic/claude-opus-4-7",
+		}
+		for role, wantID := range want {
 			id, err := r.GetRoleDefault(ctx, role)
 			if err != nil {
 				t.Fatalf("GetRoleDefault %s: %v", role, err)
 			}
-			if id != "google/gemma-4-31b-it" {
-				t.Fatalf("role %s default = %q, want gemma", role, id)
+			if id != wantID {
+				t.Errorf("role %s default = %q, want %q", role, id, wantID)
 			}
 		}
 	})
