@@ -31,6 +31,19 @@ var ErrModelNotInvokable = errors.New("cpn: model is not invokable")
 // NotFound → "typo, fallback silently"; NotInvokable → "legal/operational gate".
 var ErrModelNotFound = errors.New("cpn: model not found")
 
+// ErrRegistryConflict is returned by Update/SetProductDefault when the supplied
+// If-Match UpdatedAt token does not match the current row (REQ-API-004 optimistic
+// concurrency). Callers should re-fetch and retry.
+var ErrRegistryConflict = errors.New("cpn: registry row was modified by another writer")
+
+// ErrCannotDeleteDefault is returned by Delete when the caller tries to remove
+// the row referenced by registry_config. The user MUST reassign the default
+// first (REQ-API-006).
+var ErrCannotDeleteDefault = errors.New("cpn: cannot delete the product default; reassign it first")
+
+// ErrInvalidInput is returned when required arguments (e.g. registry_id) are empty.
+var ErrInvalidInput = errors.New("cpn: invalid input")
+
 // UpdatedAt is a value type used for optimistic concurrency on PATCH operations
 // (REQ-API-004 If-Match guard). The adapter compares this against the current
 // row's updated_at column and rejects the update if they differ.
@@ -163,25 +176,25 @@ type ModelRegistryEntry struct {
 
 // Modalities describes input/output media.
 type Modalities struct {
-	Input  []string // "text" | "image" | "audio" | "video"
-	Output []string
+	Input  []string `json:"input"` // "text" | "image" | "audio" | "video"
+	Output []string `json:"output"`
 }
 
 // Capabilities is a flag set for feature support.
 type Capabilities struct {
-	Text             bool
-	Tools            bool
-	Streaming        bool
-	Reasoning        bool
-	StructuredOutput bool
-	Vision           bool
-	Audio            bool
+	Text             bool `json:"text"`
+	Tools            bool `json:"tools"`
+	Streaming        bool `json:"streaming"`
+	Reasoning        bool `json:"reasoning"`
+	StructuredOutput bool `json:"structured_output"`
+	Vision           bool `json:"vision"`
+	Audio            bool `json:"audio"`
 }
 
 // ContextInfo captures context window + tokenizer metadata.
 type ContextInfo struct {
-	Length    int
-	Tokenizer string
+	Length    int    `json:"length"`
+	Tokenizer string `json:"tokenizer"`
 }
 
 // Pricing is per-token in the given currency (USD by default). Stored as
@@ -189,45 +202,45 @@ type ContextInfo struct {
 // type uses float64 because Postgres NUMERIC(20,12) fits comfortably in
 // float64 and downstream cost arithmetic is already float-based.
 type Pricing struct {
-	InputPerToken  float64
-	OutputPerToken float64
-	Currency       string
+	InputPerToken  float64 `json:"input_per_token"`
+	OutputPerToken float64 `json:"output_per_token"`
+	Currency       string  `json:"currency"`
 }
 
 // License captures both the legal metadata and the product's clearance state.
 type License struct {
-	Kind          string  // "community" | "proprietary-api" | "proprietary-weights" | "unknown"
-	SPDXID        *string // e.g. "apache-2.0", "mit"
-	CommunitySlug *string // e.g. "gemma", "llama3.3", "qwen"
-	Name          *string // e.g. "Anthropic Commercial Terms", "Gemma Terms of Use"
-	URL           *string
-	Source        string // "huggingface" | "manual"
-	Status        string // LicenseStatus* constant
-	ReviewedBy    *string
-	ReviewedAt    *time.Time
+	Kind          string     `json:"kind"`                     // "community" | "proprietary-api" | "proprietary-weights" | "unknown"
+	SPDXID        *string    `json:"spdx_id,omitempty"`        // e.g. "apache-2.0", "mit"
+	CommunitySlug *string    `json:"community_slug,omitempty"` // e.g. "gemma", "llama3.3", "qwen"
+	Name          *string    `json:"name,omitempty"`           // e.g. "Anthropic Commercial Terms", "Gemma Terms of Use"
+	URL           *string    `json:"url,omitempty"`
+	Source        string     `json:"source"` // "huggingface" | "manual"
+	Status        string     `json:"status"` // LicenseStatus* constant
+	ReviewedBy    *string    `json:"reviewed_by,omitempty"`
+	ReviewedAt    *time.Time `json:"reviewed_at,omitempty"`
 }
 
 // Lifecycle captures the operational state.
 type Lifecycle struct {
-	State        string // LifecycleState* constant
-	RegisteredAt time.Time
-	ActivatedAt  *time.Time
-	DeprecatedAt *time.Time
-	SunsetAt     *time.Time
-	ReplacedBy   *string
-	Reason       *string
+	State        string     `json:"state"` // LifecycleState* constant
+	RegisteredAt time.Time  `json:"registered_at"`
+	ActivatedAt  *time.Time `json:"activated_at,omitempty"`
+	DeprecatedAt *time.Time `json:"deprecated_at,omitempty"`
+	SunsetAt     *time.Time `json:"sunset_at,omitempty"`
+	ReplacedBy   *string    `json:"replaced_by,omitempty"`
+	Reason       *string    `json:"reason,omitempty"`
 }
 
 // Route describes one way to invoke a model. One model MAY have many routes
 // (e.g., OpenRouter and direct Anthropic), ordered by Priority.
 type Route struct {
-	ProviderAdapter string // "openrouter" | "anthropic" | "openai" | "google-gemini" | ...
-	ProviderModelID string
-	EndpointBaseURL *string
-	Priority        int
-	Enabled         bool
-	Region          *string
-	IsModerated     *bool
+	ProviderAdapter string  `json:"provider_adapter"` // "openrouter" | "anthropic" | "openai" | "google-gemini" | ...
+	ProviderModelID string  `json:"provider_model_id"`
+	EndpointBaseURL *string `json:"endpoint_base_url,omitempty"`
+	Priority        int     `json:"priority"`
+	Enabled         bool    `json:"enabled"`
+	Region          *string `json:"region,omitempty"`
+	IsModerated     *bool   `json:"is_moderated,omitempty"`
 }
 
 // ── State constants ──────────────────────────────────────────────────────────
