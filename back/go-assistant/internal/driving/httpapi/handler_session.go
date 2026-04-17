@@ -77,6 +77,7 @@ type Handlers struct {
 	ConfigProvider  *config.Provider
 	AdminEmails     []string
 	AuditRepo       AuditLogger
+	ModelRegistry   cpn.ModelRegistry
 }
 
 // AuditLogger is the port for recording admin config mutations.

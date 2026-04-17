@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
@@ -196,5 +197,13 @@ func WithAdminEmails(emails []string) ServerOption {
 func WithAuditRepo(repo AuditLogger) ServerOption {
 	return func(h *Handlers) {
 		h.AuditRepo = repo
+	}
+}
+
+// WithModelRegistry injects the DB-backed model registry used by the
+// public /api/v1/models endpoint and the admin CRUD endpoints.
+func WithModelRegistry(reg cpn.ModelRegistry) ServerOption {
+	return func(h *Handlers) {
+		h.ModelRegistry = reg
 	}
 }

@@ -54,6 +54,17 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 		mux.Handle("GET /api/v1/admin/config", adminAuth(http.HandlerFunc(h.HandleListConfig)))
 		mux.Handle("PUT /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleSetConfig)))
 		mux.Handle("DELETE /api/v1/admin/config/{key}", adminAuth(http.HandlerFunc(h.HandleDeleteConfig)))
+
+		// Model registry admin CRUD (workstream B3).
+		// Action endpoints use literal paths that win over the {registryID...}
+		// wildcard because Go 1.22+ ServeMux prefers more-specific matches.
+		mux.Handle("GET /api/v1/admin/models", adminAuth(http.HandlerFunc(h.HandleAdminListModels)))
+		mux.Handle("POST /api/v1/admin/models", adminAuth(http.HandlerFunc(h.HandleAdminRegisterModel)))
+		mux.Handle("POST /api/v1/admin/models/set-default", adminAuth(http.HandlerFunc(h.HandleAdminSetDefault)))
+		mux.Handle("POST /api/v1/admin/models/license-review", adminAuth(http.HandlerFunc(h.HandleAdminLicenseReview)))
+		mux.Handle("GET /api/v1/admin/models/{registryID...}", adminAuth(http.HandlerFunc(h.HandleAdminGetModel)))
+		mux.Handle("PATCH /api/v1/admin/models/{registryID...}", adminAuth(http.HandlerFunc(h.HandleAdminUpdateModel)))
+		mux.Handle("DELETE /api/v1/admin/models/{registryID...}", adminAuth(http.HandlerFunc(h.HandleAdminDeleteModel)))
 	}
 	mux.HandleFunc("GET /api/v1/admin/config/status", h.HandleConfigStatus)
 

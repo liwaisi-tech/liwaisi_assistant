@@ -229,6 +229,7 @@ func main() {
 			httpapi.WithPersonalityRepo(store.Personalities()),
 			httpapi.WithToolRegistry(toolReg),
 			httpapi.WithWaitlistRepo(store.Waitlist()),
+			httpapi.WithModelRegistry(store.ModelRegistry()),
 		)
 	}
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
