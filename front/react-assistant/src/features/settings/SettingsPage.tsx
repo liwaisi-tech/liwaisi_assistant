@@ -6,6 +6,7 @@ import {
   REGIONAL_VARIANTS,
   defaultVariantForLanguage,
   type ModelRole,
+  type ModelRegistryEntry,
 } from '../../types/setup';
 
 interface FormState {
@@ -45,6 +46,7 @@ export function SettingsPage() {
   const [roles, setRoles] = useState<ModelRole[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
+  const [registry, setRegistry] = useState<ModelRegistryEntry[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +77,7 @@ export function SettingsPage() {
         setDefaultModel(models.default_model);
         setAvailableModels(models.available_models ?? [models.default_model]);
         setRoles(models.roles ?? []);
+        setRegistry(models.registry ?? []);
         setLoading(false);
       })
       .catch(() => {
@@ -167,6 +170,28 @@ export function SettingsPage() {
     // If current model not in available list, we still want to show it selected.
     return form.model;
   }, [form.model]);
+
+  // Registry lookup keyed by registry_id so the pickers can render
+  // display_name + vendor + context length instead of raw slugs when the
+  // backend exposes the DB-backed registry
+  // (spec-architecture-model-registry-and-a2ui-management.md §F2).
+  const registryByID = useMemo(() => {
+    const map = new Map<string, ModelRegistryEntry>();
+    for (const entry of registry) map.set(entry.registry_id, entry);
+    return map;
+  }, [registry]);
+
+  const formatModelOption = useCallback(
+    (registryID: string): string => {
+      const entry = registryByID.get(registryID);
+      if (!entry) return registryID;
+      const ctx = entry.context?.length
+        ? ` · ${Math.round(entry.context.length / 1000)}k`
+        : '';
+      return `${entry.display_name} — ${entry.vendor}${ctx}`;
+    },
+    [registryByID],
+  );
 
   return (
     <div
@@ -328,13 +353,15 @@ export function SettingsPage() {
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
-                <option value="">{t('settings:useSystemDefault')} ({defaultModel})</option>
+                <option value="">
+                  {t('settings:useSystemDefault')} ({formatModelOption(defaultModel)})
+                </option>
                 {!modelInList && form.model && (
-                  <option value={form.model}>{form.model}</option>
+                  <option value={form.model}>{formatModelOption(form.model)}</option>
                 )}
                 {availableModels.map((model) => (
                   <option key={model} value={model}>
-                    {model}
+                    {formatModelOption(model)}
                   </option>
                 ))}
               </select>
@@ -414,7 +441,7 @@ export function SettingsPage() {
                           >
                             {availableModels.map((model) => (
                               <option key={model} value={model}>
-                                {model}
+                                {formatModelOption(model)}
                               </option>
                             ))}
                           </select>
