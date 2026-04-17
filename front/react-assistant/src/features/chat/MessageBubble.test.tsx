@@ -203,4 +203,85 @@ describe('MessageBubble', () => {
       expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
     });
   });
+
+  // ── Responding-model badge (REQ-GAP-IND-004/005 / AC-IND-001..003) ────────
+
+  it('renders the responding-model badge when metadata.responding_model is set on an assistant message', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Here is your answer."
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    const badge = screen.getByTestId('responding-model-badge');
+    // Vendor prefix stripped for scannability.
+    expect(badge).toHaveTextContent('claude-opus-4-6 · openrouter');
+    // Full registry id still available via the tooltip.
+    expect(badge).toHaveAttribute('title', expect.stringContaining('anthropic/claude-opus-4-6 · openrouter'));
+  });
+
+  it('does NOT render the badge for user messages regardless of metadata', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="user"
+        content="what time is it?"
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge when metadata is absent (backward-compat rehydration)', () => {
+    render(
+      <MessageBubble {...baseProps} role="assistant" content="Legacy row." />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge on HITL surfaces (hitlTransitionId set)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Pending review."
+        hitlTransitionId="t-review"
+        metadata={{ responding_model: 'google/gemma-4-31b-it · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge while streaming (final value arrives on Done=true)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="partial"
+        isStreaming
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the raw string when responding_model has no vendor prefix', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="ok"
+        metadata={{ responding_model: 'gemma-4-31b-it · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('responding-model-badge')).toHaveTextContent('gemma-4-31b-it · openrouter');
+  });
 });

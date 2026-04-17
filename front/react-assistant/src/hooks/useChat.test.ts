@@ -565,3 +565,137 @@ describe('chatReducer — ACTIVITY_*', () => {
     expect(next.recentReceipt).toBeNull();
   });
 });
+
+// ── Local message injection (REQ-GAP-TEST-003) ──────────────────────────────
+// The model-admin `/models` shortcut relies on these two reducer actions to
+// inject a synthetic assistant bubble and rewrite its content without ever
+// hitting the SSE stream. Coverage here guards against either action
+// regressing into a full-list re-render.
+
+describe('chatReducer — INJECT_LOCAL_MESSAGE', () => {
+  it('appends an assistant bubble with the given id and content', () => {
+    const next = chatReducer(initialState, {
+      type: 'INJECT_LOCAL_MESSAGE',
+      id: 'local-1',
+      content: 'synthetic body',
+      cpnRole: 'models-admin',
+    });
+    expect(next.messages).toHaveLength(1);
+    const bubble = next.messages[0];
+    expect(bubble.id).toBe('local-1');
+    expect(bubble.role).toBe('assistant');
+    expect(bubble.content).toBe('synthetic body');
+    expect(bubble.cpnRole).toBe('models-admin');
+    expect(bubble.isStreaming).toBe(false);
+  });
+
+  it('preserves pre-existing messages', () => {
+    const prior: ChatMessage = {
+      id: 'u-1',
+      role: 'user',
+      content: 'hi',
+      isStreaming: false,
+      timestamp: new Date(),
+    };
+    const state: ChatState = { ...initialState, messages: [prior] };
+    const next = chatReducer(state, {
+      type: 'INJECT_LOCAL_MESSAGE',
+      id: 'local-2',
+      content: '$$a2ui:{}',
+    });
+    expect(next.messages).toHaveLength(2);
+    expect(next.messages[0]).toBe(prior); // identity preserved → no re-render
+  });
+});
+
+describe('chatReducer — UPDATE_MESSAGE_CONTENT', () => {
+  it('rewrites the content of the matching id only', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        { id: 'a', role: 'assistant', content: 'x', isStreaming: false, timestamp: new Date() },
+        { id: 'b', role: 'assistant', content: 'y', isStreaming: false, timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, { type: 'UPDATE_MESSAGE_CONTENT', id: 'b', content: 'Y2' });
+    expect(next.messages[0].content).toBe('x');
+    expect(next.messages[0]).toBe(state.messages[0]); // untouched reference
+    expect(next.messages[1].content).toBe('Y2');
+  });
+
+  it('is a no-op for an unknown id (returns structurally equivalent state)', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        { id: 'a', role: 'assistant', content: 'x', isStreaming: false, timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, { type: 'UPDATE_MESSAGE_CONTENT', id: 'zzz', content: 'new' });
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].content).toBe('x');
+  });
+});
+
+// ── Responding-model capture (REQ-GAP-IND-003) ─────────────────────────────
+// The final stream_chunk for an LLM transition carries the resolved route's
+// registry_id + adapter on `responding_model`. The reducer must persist it
+// onto the matching bubble's `metadata.responding_model` so MessageBubble
+// can render the RoundBadge without re-reading the SSE stream.
+
+describe('chatReducer — STREAM_CHUNK responding_model capture', () => {
+  it('stamps responding_model onto the completed bubble when append-done fires', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'partial ', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({
+        Content: 'final token',
+        Done: true,
+        responding_model: 'anthropic/claude-opus-4-6 · openrouter',
+      }),
+    });
+    const bubble = next.messages[0];
+    expect(bubble.isStreaming).toBe(false);
+    expect(bubble.content).toBe('partial final token');
+    expect(bubble.metadata?.responding_model).toBe('anthropic/claude-opus-4-6 · openrouter');
+  });
+
+  it('stamps responding_model onto a done-sentinel close-out', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'hello', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({
+        Content: '',
+        Done: true,
+        responding_model: 'google/gemma-4-31b-it · openrouter',
+      }),
+    });
+    expect(next.messages[0].metadata?.responding_model).toBe('google/gemma-4-31b-it · openrouter');
+    expect(next.messages[0].isStreaming).toBe(false);
+  });
+
+  it('leaves metadata empty when the final chunk omits responding_model', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'hi', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: 'end', Done: true }),
+    });
+    expect(next.messages[0].metadata).toBeUndefined();
+  });
+
+  it('treats empty-string responding_model as absent (no metadata stamp)', () => {
+    const next = chatReducer(initialState, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: 'solo', Done: true, responding_model: '' }),
+    });
+    expect(next.messages[0].metadata).toBeUndefined();
+  });
+});
