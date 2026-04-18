@@ -1,0 +1,131 @@
+{
+  "built_at": "2026-04-17T18:00:00.000Z",
+  "counts": {
+    "flow": 3,
+    "tool": 4,
+    "host_capability": 3,
+    "builtin": 2
+  },
+  "skills": [
+    {
+      "id": "builtin/classifier",
+      "kind": "builtin",
+      "name": "classifier",
+      "description": "Routes the user's intent to the right handler flow.",
+      "version": "1.0.0",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Shipped with brae core."
+    },
+    {
+      "id": "builtin/tool-forge",
+      "kind": "builtin",
+      "name": "tool-forge",
+      "description": "Authors, reviews and installs new executable tools.",
+      "version": "1.0.0",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Shipped with brae core."
+    },
+    {
+      "id": "flow/host-discovery",
+      "kind": "flow",
+      "name": "host-discovery",
+      "description": "Enumerates OS facts (compilers, package managers, sandbox availability).",
+      "version": "1.1.0",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Authored by liwaisi at 2026-03-02."
+    },
+    {
+      "id": "flow/user/weekly-report",
+      "kind": "flow",
+      "name": "weekly-report",
+      "description": "Collects weekly metrics from Stripe + GitHub and drafts an email.",
+      "version": "0.3.0",
+      "origin": "user",
+      "deprecated": false,
+      "provenance_summary": "Authored by user 2026-04-10."
+    },
+    {
+      "id": "flow/agent/cold-email-sweep",
+      "kind": "flow",
+      "name": "cold-email-sweep",
+      "description": "Iterates a mailing list and composes per-contact intros.",
+      "version": "0.2.0",
+      "origin": "agent-authored",
+      "deprecated": true,
+      "provenance_summary": "Authored by tool-forge 2026-02-17."
+    },
+    {
+      "id": "tool/brae/http-get",
+      "kind": "tool",
+      "name": "brae/http-get",
+      "description": "HTTP GET → stdout. Respects host sandbox profile.",
+      "version": "1.0.0",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Shipped with brae core."
+    },
+    {
+      "id": "tool/system/personality.set_principle",
+      "kind": "tool",
+      "name": "system/personality.set_principle",
+      "description": "Sets or updates a single personality principle.",
+      "version": "1.0.0",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Shipped with brae core."
+    },
+    {
+      "id": "tool/user/calendar-ingest",
+      "kind": "tool",
+      "name": "user/calendar-ingest",
+      "description": "Reads ~/.local/brae/calendars/*.ics into memory.",
+      "version": "0.1.0",
+      "origin": "user",
+      "deprecated": false,
+      "provenance_summary": "Authored by user 2026-04-01."
+    },
+    {
+      "id": "tool/agent/markdown-lint",
+      "kind": "tool",
+      "name": "agent/markdown-lint",
+      "description": "Runs `markdownlint-cli` under the fsjail sandbox.",
+      "version": "0.1.0",
+      "origin": "agent-authored",
+      "deprecated": false,
+      "provenance_summary": "Authored by tool-forge 2026-03-28."
+    },
+    {
+      "id": "cap/can-compile-c",
+      "kind": "host_capability",
+      "name": "can-compile-c",
+      "description": "Host has a working C compiler (gcc 13.2.0).",
+      "version": "",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Discovered by host-discovery at 2026-04-15T09:00:00Z."
+    },
+    {
+      "id": "cap/can-run-python",
+      "kind": "host_capability",
+      "name": "can-run-python",
+      "description": "Host has a working Python runtime (python3 3.12.2).",
+      "version": "",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Discovered by host-discovery at 2026-04-15T09:00:00Z."
+    },
+    {
+      "id": "cap/has-bwrap-sandbox",
+      "kind": "host_capability",
+      "name": "has-bwrap-sandbox",
+      "description": "bwrap is available; readonly / fsjail / network-off profiles enforced.",
+      "version": "",
+      "origin": "builtin",
+      "deprecated": false,
+      "provenance_summary": "Discovered by host-discovery at 2026-04-15T09:00:00Z."
+    }
+  ]
+}

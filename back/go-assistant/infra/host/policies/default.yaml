@@ -1,0 +1,91 @@
+# HostGate default policy (GAP-6).
+#
+# Authoritative spec: spec/spec-architecture-host-gate-security-policy.md
+# Loaded by: infra/host/gate.LoadFromFile(HOST_POLICY_PATH), resolved by
+# cmd/server/main.go on boot.
+#
+# Evaluation order (matcher.go Classify): forbidden > dangerous > caution
+# > hitl > safe > unknown. PolicyHostGate short-circuits on forbidden,
+# escalates caution/dangerous/unknown to HITL, auto-allows safe.
+#
+# Pattern writers: every string is a Go `regexp.Regexp`. Keep patterns
+# anchored (^...) to avoid surprise matches in argument positions.
+
+version: 1
+
+defaults:
+  sandbox: readonly
+  cpu_seconds_budget: 120
+  bytes_written_budget: 268435456      # 256 MiB
+  outbound_requests_budget: 50
+
+# ── Forbidden (hard deny) ─────────────────────────────────────────────────
+# Matches spec §3 REQ-050. Anything here returns ErrGateDenied instantly.
+forbidden_patterns:
+  - "^rm\\s+-rf\\s+/(\\s|$)"
+  - "^rm\\s+-[rfR]+\\s+/(\\s|$)"
+  - "^mkfs\\."
+  - "^shutdown(\\s|$)"
+  - "^reboot(\\s|$)"
+  - "^init\\s+0(\\s|$)"
+  - "^systemctl\\s+(poweroff|reboot|halt)"
+  - "^poweroff(\\s|$)"
+  - "^halt(\\s|$)"
+  - "^:\\(\\)\\s*\\{"                                # fork-bomb literal
+  - ".*curl\\s+.*\\s*\\|\\s*(sh|bash)\\s*$"
+  - ".*wget\\s+.*\\s*\\|\\s*(sh|bash)\\s*$"
+  - "^dd\\s+.*of=/dev/(sd|nvme|hd|xvd)"
+
+# ── Safe (allow without HITL unless first-run) ───────────────────────────
+# REQ-050 "safe" baseline: read-only inspection commands.
+safe_patterns:
+  - "^(/(usr/)?bin/)?(ls|cat|pwd|echo|uname|whoami|id|hostname|which|env)(\\s|$)"
+  - "^(/(usr/)?bin/)?(head|tail|wc|grep|find|basename|dirname)(\\s|$)"
+  - "^(/(usr/)?bin/)?(date|uptime|df|du|free)(\\s|$)"
+
+# ── Caution (HITL every run unless "approve-and-remember") ───────────────
+# REQ-050: compilers, package managers, network clients.
+caution_patterns:
+  - "^(/(usr/)?bin/)?(gcc|cc|clang|g\\+\\+|clang\\+\\+)(\\s|$)"
+  - "^(/(usr/)?bin/)?(go|cargo|rustc|javac|python3?|node|ruby|perl)(\\s|$)"
+  - "^(/(usr/)?bin/)?(apt|apt-get|dnf|yum|pacman|zypper)(\\s|$)"
+  - "^(/(usr/)?bin/)?(pip|pip3|npm|yarn|pnpm|bundler|gem)(\\s|$)"
+  - "^(/(usr/)?bin/)?(curl|wget|ssh|scp|rsync|nc|ncat)(\\s|$)"
+  - "^(/(usr/)?bin/)?(git)(\\s|$)"
+  - "^(/(usr/)?bin/)?(docker|podman|kubectl)(\\s|$)"
+  - "^make(\\s|$)"
+
+# ── Dangerous (HITL always, never cached) ────────────────────────────────
+# REQ-050: filesystem-state-changing patterns. A remembered approval is
+# intentionally ignored by PolicyHostGate.Evaluate for this band.
+dangerous_patterns:
+  - "^chmod\\s+\\+x\\s+"
+  - "^chmod\\s+[0-7]*7[0-7]*\\s+"                     # any 7 in mode → world-writable
+  - "^chown\\s+"
+  - "write_file:\\s*/etc/.*"
+  - "write_file:\\s*/?root/.*"
+  - "write_file:\\s*.*\\.ssh/.*"
+  - "write_file:\\s*.*/authorized_keys"
+  - "write_file:\\s*/boot/.*"
+  - "^sudo(\\s|$)"
+  - "^su\\s+"
+
+# ── HITL (bucket for "always ask, but not dangerous") ────────────────────
+# Empty by default; operators use this for commands that should never be
+# pre-approved via safe_patterns but are not inherently risky.
+hitl_patterns: []
+
+path_jail:
+  write: "$HOME/.local/brae/"
+  read: "/"
+
+sandbox_mappings:
+  readonly:
+    preferred: bwrap
+    fallback: firejail
+  fsjail:
+    preferred: bwrap
+    fallback: firejail
+  network-off:
+    preferred: bwrap
+    fallback: firejail

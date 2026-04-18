@@ -354,6 +354,16 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 			return fireHITLWithRevision(ctx, t, c, consumed)
 		}
 		return fireHITL(ctx, t, c, consumed)
+	case NodeKindBash:
+		return fireBash(ctx, t, c, consumed)
+	case NodeKindRegisterTool:
+		return fireRegisterTool(ctx, t, c, consumed)
+	case NodeKindSynthesize:
+		return fireSynthesize(ctx, t, c, consumed)
+	case NodeKindInstantiate:
+		return fireInstantiate(ctx, t, c, consumed)
+	case NodeKindTopologyMutate:
+		return fireTopologyMutate(ctx, t, c, consumed)
 	case NodeKindObserver:
 		return nil, 0, fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
 	default:

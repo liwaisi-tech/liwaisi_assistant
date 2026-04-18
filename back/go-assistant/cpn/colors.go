@@ -37,4 +37,50 @@ const (
 
 	// ColorIdentity carries a Personality state token.
 	ColorIdentity ColorSet = "IDENTITY"
+
+	// ColorToolManifest carries a RegisterToolConfig payload destined for a
+	// NodeKindRegisterTool transition (GAP-3). Default space is
+	// SpaceComputation (REQ-033).
+	ColorToolManifest ColorSet = "TOOL_MANIFEST"
+
+	// ColorShellCmd carries a shell command request to be dispatched to a
+	// NodeKindBash transition (GAP-1).
+	ColorShellCmd ColorSet = "SHELL_CMD"
+
+	// ColorShellChunk carries a single line of streamed stdout/stderr from a
+	// NodeKindBash transition (GAP-1).
+	ColorShellChunk ColorSet = "SHELL_CHUNK"
+
+	// ColorShellResult carries the terminal result of a bash transition
+	// (GAP-1). Payload is a ShellResultPayload.
+	ColorShellResult ColorSet = "SHELL_RESULT"
+
+	// ColorHostFact carries a typed fact discovered about the host (GAP-2).
+	// Default space is SpaceComputation.
+	ColorHostFact ColorSet = "HOST_FACT"
+
+	// ColorProcess carries process-level metadata for long-lived bash
+	// sessions (GAP-1).
+	ColorProcess ColorSet = "PROCESS"
+
+	// ColorTopology carries a CPN topology document (GAP-4). Payload is a
+	// persist.CPNTopology (or json.RawMessage carrying one). Default
+	// space is SpaceComputation — topologies never cross into the surface.
+	ColorTopology ColorSet = "TOPOLOGY"
+
+	// ColorFlowRef carries a reference to a persisted topology in the
+	// FlowRepository (GAP-4). Payload is a FlowRef { FlowID, Summary }.
+	// Produced by NodeKindSynthesize, consumed by NodeKindInstantiate.
+	ColorFlowRef ColorSet = "FLOW_REF"
 )
+
+// IsShellColor reports whether c is one of the shell-family colors
+// introduced by GAP-1/2. Used by Validate to enforce that bash transitions
+// do not leak their output tokens into unrelated downstream transitions.
+func IsShellColor(c ColorSet) bool {
+	switch c {
+	case ColorShellCmd, ColorShellChunk, ColorShellResult, ColorHostFact, ColorProcess:
+		return true
+	}
+	return false
+}

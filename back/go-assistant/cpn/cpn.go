@@ -33,6 +33,13 @@ type CPN struct {
 	// LLMClient is the LLM API client shared by all LLM transitions.
 	LLMClient LLMClient
 
+	// HostRuntime aggregates the collaborators used by NodeKindBash
+	// transitions (HostAdapter, HostGate, BashSessionManager). Nil is
+	// legal for topologies that never fire a bash transition; the
+	// executor returns a descriptive error when a bash transition
+	// fires without a runtime.
+	HostRuntime *HostRuntime
+
 	// History holds the conversation history for context assembly.
 	History []*Message
 
@@ -70,6 +77,15 @@ type CPN struct {
 	subNetBuses map[string]<-chan Event
 	subNetMu    sync.Mutex
 
+	// selfBus carries events originating from THIS CPN's own transitions
+	// (e.g. NodeKindBash process events) so that NodeKindObserver
+	// transitions in the same CPN can react to them via drainObservers.
+	// Lazy-initialised by selfEventBus() when an observer transition is
+	// present or when fire_bash first publishes a process event.
+	// Capacity is selfEventBusCapacity.
+	selfBus chan Event
+	selfMu  sync.Mutex
+
 	// childWg tracks active child goroutines for graceful shutdown.
 	childWg sync.WaitGroup
 
@@ -104,6 +120,53 @@ type CPN struct {
 	// seeded places survive session re-runs. Topologies with no mandatory
 	// initial marking leave this nil.
 	SeedFunc func(*CPN)
+
+	// ToolRegistry is the runtime-mutable tool registry (GAP-3). Wired at
+	// boot so NodeKindRegisterTool transitions can publish new tools. Nil
+	// is legal for legacy topologies that never fire a register_tool
+	// transition.
+	ToolRegistry ToolRegistry
+
+	// FirstRunLedger, when non-nil, is consulted by NodeKindRegisterTool
+	// before a binary-backed manifest hits the registry (GAP-6 first-run
+	// HITL). Dev builds leave it nil; fire_register_tool falls open with
+	// a WARN log per REQ-034.
+	FirstRunLedger FirstRunLedger
+
+	// FlowRepository, when non-nil, stores agent-authored CPN topologies
+	// produced by NodeKindSynthesize and re-loaded by NodeKindInstantiate
+	// (GAP-4). Nil is legal for topologies that never synth/instantiate;
+	// those transitions fail at dispatch time with a descriptive error.
+	FlowRepository AuthoredFlowRepository
+
+	// SafeRegistry is the compile-time catalogue of primitives that
+	// agent-authored topologies may reference (GAP-4 REQ-030). Consulted
+	// by the linter and by the instantiation materialiser so the child
+	// CPN resolves names against a sealed set.
+	SafeRegistry SafeRegistryPort
+
+	// TopologyRouter is the HITL router used by NodeKindInstantiate to
+	// surface first-instantiation approval prompts (GAP-4 REQ-050). Nil
+	// falls open (warning log) so dev mode does not block on approvals —
+	// same pattern GAP-3 uses for FirstRunLedger.
+	TopologyRouter TopologyHITLRouter
+
+	// approvedFlows records flow_ids that the user has already approved
+	// during this session (REQ-051). Subsequent instantiations skip HITL.
+	// Allocated lazily under mu on first approval.
+	approvedFlows map[string]struct{}
+
+	// MutableAfterStart enables GAP-7 hot topology reconfiguration.
+	// Defaults to false; topology mutations are rejected unless this is set.
+	MutableAfterStart bool
+
+	// TrustMutations skips HITL gating for topology mutations (dev-mode / internal agents).
+	// Only honoured when MutableAfterStart is also true.
+	TrustMutations bool
+
+	// MutationLog, when non-nil, persists every topology mutation attempt
+	// (approved and rejected) to the audit store (GAP-7 REQ-005).
+	MutationLog MutationAuditLog
 
 	mu sync.RWMutex
 }
@@ -175,10 +238,22 @@ func (c *CPN) TerminalPlaces() []*Place {
 	return terminals
 }
 
+// selfEventBusCapacity bounds the self-bus so a stuck observer loop never
+// starves the executor. Dropped events are reflected via the
+// ProcessEventMetrics port when one is wired (GAP-9 REQ-003).
+const selfEventBusCapacity = 256
+
 // emit sends an event, stamping CPN identity and timestamp.
 // REQ-012: Stamps CPNID, CPNDepth, CPNRole, SessionID, Timestamp on the event.
 // Calls EventSink synchronously (if non-nil), then sends to EventEmitter (non-blocking).
 // No-op if both EventSink and EventEmitter are nil.
+//
+// Process events (EventProcessStarted/Stdout/Stderr/Exit) additionally
+// fan out onto the per-CPN self-bus so that NodeKindObserver transitions
+// in the SAME CPN pick them up via drainObservers. The fan-out is
+// strictly non-blocking (GAP-9 REQ-003) — a saturated self-bus drops the
+// event and the caller's metrics port is bumped by the fire_bash /
+// session_manager layer.
 func (c *CPN) emit(e *Event) {
 	e.CPNID = c.ID
 	e.CPNDepth = c.Depth
@@ -198,6 +273,99 @@ func (c *CPN) emit(e *Event) {
 		default:
 		}
 	}
+
+	if isProcessEvent(e.Type) {
+		bus := c.selfEventBus()
+		select {
+		case bus <- *e:
+		default:
+			// Self-bus is saturated: observer isn't draining fast
+			// enough. Report the drop via the metrics port so
+			// AC-005 accounting stays accurate.
+			if c.HostRuntime != nil && c.HostRuntime.Metrics != nil {
+				var sid string
+				if pe, ok := e.Payload.(ProcessOutputPayload); ok {
+					sid = pe.SessionID
+				}
+				c.HostRuntime.Metrics.OnDrop(sid, e.Type, "self_bus_full")
+			}
+		}
+	}
+}
+
+// PublishProcessEvent is the injection point used by the
+// BashSessionManager (GAP-9 REQ-002) to stream process events from a
+// PTY read loop into THIS CPN's observer drain path. It applies the
+// same rate-limit / metrics accounting as fire_bash.go and then hands
+// the event to emit() — which fans it out to EventSink, EventEmitter,
+// and the self-bus.
+//
+// The contract is strictly non-blocking: a saturated bus or a refused
+// rate-limiter vote drops the event and bumps the drop counter.
+// Callers MUST NOT rely on delivery for correctness.
+func (c *CPN) PublishProcessEvent(kind EventType, payload ProcessOutputPayload) {
+	if c == nil {
+		return
+	}
+
+	var (
+		limiter ProcessEventRateLimiter = AllowAllRateLimiter{}
+		metrics ProcessEventMetrics     = NoOpProcessEventMetrics{}
+	)
+	if c.HostRuntime != nil {
+		if c.HostRuntime.RateLimiter != nil {
+			limiter = c.HostRuntime.RateLimiter
+		}
+		if c.HostRuntime.Metrics != nil {
+			metrics = c.HostRuntime.Metrics
+		}
+	}
+
+	if !limiter.Allow(payload.SessionID) {
+		metrics.OnDrop(payload.SessionID, kind, "rate_limited")
+		return
+	}
+
+	c.emit(&Event{
+		Type:           kind,
+		TransitionKind: NodeKindBash,
+		Payload:        payload,
+	})
+	metrics.OnEmit(payload.SessionID, kind)
+}
+
+// SessionEventSink returns an Event sink bound to this CPN for use with
+// PTYRequest.EventSink. It wraps the Event into the payload expected by
+// PublishProcessEvent so adapters can emit pre-shaped Event values
+// without knowing about the ProcessOutputPayload detail.
+//
+// The returned closure is safe for concurrent use and never blocks.
+func (c *CPN) SessionEventSink() func(Event) {
+	return func(e Event) {
+		payload, _ := e.Payload.(ProcessOutputPayload)
+		c.PublishProcessEvent(e.Type, payload)
+	}
+}
+
+// selfEventBus lazily creates (on first call) and returns the CPN-local
+// event bus used to feed drainObservers. Safe for concurrent use.
+func (c *CPN) selfEventBus() chan Event {
+	c.selfMu.Lock()
+	defer c.selfMu.Unlock()
+	if c.selfBus == nil {
+		c.selfBus = make(chan Event, selfEventBusCapacity)
+	}
+	return c.selfBus
+}
+
+// isProcessEvent reports whether the event kind is one of the four
+// process-lifecycle kinds fan-out to the self-bus.
+func isProcessEvent(k EventType) bool {
+	switch k {
+	case EventProcessStarted, EventProcessStdout, EventProcessStderr, EventProcessExit:
+		return true
+	}
+	return false
 }
 
 // switchModeToCentaurian sets Mode to ModeCentaurian and emits EventModeSwitch.
@@ -367,6 +535,33 @@ func (c *CPN) Reset() {
 	if seed != nil {
 		seed(c)
 	}
+}
+
+// HasApprovedFlow reports whether the user has already approved the given
+// flow_id during this session (GAP-4 REQ-051). Thread-safe.
+func (c *CPN) HasApprovedFlow(flowID string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.approvedFlows[flowID]
+	return ok
+}
+
+// MarkFlowApproved records the given flow_id as approved for this session
+// so subsequent NodeKindInstantiate transitions skip HITL (GAP-4 REQ-051).
+// Thread-safe; idempotent.
+func (c *CPN) MarkFlowApproved(flowID string) {
+	if c == nil || flowID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.approvedFlows == nil {
+		c.approvedFlows = make(map[string]struct{})
+	}
+	c.approvedFlows[flowID] = struct{}{}
 }
 
 // IsComplete returns true when ALL terminal places have at least one token.

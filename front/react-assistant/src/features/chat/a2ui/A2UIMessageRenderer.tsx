@@ -1,6 +1,7 @@
 import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, useTransition, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
+import { HostApprovalCard } from '../hitl/HostApprovalCard.tsx';
 import type {
   A2UIPayload,
   A2UIComponent,
@@ -11,6 +12,8 @@ import type {
   CardVariant,
   FormField,
   ChoiceOption,
+  HostApprovalAction,
+  HostApprovalPayload,
 } from './types.ts';
 
 // ── Resolution context ─────────────────────────────────────────────────────
@@ -1572,6 +1575,61 @@ function flattenInitialValues(
   return out;
 }
 
+// HOST_APPROVAL_ACTIONS is the allow-list used to recover a
+// HostApprovalAction from a persisted response row after rehydration.
+// Anything outside this set is treated as "unresolved" so the card renders
+// interactive rather than silently locking on a surprise string.
+const HOST_APPROVAL_ACTIONS = new Set<HostApprovalAction>([
+  'approve-once',
+  'approve-and-remember',
+  'deny',
+  'deny-and-blacklist',
+]);
+
+/**
+ * extractHostApprovalAction parses the resolved-payload envelope that
+ * HostApprovalCard emits through onRespond. Mirrors extractResolvedHITLAction
+ * above but narrows to the HostApproval action set so the card's "locked"
+ * visual is exact on rehydration (REQ-041/042 +
+ * spec-process-bugfix-a2ui-hitl-rehydration.md — surface must survive a
+ * reload byte-identically).
+ */
+function extractHostApprovalAction(payload: string | undefined): HostApprovalAction | null {
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    // Direct envelope — `{"action":"approve-once"}` — the shape
+    // HostApprovalCard sends through onRespond.
+    const direct = obj.action ?? obj.extended;
+    if (typeof direct === 'string' && HOST_APPROVAL_ACTIONS.has(direct as HostApprovalAction)) {
+      return direct as HostApprovalAction;
+    }
+    // Wrapped envelope — useChat.handleResolveHITL wraps the extended
+    // action under `content` when the HITL action narrows to `approve`:
+    // `{"action":"approve","content":"{\"action\":\"approve-once\"}"}`.
+    // Unwrap one level and try again so rehydration matches live state.
+    if (typeof obj.content === 'string') {
+      try {
+        const inner = JSON.parse(obj.content) as unknown;
+        if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+          const innerObj = inner as Record<string, unknown>;
+          const nested = innerObj.action ?? innerObj.extended;
+          if (typeof nested === 'string' && HOST_APPROVAL_ACTIONS.has(nested as HostApprovalAction)) {
+            return nested as HostApprovalAction;
+          }
+        }
+      } catch {
+        // nested malformed — treat as unresolved.
+      }
+    }
+  } catch {
+    // fall through — live or malformed envelopes stay unresolved.
+  }
+  return null;
+}
+
 export function A2UIMessageRenderer({
   payload,
   isStreaming,
@@ -1624,6 +1682,47 @@ export function A2UIMessageRenderer({
   // reduced-motion → fade only).
   const hasRound = Boolean(deferredPayload.round);
   const contentClass = hasRound ? 'a2ui-content a2ui-round-in' : 'a2ui-content';
+
+  // ── host.approval short-circuit ────────────────────────────────────────
+  // GAP-6 (spec-architecture-host-gate-security-policy.md §3 REQ-040..042)
+  // ships the HostGate approval HITL via a schema-discriminated envelope
+  // rather than generic a2ui primitives. Catching it here keeps the
+  // existing component catalog untouched while giving the HostGate its own
+  // risk-aware visual treatment.
+  //
+  // Rehydration parity: ResolutionContext already carries resolvedPayload
+  // + resolvedAt, so we decode the HostApprovalAction once and pass the
+  // locked state into the card — the rehydrated DOM is byte-identical to
+  // the live post-submit DOM (per spec-process-bugfix-a2ui-hitl-
+  // rehydration.md).
+  if (deferredPayload.schema === 'host.approval' && deferredPayload.hostApproval) {
+    const resolvedAction = extractHostApprovalAction(resolvedPayload);
+    const hostApproval: HostApprovalPayload = deferredPayload.hostApproval;
+    return (
+      <ResolutionContext.Provider value={resolutionValue}>
+        <div className={contentClass}>
+          {deferredPayload.round ? (
+            <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+          ) : null}
+          <HostApprovalCard
+            payload={hostApproval}
+            resolvedAction={resolvedAction}
+            resolvedAt={resolvedAt}
+            onRespond={(action) =>
+              handleAction({
+                type: 'hitl:host-approval',
+                // componentId is derived from the payload's operation+command
+                // so the reducer can key on a stable value when the backend
+                // returns the full transitionId separately via onHITLAction.
+                componentId: `host-approval:${hostApproval.operation}`,
+                payload: { action },
+              })
+            }
+          />
+        </div>
+      </ResolutionContext.Provider>
+    );
+  }
 
   return (
     <ResolutionContext.Provider value={resolutionValue}>

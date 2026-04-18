@@ -18,9 +18,12 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/host"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/host/gate"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
@@ -53,6 +56,19 @@ func main() {
 	toolReg := tools.NewRegistry()
 	var configProvider *config.Provider
 
+	// ── GAP-4 Safe primitive catalogue ──────────────────────────────────
+	// Built before SessionService so every spawned CPN can dispatch
+	// synthesize / instantiate transitions. The Bootstrap call installs
+	// the linter, canonicaliser, materialiser, and digest hooks on cpn/.
+	safeRegistry := synthesis.NewSafeRegistry()
+	synthesis.RegisterDefaults(safeRegistry)
+	if err := safeRegistry.LoadBashSnippetsFile(envOr("BASH_SNIPPETS_PATH", "cpn/synthesis/bash_snippets.yaml")); err != nil {
+		logger.Warn("synthesis: load bash snippets failed", slog.Any("error", err))
+	}
+	safeRegistry.Seal()
+	synthesis.Bootstrap(safeRegistry)
+	logger.Info("synthesis safe registry sealed", "primitives", len(safeRegistry.Names()))
+
 	if dsn := os.Getenv("LIWAISI_DB_DSN"); dsn != "" {
 		redisURL := envOr("LIWAISI_REDIS_URL", "redis://localhost:6379")
 		migrationsPath := envOr("MIGRATIONS_PATH", "store/postgres/migrations")
@@ -64,6 +80,17 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("persistence enabled", "postgres", "connected", "redis", "connected")
+
+		// ── Tool registry bootstrap (GAP-3) ────────────────────────────
+		// Bootstrap reconciles Postgres-persisted tools into memory first
+		// so builtin registrations run with awareness of any prior
+		// agent-authored rows (REQ-050).
+		toolRegistryRepo := storepostgres.NewToolRegistryStore(store.Pool())
+		if err := toolReg.Bootstrap(context.Background(), toolRegistryRepo); err != nil {
+			logger.Error("tool registry bootstrap failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		logger.Info("tool registry bootstrapped from postgres")
 
 		// Register personality tools (requires persistence for personality repo).
 		persDeps := &tools.PersonalityToolDeps{
@@ -88,6 +115,8 @@ func main() {
 				Users:        store.Users(),
 				FuncRegistry: registry,
 			}),
+			app.WithSafeRegistry(safeRegistry),
+			app.WithAuthoredFlowRepository(storepostgres.NewAuthoredFlowRepository(store.Pool())),
 		)
 
 		// ── Config provider (encrypted config in DB) ────────────────────
@@ -110,6 +139,12 @@ func main() {
 		logger.Info("config provider initialized")
 	} else {
 		logger.Info("persistence disabled (LIWAISI_DB_DSN not set)")
+		// Dev-mode: use an in-memory AuthoredFlowRepository so the
+		// synthesize / instantiate transitions still work end-to-end.
+		serviceOpts = append(serviceOpts,
+			app.WithSafeRegistry(safeRegistry),
+			app.WithAuthoredFlowRepository(synthesis.NewMemoryAuthoredFlowRepository()),
+		)
 	}
 
 	// ── Resolve config values (env > DB > default) ──────────────────────
@@ -147,6 +182,10 @@ func main() {
 	}
 	holder := config.NewLLMClientHolder(llmClient)
 	costProvider := &ledgerCostAdapter{ledger: llmClient.TokenLedger}
+
+	// Inject the product-default model from the infra layer at the composition
+	// root so the app layer never imports infra/openrouter directly.
+	serviceOpts = append(serviceOpts, app.WithDefaultModel(openrouter.PRODUCT_DEFAULT_MODEL))
 
 	if store != nil {
 		serviceOpts = append(serviceOpts,
@@ -191,6 +230,110 @@ func main() {
 		topologyFactory = manageModelsTopologyFactoryForSession
 	default:
 		topologyFactory = unifiedTopologyFactory
+	}
+
+	// ── Authored-artefact ledger (GAP-10) ───────────────────────────────
+	// Wired ahead of the HostAdapter so we can pass it as a constructor
+	// option. When persistence is disabled we fall back to the in-memory
+	// ledger so local dev still exercises the write/rollback/restore
+	// paths end-to-end.
+	var artefactLedger persist.AuthoredArtefactLedger
+	if store != nil {
+		artefactLedger = storepostgres.NewAuthoredArtefactStore(store.Pool())
+		logger.Info("authored artefact ledger enabled (postgres)")
+	} else {
+		artefactLedger = persist.NewMemoryArtefactLedger()
+		logger.Info("authored artefact ledger enabled (in-memory)")
+	}
+
+	// ── Host runtime (GAP-1) ────────────────────────────────────────────
+	// Single instance shared across all sessions: HostAdapter is stateless
+	// per-call, BashSessionManager keeps its own sync, HostGate is pure.
+	hostAdapter := host.NewOSHostAdapter(logger, host.WithArtefactLedger(artefactLedger))
+	hostSessions := host.NewInMemoryBashSessionManager(logger)
+
+	// ── HostGate (GAP-6) ────────────────────────────────────────────────
+	// Load the declarative HostPolicy and construct the PolicyHostGate
+	// with the first-run ledger, audit-log, budget tracker, and sandbox
+	// capability. Falls back to AllowAllHostGate when the policy file is
+	// missing or malformed — with a loud warning so operators notice.
+	var hostPolicyHolder *gate.Holder
+	var firstRunRepo persist.FirstRunRepository
+	var gateDecisionsRepo persist.GateDecisionRepository
+	var hostGateImpl cpn.HostGate = host.NewAllowAllHostGate()
+
+	policyPath := envOr("HOST_POLICY_PATH", "infra/host/policies/default.yaml")
+	learnedPath := envOr("HOST_POLICY_LEARNED_PATH", "infra/host/policies/learned.yaml")
+	if policy, err := gate.LoadFromFile(policyPath); err != nil {
+		logger.Warn("host gate: policy load failed, using allow-all gate", "path", policyPath, "error", err)
+	} else {
+		if err := gate.MergeLearnedFromFile(policy, learnedPath); err != nil {
+			logger.Warn("host gate: learned overlay load failed", "path", learnedPath, "error", err)
+		}
+		hostPolicyHolder = gate.NewHolder(policy).WithLearnedPath(learnedPath)
+		if store != nil {
+			firstRunRepo = storepostgres.NewFirstRunStore(store.Pool())
+			gateDecisionsRepo = storepostgres.NewGateDecisionsStore(store.Pool())
+		}
+		policyGate := gate.NewPolicyHostGate(
+			hostPolicyHolder,
+			firstRunRepo,
+			gateDecisionsRepo,
+			gate.NewBudgetTracker(),
+			gate.NewStaticSandboxCapability(),
+			logger,
+		)
+		hostGateImpl = policyGate
+		logger.Info("host policy gate enabled", "path", policyPath)
+	}
+
+	hostRuntime := &cpn.HostRuntime{
+		Adapter:  hostAdapter,
+		Gate:     hostGateImpl,
+		Sessions: hostSessions,
+	}
+	serviceOpts = append(serviceOpts, app.WithHostRuntime(hostRuntime))
+	logger.Info("host runtime initialized", "gate", gateKind(hostGateImpl))
+
+	// ── Host capability repository + discovery factory (GAP-2) ──────────
+	var hostCapRepo persist.HostCapabilityRepository
+	if store != nil {
+		hostCapRepo = store.HostCapability()
+		setHostCapabilityRepo(hostCapRepo)
+		serviceOpts = append(serviceOpts,
+			app.WithHostCapabilityRepo(hostCapRepo),
+			app.WithHostDiscoveryFactory(func(sid string) *cpn.CPN {
+				return hostDiscoveryTopologyFactory(sid, HostDiscoveryDeps{
+					Repository: hostCapRepo,
+					Source:     persist.HostSnapshotSourceSession,
+				})
+			}),
+		)
+		logger.Info("host capability registry enabled")
+	}
+
+	// ── Mutation audit log (GAP-7 REQ-005) ─────────────────────────────
+	// When persistence is enabled, every topology mutation attempt is logged
+	// to cpn_mutations via the bridge adapter. When persistence is disabled
+	// the log is nil and mutations are silently unaduited (dev-mode only).
+	if store != nil {
+		serviceOpts = append(serviceOpts,
+			app.WithMutationLog(&mutationAuditAdapter{repo: store.Mutations()}),
+		)
+		logger.Info("topology mutation audit log enabled")
+	}
+
+	// ── CLI flag --bootstrap-discovery ──────────────────────────────────
+	if hasBootstrapDiscoveryFlag(os.Args) {
+		if hostCapRepo == nil {
+			logger.Error("--bootstrap-discovery requires LIWAISI_DB_DSN")
+			os.Exit(1)
+		}
+		if err := runBootstrapDiscovery(logger, hostRuntime, hostCapRepo); err != nil {
+			logger.Error("bootstrap discovery failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	// ── Application layer ───────────────────────────────────────────────
@@ -238,7 +381,77 @@ func main() {
 			httpapi.WithModelRegistry(store.ModelRegistry()),
 		)
 	}
+	// GAP-6 admin endpoints — wire the HostPolicy holder + stores. Each
+	// option is a no-op when the dependency is nil so the endpoint
+	// degrades to 503 instead of panicking.
+	if hostPolicyHolder != nil {
+		serverOpts = append(serverOpts, httpapi.WithHostPolicy(hostPolicyHolder))
+	}
+	if gateDecisionsRepo != nil {
+		serverOpts = append(serverOpts, httpapi.WithGateDecisions(gateDecisionsRepo))
+	}
+	if firstRunRepo != nil {
+		serverOpts = append(serverOpts, httpapi.WithFirstRun(firstRunRepo))
+	}
+	// GAP-2 host capability admin endpoints.
+	if hostCapRepo != nil {
+		serverOpts = append(serverOpts,
+			httpapi.WithHostCapabilityAccessor(hostCapRepo),
+			httpapi.WithHostIDResolver(&hostIDResolverAdapter{runtime: hostRuntime}),
+			httpapi.WithHostDiscoveryRunner(&hostDiscoveryRunnerAdapter{
+				repo:    hostCapRepo,
+				runtime: hostRuntime,
+			}),
+		)
+	}
+
+	// ── GAP-10 rollback / purge services + admin endpoints ──────────────
+	// ToolDeprecator bridges the rollback service to the cpn/tools
+	// registry so binaries backing a registered tool get flagged
+	// "artefact_rolled_back". Pure adapter — keeps cpn/persist
+	// storage-agnostic.
+	toolDeprecator := &toolRegistryDeprecator{registry: toolReg}
+	rollbackSvc := persist.NewRollbackService(artefactLedger, hostAdapter.AllowedRoot, toolDeprecator, logger)
+	purgeSvc := persist.NewPurgeService(artefactLedger, envInt("ARTEFACT_GRACE_DAYS", 7), logger)
+
+	serverOpts = append(serverOpts,
+		httpapi.WithArtefactLedger(artefactLedger),
+		httpapi.WithArtefactRollback(rollbackSvc),
+		httpapi.WithArtefactPurge(purgeSvc),
+	)
+
+	// GAP-4 admin flows surface. In prod we wire the postgres-backed
+	// repo; dev mode stays 503 because no authored flows exist.
+	if store != nil {
+		serverOpts = append(serverOpts,
+			httpapi.WithAuthoredFlows(storepostgres.NewAuthoredFlowRepository(store.Pool())),
+		)
+	}
+
+	// GAP-8 skill manifest — aggregates builtins, tools, and host caps into
+	// a single read-only endpoint + compact form for LLM classifier injection.
+	{
+		resolvedHostID, _ := os.Hostname()
+		if resolvedHostID == "" {
+			resolvedHostID = "localhost"
+		}
+		skillManifest := app.NewSkillManifestService(
+			toolReg.Repository(),
+			hostCapRepo,
+			resolvedHostID,
+			[]string{"classifier", "host-discovery", "tool-forge"},
+		)
+		serverOpts = append(serverOpts, httpapi.WithSkillManifest(skillManifest))
+	}
+
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
+
+	// ── Hourly purge goroutine ──────────────────────────────────────────
+	// Runs under the process lifetime context so it exits with the
+	// server. First tick fires at startup to clear any backlog.
+	purgeCtx, cancelPurge := context.WithCancel(context.Background())
+	go purgeSvc.Loop(purgeCtx, time.Hour)
+	defer cancelPurge()
 
 	// Wire event callback: CPN events -> SSE broker.
 	// HITL events are intercepted and re-emitted as A2UI stream chunks
@@ -437,6 +650,33 @@ func main() {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+// toolRegistryDeprecator adapts *tools.Registry to the
+// persist.ToolDeprecator interface consumed by the rollback service. The
+// LookupByBinaryPath resolver scans every registered tool — fine at our
+// scale, cheap enough to recompute on every rollback.
+type toolRegistryDeprecator struct {
+	registry *tools.Registry
+}
+
+func (t *toolRegistryDeprecator) Deprecate(ctx context.Context, qualifiedName, reason string) error {
+	if t == nil || t.registry == nil {
+		return nil
+	}
+	return t.registry.Deprecate(ctx, qualifiedName, reason)
+}
+
+func (t *toolRegistryDeprecator) LookupByBinaryPath(_ context.Context, binaryPath string) (string, bool) {
+	if t == nil || t.registry == nil || binaryPath == "" {
+		return "", false
+	}
+	for _, entry := range t.registry.ListFiltered(context.Background(), tools.ToolFilter{}) {
+		if entry.BinaryPath == binaryPath {
+			return entry.QualifiedName(), true
+		}
+	}
+	return "", false
+}
+
 // ledgerCostAdapter adapts TokenLedger to cpn.CostProvider.
 type ledgerCostAdapter struct {
 	ledger *openrouter.TokenLedger
@@ -521,6 +761,23 @@ func (a *tokenLedgerAdapter) Get(sessionID string) *app.TokenUsage {
 		Calls:        rec.Calls,
 		TotalCostUSD: rec.TotalCostUSD,
 	}
+}
+
+// mutationAuditAdapter bridges persist.MutationRepository to cpn.MutationAuditLog (GAP-7).
+type mutationAuditAdapter struct {
+	repo persist.MutationRepository
+}
+
+func (a *mutationAuditAdapter) LogMutation(ctx context.Context, cpnID, sessionID string, m cpn.Mutation, approved bool, rejectedReason string) error {
+	return a.repo.Insert(ctx, &persist.MutationRecord{
+		CPNID:          cpnID,
+		SessionID:      sessionID,
+		MutationKind:   string(m.Kind),
+		RequestedBy:    m.RequestedBy,
+		Reason:         m.Reason,
+		Approved:       approved,
+		RejectedReason: rejectedReason,
+	})
 }
 
 // resolveAdminEmails reads ADMIN_EMAILS (or legacy ADMIN_EMAIL), parses it,
@@ -618,6 +875,17 @@ func buildHITLReviewCard(_, transitionID string) string {
 		return "" // caller's WARN already fired; swallow to avoid stranding the SSE stream
 	}
 	return "$$a2ui:" + string(data)
+}
+
+// gateKind reports a short name for the active HostGate implementation
+// so the boot log makes the choice visible.
+func gateKind(g cpn.HostGate) string {
+	switch g.(type) {
+	case *gate.PolicyHostGate:
+		return "policy"
+	default:
+		return "allow-all"
+	}
 }
 
 // slogLevel returns the slog level from LOG_LEVEL env var.

@@ -6,29 +6,38 @@ import (
 )
 
 // drainObservers reads all pending events from sub-CPN event buses and
-// deposits matching events as ColorEvent tokens into observer output places.
+// the CPN's own self-bus, and deposits matching events as ColorEvent
+// tokens into observer output places.
 //
 // Algorithm (drain-then-dispatch):
 //
-//	Phase 1: Non-blocking drain of ALL events from ALL SubNetBuses into a slice.
+//	Phase 1: Non-blocking drain of ALL events from ALL SubNetBuses AND the
+//	         CPN's own selfBus (GAP-9: process events from NodeKindBash
+//	         transitions in THIS CPN) into a slice.
 //	Phase 2: For each event, check ALL observer transitions. If ObservedCPNID
 //	         and EventFilter both pass, create ColorEvent token and deposit
 //	         into the observer's OutputPlaces.
 //
 // Runs on the main goroutine. Never blocks. Never spawns goroutines.
 func drainObservers(_ context.Context, c *CPN) {
-	// REQ-014: Nil or empty SubNetBuses → no-op.
+	// Snapshot sub-CPN buses under lock to avoid holding it during drain.
 	c.subNetMu.Lock()
-	if len(c.subNetBuses) == 0 {
-		c.subNetMu.Unlock()
-		return
-	}
-	// Snapshot the bus map under lock to avoid holding it during drain.
 	buses := make(map[string]<-chan Event, len(c.subNetBuses))
 	for id, bus := range c.subNetBuses {
 		buses[id] = bus
 	}
 	c.subNetMu.Unlock()
+
+	// Grab the self-bus (may be nil if no process events have been
+	// emitted yet, in which case we skip it silently).
+	c.selfMu.Lock()
+	selfBus := c.selfBus
+	c.selfMu.Unlock()
+
+	// REQ-014: Nothing to drain.
+	if len(buses) == 0 && selfBus == nil {
+		return
+	}
 
 	// Collect observer transitions.
 	var observers []*Transition
@@ -41,9 +50,9 @@ func drainObservers(_ context.Context, c *CPN) {
 		return
 	}
 
-	// Phase 1: Non-blocking drain of ALL buses into a slice.
-	// GUD-002: Pre-allocate with estimated capacity.
-	events := make([]Event, 0, len(buses)*4)
+	// Phase 1: Non-blocking drain of ALL buses (sub-CPNs + self) into a
+	// slice. GUD-002: Pre-allocate with estimated capacity.
+	events := make([]Event, 0, len(buses)*4+4)
 	for _, bus := range buses {
 		for {
 			select {
@@ -57,6 +66,20 @@ func drainObservers(_ context.Context, c *CPN) {
 			}
 		}
 	nextBus:
+	}
+	if selfBus != nil {
+		for {
+			select {
+			case e, ok := <-selfBus:
+				if !ok {
+					goto selfDone
+				}
+				events = append(events, e)
+			default:
+				goto selfDone
+			}
+		}
+	selfDone:
 	}
 
 	if len(events) == 0 {

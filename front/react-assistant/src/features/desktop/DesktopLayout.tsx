@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
 import { useChat } from '../../hooks/useChat';
@@ -27,6 +27,7 @@ import { PersonalityPanel } from '../personality/PersonalityPanel';
 import { ToolBrowser } from '../tools/ToolBrowser';
 import { AdminSecretsPanel } from '../admin/AdminSecretsPanel';
 import { SettingsPage } from '../settings/SettingsPage';
+import { SkillsPanel } from '../skills/SkillsPanel';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface DesktopLayoutProps {
@@ -55,6 +56,52 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
   // ── Panel state ─────────────────────────────────────────────────────────
   const panel = usePanelManager();
+
+  // ── Skills sub-view ─────────────────────────────────────────────────────
+  // The Skills panel (GAP-8) is reached at `/settings/skills`. Because the
+  // app doesn't use react-router (every view is a key in `activeApp`), we
+  // model the route as a sub-view of the `settings` app driven by the URL
+  // hash + a command-palette action. Opening Skills forces activeApp into
+  // `settings` so the rail stays in the settings context.
+  const [skillsOpen, setSkillsOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.hash === '#/settings/skills';
+  });
+
+  useEffect(() => {
+    const readHash = () => {
+      const next = window.location.hash === '#/settings/skills';
+      setSkillsOpen((prev) => (prev === next ? prev : next));
+    };
+    window.addEventListener('hashchange', readHash);
+    readHash();
+    return () => window.removeEventListener('hashchange', readHash);
+  }, []);
+
+  const openSkills = useCallback(() => {
+    setSkillsOpen(true);
+    setActiveApp('settings');
+    panel.closePanel();
+    setIsRailExpanded(false);
+    if (typeof window !== 'undefined' && window.location.hash !== '#/settings/skills') {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/settings/skills`);
+    }
+  }, [setActiveApp, panel.closePanel, setIsRailExpanded]);
+
+  const closeSkills = useCallback(() => {
+    setSkillsOpen(false);
+    if (typeof window !== 'undefined' && window.location.hash === '#/settings/skills') {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
+  }, []);
+
+  // Navigating away from settings (to chat, flows, etc.) MUST clear the
+  // skills sub-view so the hash and the visible content stay in sync.
+  useEffect(() => {
+    if (activeApp !== 'settings' && skillsOpen) {
+      closeSkills();
+    }
+  }, [activeApp, skillsOpen, closeSkills]);
 
   // ── Monitor + SSE coordination ──────────────────────────────────────────
   const onSessionCompleted = useCallback(() => {
@@ -319,7 +366,23 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
       category: t('desktop:commandPalette.categories.account'),
       shortcut: '\u2318,',
       keywords: ['preferences', 'ajustes', 'configuración', 'settings'],
-      handler: () => navigateAndClearPanel('settings'),
+      handler: () => { closeSkills(); navigateAndClearPanel('settings'); },
+    },
+    // Skills (GAP-8) — reached at #/settings/skills. Registered here so
+    // Cmd-K → "Habilidades" opens the inspection panel without a rail
+    // change. See spec-architecture-skill-manifest.md for the manifest
+    // shape.
+    {
+      id: 'account-skills',
+      label: 'Habilidades · Skills',
+      category: t('desktop:commandPalette.categories.account'),
+      keywords: ['skills', 'habilidades', 'flows', 'tools', 'herramientas', 'capacidades', 'manifest'],
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
+        </svg>
+      ),
+      handler: openSkills,
     },
     {
       id: 'account-language',
@@ -350,7 +413,7 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
       keywords: ['logout', 'salir', 'cerrar sesión', 'sign out'],
       handler: () => logout(),
     },
-  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel, logout]);
+  ], [t, activeApp, chatList.createChat, navigateAndClearPanel, setActiveApp, panel.closePanel, setIsRailExpanded, toggleFlowsPanel, toggleMonitorPanel, logout, openSkills, closeSkills]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
@@ -491,7 +554,9 @@ export function DesktopLayout({ userId }: DesktopLayoutProps) {
 
             {activeApp === 'admin' && <AdminSecretsPanel />}
 
-            {activeApp === 'settings' && <SettingsPage />}
+            {activeApp === 'settings' && !skillsOpen && <SettingsPage />}
+
+            {activeApp === 'settings' && skillsOpen && <SkillsPanel />}
           </div>
 
           {/* Adaptive Right Panel -- only in chat mode, desktop only */}

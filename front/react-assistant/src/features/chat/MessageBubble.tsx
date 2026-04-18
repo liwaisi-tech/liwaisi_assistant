@@ -123,6 +123,26 @@ export const MessageBubble = memo(function MessageBubble({
   // Route A2UI actions — HITL actions dispatch to the resolver
   const handleA2UIAction = useCallback(
     (action: A2UIAction) => {
+      // GAP-6 host.approval: the extended action keyword (approve-once,
+      // approve-and-remember, deny, deny-and-blacklist) is carried in the
+      // payload; the wire-level HITLAction MUST narrow to approve|reject so
+      // the existing /hitl/:transitionId endpoint accepts it. We stash the
+      // extended form as the `content` field so the backend can dispatch
+      // on the full four-way choice without a new endpoint. The reducer's
+      // resolvedPayload key is `{"action":"approve-once", ...}` so
+      // A2UIMessageRenderer.extractHostApprovalAction finds it on
+      // rehydration.
+      if (action.type === 'hitl:host-approval') {
+        const extended = (action.payload as { action?: string } | null)?.action;
+        if (!extended || !hitlTransitionId) return;
+        const hitlAction: HITLAction =
+          extended === 'approve-once' || extended === 'approve-and-remember'
+            ? 'approve'
+            : 'reject';
+        const content = JSON.stringify({ action: extended });
+        onHITLAction?.(hitlTransitionId, hitlAction, content);
+        return;
+      }
       if (action.type === 'hitl:revise') {
         setReviseTransitionId(action.componentId ?? hitlTransitionId ?? null);
         setReviseMode(true);

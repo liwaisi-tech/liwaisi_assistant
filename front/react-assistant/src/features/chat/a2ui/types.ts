@@ -22,7 +22,45 @@ export interface A2UIPayload {
    * `max >= 2`, the renderer draws a RoundBadge above the component tree.
    * See REQ-100 / REQ-127 in the iterative clarification loop spec. */
   round?: A2UIRound;
+  /** Optional schema discriminator. When present, the renderer may pick a
+   * dedicated surface component instead of walking `components`. Used by
+   * GAP-6 HostGate approvals (schema = 'host.approval'), where the payload
+   * carries a structured `hostApproval` bag and the UI treatment is
+   * risk-band-specific rather than generic a2ui primitives. Unknown schemas
+   * fall through to the default component walk so older clients stay
+   * compatible. See spec-architecture-host-gate-security-policy.md §3
+   * REQ-040..REQ-042. */
+  schema?: string;
+  /** Payload for schema='host.approval'. Present iff the surface is a
+   * HostGate approval prompt. See REQ-040 in the HostGate policy spec. */
+  hostApproval?: HostApprovalPayload;
 }
+
+/** HostGate approval prompt payload — surfaced when a shell, PTY, write, or
+ * kill operation hits a pattern that requires human confirmation before
+ * the host adapter may proceed. REQ-040. */
+export interface HostApprovalPayload {
+  operation: HostApprovalOperation;
+  command: string;
+  risk_band: HostApprovalRiskBand;
+  rationale: string;
+  alternatives?: string[];
+}
+
+/** The four host operations that can require an approval prompt. */
+export type HostApprovalOperation = 'exec' | 'spawn_pty' | 'write_file' | 'kill';
+
+/** Risk bands the UI actually renders. `forbidden` is server-denied before
+ * it ever reaches the UI, so the renderer treats it as a defensive case
+ * and never exposes an Approve button for it. */
+export type HostApprovalRiskBand = 'safe' | 'caution' | 'dangerous' | 'forbidden';
+
+/** User decisions on a host.approval prompt. Matches REQ-042 verbatim. */
+export type HostApprovalAction =
+  | 'approve-once'
+  | 'approve-and-remember'
+  | 'deny'
+  | 'deny-and-blacklist';
 
 /** A single declarative UI component descriptor. */
 export interface A2UIComponent {

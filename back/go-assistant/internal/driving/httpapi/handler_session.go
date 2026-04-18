@@ -11,7 +11,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/host/gate"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
@@ -61,7 +61,7 @@ type ForkSessionResponse struct {
 
 // Handlers holds dependencies for HTTP handlers.
 type Handlers struct {
-	App             *app.SessionService
+	App             SessionPort
 	Broker          *SSEBroker
 	Logger          *slog.Logger
 	BillingFetcher  BillingFetcher
@@ -71,13 +71,49 @@ type Handlers struct {
 	Verifier        auth.TokenVerifier
 	UserRepo        persist.UserRepository
 	PersonalityRepo persist.PersonalityRepository
-	ToolRegistry    *tools.Registry
+	ToolRegistry    ToolRegistryPort
 	WaitlistRepo    persist.WaitlistRepository
 	RateLimitCfg    *RateLimitConfig
 	ConfigProvider  *config.Provider
 	AdminEmails     []string
 	AuditRepo       AuditLogger
 	ModelRegistry   cpn.ModelRegistry
+
+	// HostPolicy, GateDecisions, FirstRun are the GAP-6 admin
+	// surfaces. They are optional — when nil the corresponding
+	// /api/v1/admin/host/* endpoint returns 503.
+	HostPolicy    HostPolicyReader
+	GateDecisions persist.GateDecisionRepository
+	FirstRun      persist.FirstRunRepository
+
+	// HostCapability, HostDiscoveryRunner, HostIDResolver are the GAP-2
+	// admin surfaces. All three are optional — when nil the
+	// /api/v1/admin/host/capabilities* endpoints return 503.
+	HostCapability      HostCapabilityAccessor
+	HostDiscoveryRunner HostDiscoveryRunner
+	HostIDResolver      HostIDResolver
+
+	// ArtefactLedger, ArtefactRollback, ArtefactPurge are the GAP-10
+	// admin surfaces. When any is nil the corresponding
+	// /api/v1/admin/artefacts/* endpoint returns 503.
+	ArtefactLedger   persist.AuthoredArtefactLedger
+	ArtefactRollback ArtefactRollbackService
+	ArtefactPurge    ArtefactPurgeRunner
+
+	// AuthoredFlows is the GAP-4 admin surface for agent-authored flows.
+	// Optional — when nil the /api/v1/admin/flows* endpoints return 503.
+	AuthoredFlows cpn.AuthoredFlowRepository
+
+	// SkillManifest is the GAP-8 aggregator. Optional — when nil the
+	// /api/v1/admin/skills* endpoints return 503.
+	SkillManifest SkillManifestPort
+}
+
+// HostPolicyReader is the minimal port the admin handlers use to inspect
+// / swap the gate policy. The concrete implementation is *gate.Holder.
+type HostPolicyReader interface {
+	Get() *gate.HostPolicy
+	Put(p *gate.HostPolicy)
 }
 
 // AuditLogger is the port for recording admin config mutations.

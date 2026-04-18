@@ -9,19 +9,18 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 )
 
-// BRAEExecutor handles A2A JSON-RPC requests by delegating to the SessionService.
+// BRAEExecutor handles A2A JSON-RPC requests by delegating to the session service.
 // It bridges A2A protocol semantics to the CPN application layer.
 type BRAEExecutor struct {
-	service *app.SessionService
+	service A2ASessionPort
 	mapper  *Mapper
 	logger  *slog.Logger
 }
 
-// NewBRAEExecutor creates a new A2A executor wired to the given SessionService.
-func NewBRAEExecutor(service *app.SessionService, mapper *Mapper, logger *slog.Logger) *BRAEExecutor {
+// NewBRAEExecutor creates a new A2A executor wired to the given session service.
+func NewBRAEExecutor(service A2ASessionPort, mapper *Mapper, logger *slog.Logger) *BRAEExecutor {
 	return &BRAEExecutor{
 		service: service,
 		mapper:  mapper,

@@ -57,6 +57,28 @@ const (
 
 	// EventToolRegistered is emitted when a new tool is registered with the engine.
 	EventToolRegistered EventType = "tool_registered"
+
+	// EventProcessStarted is emitted when a NodeKindBash transition begins
+	// executing a process or session write (GAP-1).
+	EventProcessStarted EventType = "process_started"
+
+	// EventProcessStdout is emitted for each stdout line of a streaming bash
+	// transition.
+	EventProcessStdout EventType = "process_stdout"
+
+	// EventProcessStderr is emitted for each stderr line of a streaming bash
+	// transition.
+	EventProcessStderr EventType = "process_stderr"
+
+	// EventProcessExit is emitted when a bash transition's underlying process
+	// terminates.
+	EventProcessExit EventType = "process_exit"
+
+	// EventTopologyMutated is emitted when a topology mutation is successfully applied (GAP-7).
+	EventTopologyMutated EventType = "topology_mutated"
+
+	// EventTopologyMutationRejected is emitted when a topology mutation is rejected (GAP-7).
+	EventTopologyMutationRejected EventType = "topology_mutation_rejected"
 )
 
 // TransitionStartedPayload captures input tokens consumed before firing.
@@ -121,6 +143,58 @@ type ConflictPayload struct {
 	Rejected   string `json:"rejected"`
 	Reason     string `json:"reason"`
 	Suggestion string `json:"suggestion"`
+}
+
+// ProcessEvent is the spec-shaped payload for process lifecycle events
+// emitted by NodeKindBash transitions (GAP-9 §4). It is an alias-shaped
+// view over ProcessOutputPayload so existing GAP-1 emitters remain
+// source-compatible: fire_bash.go stamps ProcessOutputPayload onto
+// Event.Payload, and consumers can call CastProcessEvent(e) to obtain a
+// normalised ProcessEvent value with the timestamp and kind already
+// copied from the envelope.
+type ProcessEvent struct {
+	Kind      EventType
+	SessionID string
+	PID       int
+	Line      []byte
+	ExitCode  int
+	Timestamp time.Time
+}
+
+// CastProcessEvent converts an Event carrying a ProcessOutputPayload into
+// the spec-shaped ProcessEvent. It returns ok=false for events that are
+// not process events (Kind not in {process_started, process_stdout,
+// process_stderr, process_exit}) or whose payload is not a
+// ProcessOutputPayload.
+//
+// Callers use it inside EventFilter implementations and observer token
+// handlers to avoid repeating the type-assertion boilerplate:
+//
+//	if pe, ok := cpn.CastProcessEvent(e); ok {
+//	    if bytes.Contains(pe.Line, []byte("error")) { ... }
+//	}
+func CastProcessEvent(e Event) (ProcessEvent, bool) {
+	switch e.Type {
+	case EventProcessStarted, EventProcessStdout, EventProcessStderr, EventProcessExit:
+	default:
+		return ProcessEvent{}, false
+	}
+	payload, ok := e.Payload.(ProcessOutputPayload)
+	if !ok {
+		return ProcessEvent{}, false
+	}
+	var line []byte
+	if payload.Line != "" {
+		line = []byte(payload.Line)
+	}
+	return ProcessEvent{
+		Kind:      e.Type,
+		SessionID: payload.SessionID,
+		PID:       payload.PID,
+		Line:      line,
+		ExitCode:  payload.ExitCode,
+		Timestamp: e.Timestamp,
+	}, true
 }
 
 // Event is an append-only record emitted by transitions and sub-CPNs,
