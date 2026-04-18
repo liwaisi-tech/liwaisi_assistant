@@ -52,13 +52,13 @@ function makeEntry(partial: Partial<ModelRegistryEntry>): ModelRegistryEntry {
 }
 
 describe('useModelAdminFlow', () => {
-  let injectLocalMessage: ReturnType<typeof vi.fn>;
-  let updateMessageContent: ReturnType<typeof vi.fn>;
+  let injectLocalMessage: ReturnType<typeof vi.fn<(id: string, content: string, cpnRole?: string) => void>>;
+  let updateMessageContent: ReturnType<typeof vi.fn<(id: string, content: string) => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    injectLocalMessage = vi.fn();
-    updateMessageContent = vi.fn();
+    injectLocalMessage = vi.fn<(id: string, content: string, cpnRole?: string) => void>();
+    updateMessageContent = vi.fn<(id: string, content: string) => void>();
     adminListModels.mockResolvedValue({ items: [makeEntry({})], total: 1, page: 1, size: 1 });
     adminSetDefaultModel.mockResolvedValue(makeEntry({ is_product_default: true }));
     adminLicenseReview.mockResolvedValue(makeEntry({}));
