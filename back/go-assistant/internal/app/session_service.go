@@ -386,7 +386,12 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		Timestamp: time.Now(),
 	}
 
-	source := findSourcePlace(session.Root)
+	// REQ-FIX-001: look up p-input directly; findSourcePlace is non-deterministic
+	// when SeedHostSnapshot has added p-host-capabilities to the map.
+	source := session.Root.Places["p-input"]
+	if source == nil {
+		source = findSourcePlace(session.Root)
+	}
 	if source != nil {
 		if err := source.Deposit(tok); err != nil {
 			return fmt.Errorf("deposit token: %w", err)

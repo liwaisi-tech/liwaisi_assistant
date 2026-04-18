@@ -130,6 +130,7 @@ export function MessageList({
             resolvedPayload={msg.resolvedPayload}
             resolvedAt={msg.resolvedAt}
             metadata={msg.metadata}
+            toolExecutions={msg.toolExecutions}
             onHITLAction={onHITLAction}
             onA2UIAction={onA2UIAction}
             onOpenMonitor={onOpenMonitor}

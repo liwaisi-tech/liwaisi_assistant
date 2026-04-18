@@ -14,6 +14,7 @@ interface UseSSEOptions {
   onSubNetStarted?: (data: CPNEventData) => void;
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
+  onToolExecuted?: (data: CPNEventData) => void;
   onError?: (error: Event) => void;
   /**
    * Fired when the SSE stream reveals that the current session id no longer
@@ -78,6 +79,7 @@ export function useSSE({
   onSubNetStarted,
   onSubNetCompleted,
   onSubNetFailed,
+  onToolExecuted,
   onError,
   onSessionNotFound,
 }: UseSSEOptions): UseSSEReturn {
@@ -93,11 +95,11 @@ export function useSSE({
   // each render — `connect` only depends on stable values below.
   const callbacksRef = useRef({
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onError, onSessionNotFound,
   });
   callbacksRef.current = {
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onError, onSessionNotFound,
   };
 
   /**
@@ -230,6 +232,13 @@ export function useSSE({
       try {
         const data: CPNEventData = JSON.parse(evt.data);
         callbacksRef.current.onSubNetFailed?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('tool_executed', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onToolExecuted?.(data);
       } catch { /* malformed SSE data — skip event */ }
     });
 

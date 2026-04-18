@@ -383,6 +383,7 @@ func (h *Handlers) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "session is busy")
 			return
 		}
+		h.Logger.Error("send message failed", "session_id", sessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

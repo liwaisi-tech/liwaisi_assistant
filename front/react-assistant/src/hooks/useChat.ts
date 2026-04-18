@@ -1,7 +1,7 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { BackendSessionState, SessionState } from '../types/api';
-import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload } from '../types/sse';
-import type { ChatMessage, HITLAction } from '../types/chat';
+import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload, ToolExecutedPayload } from '../types/sse';
+import type { ChatMessage, HITLAction, ToolExecution } from '../types/chat';
 import type { A2UIAction } from '../features/chat/a2ui/types';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
@@ -71,6 +71,7 @@ export type ChatAction =
   | { type: 'ACTIVITY_RECEIPT_DISMISS' }
   | { type: 'INJECT_LOCAL_MESSAGE'; id: string; content: string; cpnRole?: string }
   | { type: 'UPDATE_MESSAGE_CONTENT'; id: string; content: string }
+  | { type: 'TOOL_EXECUTED'; cpnId: string; sessionId: string; execution: ToolExecution }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -537,6 +538,31 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ),
       };
 
+    case 'TOOL_EXECUTED': {
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      // Append to the most recent assistant message for this cpnId.
+      // Prefer the active streaming message; fall back to the last
+      // non-streaming assistant message if the tool fired after Done.
+      let targetIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        if (m.role === 'assistant' && m.cpnId === action.cpnId) {
+          targetIdx = i;
+          break;
+        }
+      }
+      if (targetIdx === -1) return state;
+      const updated = [...state.messages];
+      const prev = updated[targetIdx];
+      updated[targetIdx] = {
+        ...prev,
+        toolExecutions: [...(prev.toolExecutions ?? []), action.execution],
+      };
+      return { ...state, messages: updated };
+    }
+
     case 'RESET':
       return { ...initialState };
 
@@ -754,6 +780,33 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [options?.onTransitionCompleted]
   );
 
+  const onToolExecuted = useCallback(
+    (data: CPNEventData) => {
+      const raw = data.Payload as ToolExecutedPayload | undefined;
+      if (!raw) return;
+      // Only surface the three system-tool names from GAP-11 (REQ-020).
+      const name = raw.tool_name ?? '';
+      if (name !== 'bash_exec' && name !== 'file_read' && name !== 'file_write') return;
+      const execution: ToolExecution = {
+        id: `tool-${data.ID || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        toolName: name,
+        namespace: raw.namespace ?? '',
+        durationMs: raw.duration_ms ?? 0,
+        success: raw.success ?? true,
+        error: raw.error,
+        arguments: raw.arguments,
+        timestamp: new Date(data.Timestamp || Date.now()),
+      };
+      dispatch({
+        type: 'TOOL_EXECUTED',
+        cpnId: data.CPNID,
+        sessionId: data.SessionID,
+        execution,
+      });
+    },
+    [],
+  );
+
   const { isConnected, connectionState } = useSSE({
     sessionId,
     onStreamChunk,
@@ -762,6 +815,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     onHITLRequested,
     onTransitionStarted,
     onTransitionCompleted,
+    onToolExecuted,
     onSubNetStarted: options?.onSubNetStarted,
     onSubNetCompleted: options?.onSubNetCompleted,
     onSubNetFailed: options?.onSubNetFailed,

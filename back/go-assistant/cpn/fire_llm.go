@@ -11,21 +11,38 @@ import (
 )
 
 // renderSystemPrompt returns the per-invocation system prompt for an LLM
-// transition. It prepends the session's regional-variant preamble to the
+// transition. Prepends the host environment preamble (REQ-012, via
+// c.HostContextFormatter) then the regional-variant preamble to the
 // transition's static SystemPrompt without mutating the transition (CON-003).
-// Returns the original prompt unchanged when SkipRegionalPreamble is set.
+// Regional preamble is skipped when SkipRegionalPreamble is set.
 func renderSystemPrompt(t *Transition, c *CPN) string {
+	var hostPreamble string
+	if c.HostContextFormatter != nil {
+		hostPreamble = c.HostContextFormatter(c)
+	}
+
+	var base string
 	if t.LLMConfig != nil && t.LLMConfig.SkipRegionalPreamble {
-		return t.SystemPrompt
+		base = t.SystemPrompt
+	} else {
+		regional := prompts.PreambleFor(c.RegionalVariant)
+		switch {
+		case regional == "":
+			base = t.SystemPrompt
+		case t.SystemPrompt == "":
+			base = regional
+		default:
+			base = regional + "\n\n" + t.SystemPrompt
+		}
 	}
-	preamble := prompts.PreambleFor(c.RegionalVariant)
-	if preamble == "" {
-		return t.SystemPrompt
+
+	if hostPreamble == "" {
+		return base
 	}
-	if t.SystemPrompt == "" {
-		return preamble
+	if base == "" {
+		return hostPreamble
 	}
-	return preamble + "\n\n" + t.SystemPrompt
+	return hostPreamble + "\n\n" + base
 }
 
 // MaxToolCallIterations caps the agentic loop to prevent infinite cycles.
@@ -558,6 +575,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					DurationMs: durationMs,
 					Success:    execErr == nil,
 					Error:      errorString(execErr),
+					Arguments:  tc.Arguments,
 				},
 				Timestamp: time.Now(),
 			})

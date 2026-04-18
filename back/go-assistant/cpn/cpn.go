@@ -156,6 +156,12 @@ type CPN struct {
 	// Allocated lazily under mu on first approval.
 	approvedFlows map[string]struct{}
 
+	// HostContextFormatter, when non-nil, produces a host-capability preamble
+	// that renderSystemPrompt prepends to every LLM system prompt (GAP-11
+	// REQ-012). Set at session-creation time by the composition root so the
+	// cpn package stays free of import cycles with cpn/persist.
+	HostContextFormatter func(c *CPN) string
+
 	// MutableAfterStart enables GAP-7 hot topology reconfiguration.
 	// Defaults to false; topology mutations are rejected unless this is set.
 	MutableAfterStart bool

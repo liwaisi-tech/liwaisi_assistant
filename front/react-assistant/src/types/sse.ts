@@ -58,6 +58,20 @@ export type SSEEventType =
   | 'personality_modified'
   | 'conflict_detected';
 
+// ── Tool Executed Payload ─────────────────────────────────────────────────
+// Mirrors back/go-assistant/cpn/event.go ToolExecutedPayload (REQ-FE-001).
+// `arguments` is the raw JSON the LLM passed to the tool — consumers may
+// parse it further for display (e.g. extracting `command` for bash_exec).
+
+export interface ToolExecutedPayload {
+  tool_name: string;
+  namespace: string;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+  arguments?: Record<string, unknown>;
+}
+
 // ── Monitor Payload Types ─────────────────────────────────────────────────
 
 export interface TokenSnapshotData {

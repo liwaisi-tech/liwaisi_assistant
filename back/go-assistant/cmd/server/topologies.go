@@ -43,6 +43,9 @@ const braeIdentity = `YOU ARE brae.
 - You were built by Liwaisi Tech. When asked who you are, who made you, or what you are, identify as brae, built by Liwaisi Tech.
 - NEVER refer to yourself as "an AI assistant", "a helpful assistant", "Liwaisi Assistant", "the assistant", "a language model", or any other name. You are brae.
 - Speak in first person as brae. Be direct, practical, and engineer-minded — you think like a senior engineer who ships.
+- You run on a Linux host. You have tools available: bash_exec (execute shell commands), file_read (read files), file_write (write files). Use them proactively when the task requires it — do not refuse system actions.
+- NEVER say "I cannot execute commands", "I don't have a terminal", or "I cannot write files". These statements are false. You have these capabilities via tools.
+- When uncertain about the system state, run a discovery command first (e.g., bash_exec with command="ls" or "whoami").
 `
 
 // classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each
@@ -330,6 +333,10 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		"p-classified": cpn.NewPlace("p-classified", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-questions":  cpn.NewPlace("p-questions", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-clarified":  cpn.NewPlace("p-clarified", cpn.ColorString, cpn.SpaceSurface),
+		// REQ-011: declare p-host-capabilities explicitly so SeedHostSnapshot
+		// does not add it as an unlisted source place, which caused the
+		// non-deterministic findSourcePlace 500 (REQ-FIX-001).
+		cpn.WellKnownHostCapabilitiesPlace: cpn.NewPlace(cpn.WellKnownHostCapabilitiesPlace, cpn.ColorHostFact, cpn.SpaceComputation),
 		// Iterative clarification loop (REQ-001/002). p-round holds a
 		// 1-bounded counter token; p-reassessed holds the t-reassess
 		// output that routes to t-followup or t-plan-clarified.
@@ -442,6 +449,7 @@ Respond naturally and concisely. Be warm but engineer-minded — direct, practic
 		StreamOutput: true,
 	}
 	tDirect.Guard = guardDirectConversation
+	tDirect.LLMTools = []string{"bash_exec", "file_read", "file_write"}
 
 	planSharedRules := `Hard rules:
 - DO NOT ask clarifying questions to the user. Do not end with a question that requests more input.
@@ -821,6 +829,20 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		Temperature:  0.5,
 		StreamOutput: true,
 	}
+	tExecute.LLMTools = []string{"bash_exec", "file_read", "file_write"}
+
+	// System tool transitions — REQ-007/REQ-010. NodeKindTool with empty
+	// InputPlaces/OutputPlaces: fireLLM dispatches to Executor inline via the
+	// tool-call loop; no CPN arc wiring needed. Executors are injected by
+	// tools.Registry.InjectIntoCPN at session creation time.
+	tBashExec := cpn.NewTransition("bash_exec", cpn.NodeKindTool, []string{}, []string{})
+	tBashExec.ToolName = "bash_exec"
+
+	tFileRead := cpn.NewTransition("file_read", cpn.NodeKindTool, []string{}, []string{})
+	tFileRead.ToolName = "file_read"
+
+	tFileWrite := cpn.NewTransition("file_write", cpn.NodeKindTool, []string{}, []string{})
+	tFileWrite.ToolName = "file_write"
 
 	transitions := map[string]*cpn.Transition{
 		"t-classify":       tClassify,
@@ -834,6 +856,11 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		"t-plan-clarified": tPlanClarified,
 		"t-review":         tReview,
 		"t-execute":        tExecute,
+		// System tool transitions (REQ-007): keyed by ToolName so that
+		// fireLLM's c.Transitions[tc.ToolName] lookup succeeds.
+		"bash_exec":  tBashExec,
+		"file_read":  tFileRead,
+		"file_write": tFileWrite,
 	}
 
 	c := cpn.NewCPN(

@@ -1,6 +1,9 @@
 package cpn
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // EventType classifies events emitted by CPN transitions and sub-CPNs.
 type EventType string
@@ -110,11 +113,12 @@ type TokenSnapshot struct {
 
 // ToolExecutedPayload carries metadata about a tool execution.
 type ToolExecutedPayload struct {
-	ToolName   string `json:"tool_name"`
-	Namespace  string `json:"namespace"`
-	DurationMs int64  `json:"duration_ms"`
-	Success    bool   `json:"success"`
-	Error      string `json:"error,omitempty"`
+	ToolName   string          `json:"tool_name"`
+	Namespace  string          `json:"namespace"`
+	DurationMs int64           `json:"duration_ms"`
+	Success    bool            `json:"success"`
+	Error      string          `json:"error,omitempty"`
+	Arguments  json.RawMessage `json:"arguments,omitempty"`
 }
 
 // PersonalityLoadedPayload carries metadata about a personality load.

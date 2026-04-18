@@ -1,5 +1,17 @@
 export type HITLAction = 'approve' | 'reject' | 'revise' | 'submit';
 
+/** A single tool execution record appended to the message it was invoked within. */
+export interface ToolExecution {
+  id: string;
+  toolName: string;
+  namespace: string;
+  durationMs: number;
+  success: boolean;
+  error?: string;
+  arguments?: Record<string, unknown>;
+  timestamp: Date;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -28,4 +40,6 @@ export interface ChatMessage {
   metadata?: {
     responding_model?: string;
   };
+  /** Tool executions invoked during this assistant turn, ordered by arrival. */
+  toolExecutions?: ToolExecution[];
 }

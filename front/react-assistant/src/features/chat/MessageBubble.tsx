@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
+import { ToolExecutionList } from './ToolExecutionList.tsx';
 import type { A2UIPayload, A2UIAction } from './a2ui/types.ts';
 import { A2UI_MARKER } from './a2ui/constants.ts';
-import type { HITLAction } from '../../types/chat';
+import type { HITLAction, ToolExecution } from '../../types/chat';
 
 interface MessageBubbleProps {
   id: string;
@@ -32,6 +33,7 @@ interface MessageBubbleProps {
   metadata?: {
     responding_model?: string;
   };
+  toolExecutions?: ToolExecution[];
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   // Catch-all for non-HITL A2UI actions (e.g. the `model:*` action family
   // emitted by the in-chat model-admin surface). Called only when the
@@ -84,7 +86,7 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 export const MessageBubble = memo(function MessageBubble({
   id, role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
-  metadata,
+  metadata, toolExecutions,
   onHITLAction, onA2UIAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
@@ -211,6 +213,11 @@ export const MessageBubble = memo(function MessageBubble({
               </button>
             )}
           </div>
+        )}
+
+        {/* Tool execution affordances (REQ-020–022) */}
+        {!isUser && toolExecutions && toolExecutions.length > 0 && (
+          <ToolExecutionList executions={toolExecutions} />
         )}
 
         {/* Content — user: plain text, assistant: A2UI native */}

@@ -101,9 +101,8 @@ func main() {
 			logger.Error("register personality tools failed", slog.Any("error", err))
 			os.Exit(1)
 		}
-		toolReg.Seal()
-		toolReg.InjectIntoFuncRegistry(registry)
-		logger.Info("personality tools registered and sealed")
+		// Do NOT seal here — system tools (bash_exec, file_read, file_write)
+		// are registered after hostAdapter/hostGateImpl are created below.
 
 		serviceOpts = append(serviceOpts,
 			app.WithPersistence(&app.PersistDeps{
@@ -321,6 +320,28 @@ func main() {
 			app.WithMutationLog(&mutationAuditAdapter{repo: store.Mutations()}),
 		)
 		logger.Info("topology mutation audit log enabled")
+	}
+
+	// ── System tools (GAP-11 REQ-001–REQ-006) ───────────────────────────
+	// Register bash_exec, file_read, file_write BEFORE sealing so the
+	// system namespace accepts them. hostAdapter and hostGateImpl are
+	// available here; the tool registry is still open.
+	if err := registerSystemTools(toolReg, hostAdapter, hostGateImpl); err != nil {
+		logger.Error("system tools registration failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	toolReg.Seal()
+	toolReg.InjectIntoFuncRegistry(registry)
+	logger.Info("system tools registered and registry sealed")
+
+	// Wrap the topology factory to inject HostContextFormatter on every new
+	// CPN (REQ-012). The formatter reads p-host-capabilities and formats a
+	// preamble; it lives here so it can import cpn/persist without cycles.
+	wrappedFactory := topologyFactory
+	topologyFactory = func(sid string) *cpn.CPN {
+		c := wrappedFactory(sid)
+		c.HostContextFormatter = buildHostContextPreamble
+		return c
 	}
 
 	// ── CLI flag --bootstrap-discovery ──────────────────────────────────
