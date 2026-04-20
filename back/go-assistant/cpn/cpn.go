@@ -340,6 +340,48 @@ func (c *CPN) PublishProcessEvent(kind EventType, payload ProcessOutputPayload) 
 	metrics.OnEmit(payload.SessionID, kind)
 }
 
+// PublishHostApprovalSurface emits the A2UI host.approval surface as a
+// terminal StreamChunk on the CPN's event bus so the frontend
+// HostApprovalCard can render the extended-action buttons. The content
+// MUST already carry the A2UIMarker prefix.
+//
+// The emit is synchronous w.r.t. the sink and non-blocking on the event
+// emitter channel, mirroring the invariants enforced by the other
+// publish-* helpers on this type.
+func (c *CPN) PublishHostApprovalSurface(transitionID, content string) {
+	if c == nil {
+		return
+	}
+	c.emit(&Event{
+		Type:           EventStreamChunk,
+		TransitionID:   transitionID,
+		TransitionKind: NodeKindBash,
+		Payload: StreamChunk{
+			SessionID: c.SessionID,
+			CPNID:     c.ID,
+			CPNRole:   c.Role,
+			Content:   content,
+			Done:      true,
+		},
+	})
+}
+
+// PublishHITLRequested emits the typed EventHITLRequested envelope bound
+// to transitionID. Used by the gate's SessionHITLRouter so the
+// integration layer can suppress any legacy review-card fallback when the
+// custom host.approval surface has already been published.
+func (c *CPN) PublishHITLRequested(transitionID string, payload HITLRequestedPayload) {
+	if c == nil {
+		return
+	}
+	c.emit(&Event{
+		Type:           EventHITLRequested,
+		TransitionID:   transitionID,
+		TransitionKind: NodeKindBash,
+		Payload:        payload,
+	})
+}
+
 // SessionEventSink returns an Event sink bound to this CPN for use with
 // PTYRequest.EventSink. It wraps the Event into the payload expected by
 // PublishProcessEvent so adapters can emit pre-shaped Event values

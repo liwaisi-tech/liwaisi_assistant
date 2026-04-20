@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { I18nTestWrapper } from '../../test/i18n-test-utils';
 import { MessageBubble } from './MessageBubble';
@@ -270,6 +271,84 @@ describe('MessageBubble', () => {
       { wrapper },
     );
     expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  // ── HOST·HITL extended-action encoding (AC-FE-003) ───────────────────────
+  // Regression lock for MessageBubble.tsx:137-145. The four host-approval
+  // buttons MUST each produce a single onHITLAction call with:
+  //   • the correct narrowed HITLAction ('approve' | 'reject')
+  //   • a JSON-stringified payload whose `action` field is the extended
+  //     four-way keyword — this envelope is what the backend dispatches on
+  //     and what the reducer rehydrates from. Spec §4.1.
+  describe('HOST·HITL extended-action encoding (AC-FE-003)', () => {
+    function buildHostApprovalContent(): string {
+      return (
+        '$$a2ui:' +
+        JSON.stringify({
+          schema: 'host.approval',
+          hostApproval: {
+            command: 'ls -la',
+            risk: 'caution',
+            rememberAvailable: true,
+          },
+          components: [],
+        })
+      );
+    }
+
+    async function clickAndAssert(
+      accessibleName: RegExp,
+      expected: [string, string, string],
+    ) {
+      const onHITLAction = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <MessageBubble
+          {...baseProps}
+          role="assistant"
+          content={buildHostApprovalContent()}
+          hitlTransitionId="t-host-1"
+          onHITLAction={onHITLAction}
+        />,
+        { wrapper },
+      );
+      const btn = await screen.findByRole('button', { name: accessibleName });
+      await user.click(btn);
+      expect(onHITLAction).toHaveBeenCalledTimes(1);
+      expect(onHITLAction).toHaveBeenCalledWith(...expected);
+    }
+
+    it('"Aprobar solo esta vez" → (id, approve, {"action":"approve-once"})', async () => {
+      await clickAndAssert(/^Aprobar solo esta vez$/, [
+        't-host-1',
+        'approve',
+        '{"action":"approve-once"}',
+      ]);
+    });
+
+    it('"Aprobar y recordar" → (id, approve, {"action":"approve-and-remember"})', async () => {
+      await clickAndAssert(/^Aprobar y recordar\b/, [
+        't-host-1',
+        'approve',
+        '{"action":"approve-and-remember"}',
+      ]);
+    });
+
+    it('"Rechazar" → (id, reject, {"action":"deny"})', async () => {
+      await clickAndAssert(/^Rechazar$/, [
+        't-host-1',
+        'reject',
+        '{"action":"deny"}',
+      ]);
+    });
+
+    it('"Rechazar y bloquear para siempre" → (id, reject, {"action":"deny-and-blacklist"})', async () => {
+      await clickAndAssert(/^Rechazar y bloquear para siempre\b/, [
+        't-host-1',
+        'reject',
+        '{"action":"deny-and-blacklist"}',
+      ]);
+    });
   });
 
   it('falls back to the raw string when responding_model has no vendor prefix', () => {

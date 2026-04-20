@@ -320,6 +320,28 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		}
 	}
 
+	// Wire HOST·HITL channels to NodeKindBash transitions so the gate's
+	// SessionHITLRouter can publish an approval surface and block on the
+	// same hitlInject bus the LLM-level tool-HITL flow uses. We pre-wire
+	// unconditionally because the gate decides per-op whether HITL is
+	// required; a channel that is never written to is free.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register host-HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
 	st := &sessionState{state: cpn.StateIdle}
 
 	s.mu.Lock()
@@ -1026,6 +1048,26 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 		}
 	}
 
+	// Mirror HOST·HITL wiring for NodeKindBash transitions on the forked
+	// topology so the gate's SessionHITLRouter finds a ready inject
+	// channel after a fork operation.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register host-HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
 	// Load forked messages into in-memory session history.
 	if rec.Messages != nil {
 		for _, mr := range rec.Messages {
@@ -1697,6 +1739,30 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 		t.HITLConfig.Channel = ch
 		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
 			s.logger.Error("rehydrate register tool-HITL channel",
+				"session_id", sessionID,
+				"transition", t.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Mirror HOST·HITL wiring for NodeKindBash transitions so a rehydrated
+	// session can resume a pending host-approval without re-creating the
+	// whole CPN.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("rehydrate register host-HITL channel",
 				"session_id", sessionID,
 				"transition", t.ID,
 				"error", err,

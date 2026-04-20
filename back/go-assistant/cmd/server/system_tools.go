@@ -29,7 +29,7 @@ const (
   "properties": {
     "command": {
       "type": "string",
-      "description": "REQUIRED. The executable to run. Examples: 'ls', 'uname', 'git', 'python3'. For multi-command pipelines use command='bash' with args=['-c','cmd1 && cmd2']. MUST NOT be empty."
+      "description": "REQUIRED. The executable to run. Always invoke a concrete binary as command=<name> with its flags in args=[...]. Examples: 'ls', 'uname', 'git', 'python3'. For multi-command pipelines use command='/bin/sh' with args=['-c','cmd1 && cmd2']. DO NOT use 'bash' — the runtime is Alpine and only /bin/sh is available. MUST NOT be empty."
     },
     "args": {
       "type": "array",

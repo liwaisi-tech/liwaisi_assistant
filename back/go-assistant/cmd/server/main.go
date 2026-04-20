@@ -291,6 +291,13 @@ func main() {
 		Gate:     hostGateImpl,
 		Sessions: hostSessions,
 	}
+	// Wire the HOST·HITL router so fire_bash can route ErrRequiresHITL
+	// through the policy gate's HandleRequiresHITL helper. Only active when
+	// the policy gate is installed — the allow-all fallback never raises
+	// the sentinel.
+	if pg, ok := hostGateImpl.(*gate.PolicyHostGate); ok {
+		hostRuntime.HITLHandler = &gate.SessionHITLHandler{Gate: pg}
+	}
 	serviceOpts = append(serviceOpts, app.WithHostRuntime(hostRuntime))
 	logger.Info("host runtime initialized", "gate", gateKind(hostGateImpl))
 

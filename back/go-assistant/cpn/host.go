@@ -266,6 +266,13 @@ type HostRuntime struct {
 	// Metrics counts emits and drops for observability. Nil is treated
 	// as NoOpProcessEventMetrics — no counters bumped, no logs written.
 	Metrics ProcessEventMetrics
+
+	// HITLHandler bridges a gate-originated "requires HITL" error onto
+	// the session's HITL channel and resolves it to approve/deny. Nil
+	// disables routing — any HITL requirement then surfaces as a raw
+	// gate error on the transition's ErrorPlace. Implementations live in
+	// infra/host/gate (see SessionHITLRouter + HandleRequiresHITL).
+	HITLHandler HostHITLHandler
 }
 
 // ── Error model ─────────────────────────────────────────────────────────────

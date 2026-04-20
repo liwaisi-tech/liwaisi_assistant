@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+// HostHITLHandler is the minimal hexagonal seam that fire_bash uses to
+// route an ErrRequiresHITL-style gate error through the policy gate's
+// HandleRequiresHITL helper without introducing a cpn→infra/host/gate
+// import cycle. Infrastructure wraps the gate and its session-backed
+// router behind this interface; the cpn package only knows it can ask
+// "this opaque error requires HITL, please handle it for me".
+//
+// The handler MUST:
+//   - Return nil when the user approves (the caller then proceeds to
+//     execute the command).
+//   - Return a *HostError with HostErrCodeGateDenied when the user denies
+//     so the transition's ErrorPlace pipeline routes the failure.
+//   - Respect ctx cancellation so session teardown never leaks the
+//     pending wait (PAT-002).
+//
+// hitlErr is the original error returned by HostGate.Check; implementations
+// are expected to unwrap it via errors.As for the gate-private sentinel.
+type HostHITLHandler interface {
+	HandleHITL(ctx context.Context, t *Transition, c *CPN, op GateOp, hitlErr error) error
+}
+
 // fireBash executes a NodeKindBash transition.
 //
 // Dispatch:
@@ -53,7 +74,21 @@ func fireBash(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 			Sandbox: cfg.SandboxProfile,
 		}
 		if err := gate.Check(ctx, op); err != nil {
-			return nil, 0, err
+			// REQ-001..REQ-005: when the gate asks for a human decision we
+			// route through the policy-gate's HandleRequiresHITL helper via
+			// the HostRuntime.HITLHandler seam. The handler resolves to nil
+			// on approve (fall through to Exec/session) or to a terminal
+			// *HostError on deny (routed to ErrorPlace as before). Non-HITL
+			// errors and nil-handler wirings keep the pre-existing
+			// short-circuit behaviour (CON-003).
+			if c.HostRuntime.HITLHandler == nil {
+				return nil, 0, err
+			}
+			handled := c.HostRuntime.HITLHandler.HandleHITL(ctx, t, c, op, err)
+			if handled != nil {
+				return nil, 0, handled
+			}
+			// handled == nil ⇒ user approved; proceed to Exec below.
 		}
 	}
 
