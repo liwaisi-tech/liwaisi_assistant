@@ -29,12 +29,12 @@ const (
   "properties": {
     "command": {
       "type": "string",
-      "description": "The executable to run (e.g., 'ls', 'git', 'python3')."
+      "description": "REQUIRED. The executable to run. Examples: 'ls', 'uname', 'git', 'python3'. For multi-command pipelines use command='bash' with args=['-c','cmd1 && cmd2']. MUST NOT be empty."
     },
     "args": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Arguments passed to the command. Do not inline args into command string."
+      "description": "Arguments passed to the command as a list. Example: args=['-la', '/tmp']. Do not inline args into the command string."
     },
     "cwd": {
       "type": "string",
@@ -122,13 +122,14 @@ func registerSystemTools(toolReg *tools.Registry, adapter cpn.HostAdapter, gate 
 	}{
 		{
 			schema: &tools.ToolSchema{
-				Name:        "bash_exec",
-				Namespace:   "system",
-				Description: "Execute a shell command on the host OS. Returns stdout, stderr, and exit code.",
-				InputColor:  cpn.ColorJSON,
-				OutputColor: cpn.ColorShellResult,
-				Parameters:  json.RawMessage(bashExecParamsSchema),
-				Version:     "1.0",
+				Name:         "bash_exec",
+				Namespace:    "system",
+				Description:  "Execute a shell command on the host OS. Returns stdout, stderr, and exit code.",
+				InputColor:   cpn.ColorJSON,
+				OutputColor:  cpn.ColorShellResult,
+				Parameters:   json.RawMessage(bashExecParamsSchema),
+				RequiresHITL: true,
+				Version:      "1.0",
 			},
 			exec: makeBashExecExecutor(adapter, gate),
 		},
@@ -146,13 +147,14 @@ func registerSystemTools(toolReg *tools.Registry, adapter cpn.HostAdapter, gate 
 		},
 		{
 			schema: &tools.ToolSchema{
-				Name:        "file_write",
-				Namespace:   "system",
-				Description: "Write content to a file on the host filesystem. Path must be inside $HOME/.local/brae/.",
-				InputColor:  cpn.ColorJSON,
-				OutputColor: cpn.ColorArtifact,
-				Parameters:  json.RawMessage(fileWriteParamsSchema),
-				Version:     "1.0",
+				Name:         "file_write",
+				Namespace:    "system",
+				Description:  "Write content to a file on the host filesystem. Path must be inside $HOME/.local/brae/.",
+				InputColor:   cpn.ColorJSON,
+				OutputColor:  cpn.ColorArtifact,
+				Parameters:   json.RawMessage(fileWriteParamsSchema),
+				RequiresHITL: true,
+				Version:      "1.0",
 			},
 			exec: makeFileWriteExecutor(adapter),
 		},

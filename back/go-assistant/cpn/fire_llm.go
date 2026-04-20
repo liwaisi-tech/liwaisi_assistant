@@ -2,6 +2,7 @@ package cpn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -458,20 +459,45 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 			})
 
 			// HITL gate: tools with RequiresHITL block until human approval.
+			// TransitionID uses t.ID (the LLM transition) so the frontend can
+			// resolve via POST /hitl/{t.ID}, which maps to t.HITLConfig.Channel.
 			if toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
+				// Emit the host.approval A2UI surface as a stream chunk so the
+				// frontend renders HostApprovalCard with Approve/Reject buttons.
+				// This mirrors the custom-surface pattern used by t-review.
+				a2uiContent := buildToolApprovalA2UI(tc.ToolName, tc.Arguments)
+				c.emit(&Event{
+					Type:           EventStreamChunk,
+					TransitionID:   t.ID,
+					TransitionKind: NodeKindLLM,
+					SessionID:      c.SessionID,
+					CPNID:          c.ID,
+					CPNDepth:       c.Depth,
+					CPNRole:        c.Role,
+					Payload: StreamChunk{
+						SessionID: c.SessionID,
+						CPNID:     c.ID,
+						CPNRole:   c.Role,
+						Content:   a2uiContent,
+						Done:      true,
+					},
+					Timestamp: time.Now(),
+				})
+
 				c.emit(&Event{
 					Type:           EventHITLRequested,
-					TransitionID:   tc.ToolName,
+					TransitionID:   t.ID,
 					TransitionKind: NodeKindTool,
 					SessionID:      c.SessionID,
 					CPNID:          c.ID,
 					CPNDepth:       c.Depth,
 					CPNRole:        c.Role,
 					Payload: map[string]any{
-						"tool_name":    tc.ToolName,
-						"arguments":    string(tc.Arguments),
-						"tool_call_id": tc.ID,
-						"description":  toolTransition.ToolMeta.Description,
+						"custom_surface": true,
+						"tool_name":      tc.ToolName,
+						"arguments":      string(tc.Arguments),
+						"tool_call_id":   tc.ID,
+						"description":    toolTransition.ToolMeta.Description,
 					},
 					Timestamp: time.Now(),
 				})
@@ -498,9 +524,16 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 							return "", loopCost, fmt.Errorf("transition %s: HITL channel closed unexpectedly", t.ID)
 						}
 						c.setState(StateRunning)
-						payload := fmt.Sprintf("%v", response.Payload)
-						if strings.EqualFold(strings.TrimSpace(payload), "reject") ||
-							response.Color == ColorError {
+						rejected := response.Color == ColorError
+						if !rejected {
+							if hr, ok := response.Payload.(HITLResponse); ok {
+								rejected = hr.Action == HITLReject
+							} else {
+								payload := fmt.Sprintf("%v", response.Payload)
+								rejected = strings.EqualFold(strings.TrimSpace(payload), "reject")
+							}
+						}
+						if rejected {
 							// Tool rejected — send error to LLM.
 							messages = append(messages, &LLMMessage{
 								Role: "tool",
@@ -511,7 +544,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 							})
 							c.emit(&Event{
 								Type:           EventHITLResolved,
-								TransitionID:   tc.ToolName,
+								TransitionID:   t.ID,
 								TransitionKind: NodeKindTool,
 								SessionID:      c.SessionID,
 								CPNID:          c.ID,
@@ -523,7 +556,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 						// Approved — continue to tool execution.
 						c.emit(&Event{
 							Type:           EventHITLResolved,
-							TransitionID:   tc.ToolName,
+							TransitionID:   t.ID,
 							TransitionKind: NodeKindTool,
 							SessionID:      c.SessionID,
 							CPNID:          c.ID,
@@ -551,7 +584,11 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					// REQ-009: Tool errors sent back to LLM for recovery.
 					resultContent = fmt.Sprintf("error: %s", execErr.Error())
 				} else {
-					resultContent = fmt.Sprintf("%v", toolResult.Payload)
+					if raw, merr := json.Marshal(toolResult.Payload); merr == nil {
+						resultContent = string(raw)
+					} else {
+						resultContent = fmt.Sprintf("%+v", toolResult.Payload)
+					}
 				}
 			}
 
@@ -717,4 +754,51 @@ func formatRespondingModel(echoed, authored string) string {
 		return ""
 	}
 	return id + " · openrouter"
+}
+
+// buildToolApprovalA2UI generates the $$a2ui: host.approval payload that the
+// frontend renders as a HostApprovalCard with Approve / Reject buttons.
+// The card schema mirrors spec-architecture-host-gate-security-policy.md §3.
+// risk_band defaults to "caution" for exec tools and "safe" for read-only.
+func buildToolApprovalA2UI(toolName string, args json.RawMessage) string {
+	type hostApproval struct {
+		RiskBand  string `json:"risk_band"`
+		Command   string `json:"command"`
+		Operation string `json:"operation"`
+	}
+	type a2uiPayload struct {
+		Schema       string      `json:"schema"`
+		HostApproval hostApproval `json:"hostApproval"`
+	}
+
+	op := "exec"
+	risk := "caution"
+	switch toolName {
+	case "file_write":
+		op = "write_file"
+	case "file_read":
+		op = "exec"
+		risk = "safe"
+	}
+
+	// Build a readable command string from the raw JSON args.
+	command := toolName
+	argsStr := strings.TrimSpace(string(args))
+	if argsStr != "" && argsStr != "{}" && argsStr != "null" {
+		command = toolName + " " + argsStr
+	}
+	if len(command) > 200 {
+		command = command[:197] + "…"
+	}
+
+	p := a2uiPayload{
+		Schema: "host.approval",
+		HostApproval: hostApproval{
+			RiskBand:  risk,
+			Command:   command,
+			Operation: op,
+		},
+	}
+	raw, _ := json.Marshal(p)
+	return "$$a2ui:" + string(raw)
 }

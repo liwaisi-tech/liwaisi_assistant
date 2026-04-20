@@ -205,6 +205,23 @@ func (s *Session) RegisterHITL(transitionID string, ch chan Token) error {
 	return nil
 }
 
+// RegisterToolHITL registers a HITL channel for an LLM transition that
+// gates tool execution. Unlike RegisterHITL, it does not validate the
+// transition Kind — LLM transitions (NodeKindLLM) host per-tool approval
+// channels on their HITLConfig.Channel. The channel must already be set on
+// t.HITLConfig.Channel by the caller before registration.
+// Thread-safe.
+func (s *Session) RegisterToolHITL(transitionID string, ch chan Token) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.hitlInject[transitionID]; exists {
+		return fmt.Errorf("register tool-HITL %q: %w", transitionID, ErrHITLAlreadyRegistered)
+	}
+	s.hitlInject[transitionID] = ch
+	return nil
+}
+
 // UnregisterHITL removes a HITL channel registration.
 // No-op if the transition ID is not registered. Thread-safe.
 func (s *Session) UnregisterHITL(transitionID string) {

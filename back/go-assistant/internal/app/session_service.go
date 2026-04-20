@@ -290,6 +290,36 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		root.ToolRegistry = s.toolRegistry
 	}
 
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	// Must run after InjectIntoCPN so ToolMeta is populated on tool transitions.
+	// Uses RegisterToolHITL (not RegisterHITL) because LLM transitions are
+	// NodeKindLLM, not NodeKindHITL, and RegisterHITL enforces the latter.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register tool-HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
 	st := &sessionState{state: cpn.StateIdle}
 
 	s.mu.Lock()
@@ -932,9 +962,34 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
-		// GAP-3: CPN gets a handle to the registry so
-		// NodeKindRegisterTool can publish new tools at runtime.
 		root.ToolRegistry = s.toolRegistry
+	}
+
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register tool-HITL channel", "transition", t.ID, "err", err)
+		}
 	}
 
 	// Load forked messages into in-memory session history.
@@ -1582,6 +1637,37 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 	s.injectPersonality(ctx, root, rec.UserID)
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
+	}
+
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("rehydrate register tool-HITL channel",
+				"session_id", sessionID,
+				"transition", t.ID,
+				"error", err,
+			)
+		}
 	}
 
 	// REQ-006: replay message history so SessionInfo.Messages is not silently
