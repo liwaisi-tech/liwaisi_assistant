@@ -38,14 +38,51 @@ export interface A2UIPayload {
 
 /** HostGate approval prompt payload — surfaced when a shell, PTY, write, or
  * kill operation hits a pattern that requires human confirmation before
- * the host adapter may proceed. REQ-040. */
+ * the host adapter may proceed. REQ-040.
+ *
+ * Post bugfix-tool-hitl-single-gate (REQ-003/REQ-004, §4.1): the payload
+ * now carries a parsed `command` string (clean, human-readable shell
+ * invocation) plus an `invocation` bag with the raw tool-invocation JSON
+ * for the "Detalles técnicos" disclosure. Legacy fields (`operation`,
+ * `risk_band`, `rationale`, `alternatives`) are kept optional for
+ * backwards-compat with pre-fix persisted chats (CON-002). */
 export interface HostApprovalPayload {
-  operation: HostApprovalOperation;
+  /** Clean, human-readable shell command or operation summary (REQ-003). */
   command: string;
-  risk_band: HostApprovalRiskBand;
-  rationale: string;
+  /** Raw tool invocation JSON, for the collapsed "technical details" panel
+   *  (REQ-004, §4.1). Optional only because legacy pre-fix payloads did
+   *  not carry it — in that case the disclosure is suppressed. */
+  invocation?: {
+    tool: string;
+    args: unknown;
+    [k: string]: unknown;
+  };
+  /** Risk classification drives card border color and warning copy. New in
+   *  §4.1; prefer over the legacy `risk_band` when present. */
+  risk?: RiskLevel;
+  /** Title shown at the top of the card; falls back to a hard-coded Spanish
+   *  default when absent. */
+  title?: string;
+  /** Optional working-directory or target path hint (§4.1). */
+  context?: string;
+  /** When false, the frontend hides the "Aprobar y recordar" button
+   *  (AC-008). */
+  rememberAvailable?: boolean;
+
+  // ── Legacy fields (pre bugfix-tool-hitl-single-gate) ─────────────────
+  /** Legacy operation discriminator. Optional post-fix; when absent, the
+   *  card renders without the operation pill. */
+  operation?: HostApprovalOperation;
+  /** Legacy risk band (maps 1:1 to `risk` when `risk` is not provided). */
+  risk_band?: HostApprovalRiskBand;
+  rationale?: string;
   alternatives?: string[];
 }
+
+/** Risk classification per §4.1 of the single-gate spec. Narrower than
+ *  `HostApprovalRiskBand` (no `forbidden`) — the backend no longer emits
+ *  forbidden cards; they are denied server-side before reaching the UI. */
+export type RiskLevel = 'safe' | 'caution' | 'danger';
 
 /** The four host operations that can require an approval prompt. */
 export type HostApprovalOperation = 'exec' | 'spawn_pty' | 'write_file' | 'kill';

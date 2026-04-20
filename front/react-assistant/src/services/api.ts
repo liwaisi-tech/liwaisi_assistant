@@ -32,6 +32,15 @@ const SESSION_NOT_FOUND_RE = /^\s*session not found\s*$/i;
  */
 const SESSION_INACTIVE_RE = /^\s*session inactive\s*$/i;
 
+/**
+ * HITL_ORPHAN_CODE is the stable machine-readable code the backend returns
+ * (per spec-process-bugfix-tool-hitl-single-gate §4.3) when ResolveHITL is
+ * invoked against a transition whose token has already been consumed. The
+ * frontend treats it as a benign race: the stale card is dismissed with a
+ * neutral toast rather than a red banner (REQ-007 / AC-004).
+ */
+const HITL_ORPHAN_CODE = 'HITL_TRANSITION_ORPHANED';
+
 /** Extract the session id from a `/sessions/{id}/...` API path. Best-effort. */
 function extractSessionId(path: string): string {
   const match = path.match(/\/sessions\/([^/?]+)/);
@@ -59,8 +68,24 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    const errorMessage: string = typeof error?.error === 'string' ? error.error : response.statusText;
+    const rawBody = await response.json().catch(() => ({ error: response.statusText }));
+    const errorMessage: string =
+      typeof rawBody?.error === 'string'
+        ? rawBody.error
+        : typeof rawBody?.error?.message === 'string'
+          ? rawBody.error.message
+          : response.statusText;
+    // The backend emits HITL_TRANSITION_ORPHANED as a structured envelope
+    // `{"error":{"code":"HITL_TRANSITION_ORPHANED","message":"..."}}` with
+    // HTTP 409 (§4.3). We surface it as a dedicated typed error so the
+    // chat layer can dismiss the stale card without flashing a red banner.
+    const errorCode: string | undefined =
+      typeof rawBody?.error?.code === 'string' ? rawBody.error.code : undefined;
+    if (errorCode === HITL_ORPHAN_CODE) {
+      const transitionId: string | undefined =
+        typeof rawBody?.error?.transitionId === 'string' ? rawBody.error.transitionId : undefined;
+      throw new HITLTransitionOrphanedError(errorMessage, transitionId);
+    }
 
     // Map typed session errors BEFORE falling back to the generic ApiError so
     // callers can catch them narrowly (GUD-003, PAT-002).
@@ -111,6 +136,26 @@ export class SessionInactiveError extends Error {
   constructor(public readonly sessionId: string) {
     super(`session inactive: ${sessionId}`);
     Object.setPrototypeOf(this, SessionInactiveError.prototype);
+  }
+}
+
+/**
+ * Thrown on a 409 (or equivalent) from `ResolveHITL` when the target
+ * transition has already been resolved or orphaned (its token was already
+ * consumed, e.g. because a parallel channel fired the approval or the
+ * rehydrated card is backing a long-gone flow). Callers should dismiss
+ * the stale HITL surface with a neutral notice — not a red error banner
+ * (REQ-007 / AC-004 / §9.4). The optional `transitionId` lets the reducer
+ * lock the specific stale row even if the click arrived with a different
+ * card id in focus. */
+export class HITLTransitionOrphanedError extends Error {
+  readonly name = 'HITLTransitionOrphanedError';
+  constructor(
+    message: string,
+    public readonly transitionId?: string,
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, HITLTransitionOrphanedError.prototype);
   }
 }
 

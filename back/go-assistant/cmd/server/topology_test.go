@@ -554,6 +554,52 @@ func assertTReviewBuilderEmitsActions(t *testing.T, factoryName string, c *cpn.C
 	}
 }
 
+// TestUnifiedTopology_ToolFlowEmitsSingleHITL guards REQ-002 / AC-001 of
+// spec-process-bugfix-tool-hitl-single-gate.md: a tool-bearing flow MUST
+// produce exactly one HITL transition — the HOST·HITL gate owned by the
+// host-tool channel — and MUST NOT wire a second t-review transition into
+// the pre-execution path of tools with RequiresHITL=true.
+//
+// The tool transitions (bash_exec, file_read, file_write) are NodeKindTool
+// with empty input/output places (they are dispatched inline by fireLLM).
+// t-review remains present — but only for the non-tool plan review path
+// (REQ-008 / AC-006) — and MUST NOT sit on any arc leading into a tool.
+func TestUnifiedTopology_ToolFlowEmitsSingleHITL(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	toolNames := []string{"bash_exec", "file_read", "file_write"}
+	for _, name := range toolNames {
+		tr, ok := c.Transitions[name]
+		if !ok {
+			t.Fatalf("missing tool transition %q", name)
+		}
+		if tr.Kind != cpn.NodeKindTool {
+			t.Errorf("tool %q kind = %q, want NodeKindTool", name, tr.Kind)
+		}
+		if len(tr.InputPlaces) != 0 {
+			t.Errorf("tool %q has %d InputPlaces, want 0 (fireLLM dispatches inline — wiring would introduce a second gate)",
+				name, len(tr.InputPlaces))
+		}
+		if len(tr.OutputPlaces) != 0 {
+			t.Errorf("tool %q has %d OutputPlaces, want 0", name, len(tr.OutputPlaces))
+		}
+	}
+
+	// t-review MUST remain — but only for the plan review path (REQ-008).
+	tReview, ok := c.Transitions["t-review"]
+	if !ok {
+		t.Fatal("t-review missing: non-tool plan review path regressed")
+	}
+	// Assert t-review does not list any tool place as input/output. The
+	// plan-review topology uses p-plan / p-reviewed; if any *_exec /
+	// file_* place shows up here, a tool flow has been grafted onto it.
+	for _, placeID := range append([]string{}, tReview.InputPlaces...) {
+		if placeID == "bash_exec" || placeID == "file_read" || placeID == "file_write" {
+			t.Errorf("t-review input %q is a tool transition — double-gate regression", placeID)
+		}
+	}
+}
+
 func TestDefaultTopologyFactory_TReview_BuilderEmitsAllActions(t *testing.T) {
 	// defaultTopologyFactory does not include t-review; skip if so. The hitl
 	// topology factory is the "default" surface that exposes t-review in

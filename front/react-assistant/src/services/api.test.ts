@@ -3,6 +3,7 @@ import {
   ApiError,
   SessionNotFoundError,
   SessionInactiveError,
+  HITLTransitionOrphanedError,
   getSession,
   sendMessage,
   resolveHITL,
@@ -106,6 +107,39 @@ describe('api error mapping (REQ-101, §4.3)', () => {
       const e = new SessionInactiveError('x');
       expect(e.name).toBe('SessionInactiveError');
       expect(e).toBeInstanceOf(SessionInactiveError);
+    });
+
+    it('HITLTransitionOrphanedError.name is stable and carries transitionId', () => {
+      const e = new HITLTransitionOrphanedError('already resolved', 't-review:abc');
+      expect(e.name).toBe('HITLTransitionOrphanedError');
+      expect(e).toBeInstanceOf(Error);
+      expect(e).toBeInstanceOf(HITLTransitionOrphanedError);
+      expect(e.transitionId).toBe('t-review:abc');
+    });
+  });
+
+  describe('HITLTransitionOrphanedError (AC-004, §4.3)', () => {
+    it('maps 409 + structured envelope with HITL_TRANSITION_ORPHANED code', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(409, {
+          error: {
+            code: 'HITL_TRANSITION_ORPHANED',
+            message: 'Esta aprobación ya fue resuelta',
+            transitionId: 't-review:42',
+          },
+        }),
+      );
+      const err = await resolveHITL('sess', 't-review:42', { action: 'approve' }).catch((e) => e);
+      expect(err).toBeInstanceOf(HITLTransitionOrphanedError);
+      expect((err as HITLTransitionOrphanedError).transitionId).toBe('t-review:42');
+      expect((err as Error).message).toBe('Esta aprobación ya fue resuelta');
+    });
+
+    it('does NOT map 409 to orphaned when the body carries the session-inactive signal', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'session inactive' }));
+      const err = await resolveHITL('sess', 't1', { action: 'approve' }).catch((e) => e);
+      expect(err).toBeInstanceOf(SessionInactiveError);
+      expect(err).not.toBeInstanceOf(HITLTransitionOrphanedError);
     });
   });
 });

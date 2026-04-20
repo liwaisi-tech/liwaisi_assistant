@@ -699,3 +699,66 @@ describe('chatReducer — STREAM_CHUNK responding_model capture', () => {
     expect(next.messages[0].metadata).toBeUndefined();
   });
 });
+
+// ── HITL_ORPHANED — single-gate spec AC-004 / §4.3 ───────────────────────
+describe('chatReducer — HITL_ORPHANED (bugfix-tool-hitl-single-gate)', () => {
+  it('locks the target surface with an orphaned envelope and surfaces a neutral notice', () => {
+    const state: ChatState = {
+      ...initialState,
+      sessionState: 'waiting',
+      error: 'Failed to respond', // simulate a stale red error
+      messages: [
+        {
+          id: 'assistant-gate',
+          role: 'assistant',
+          content: A2UI_MARKER + '{"schema":"host.approval","hostApproval":{}}',
+          cpnId: 'cpn-root',
+          cpnRole: 'host',
+          timestamp: new Date('2026-04-20T00:00:00Z'),
+          hitlTransitionId: 't-review:abc',
+          hitlActions: ['approve', 'reject'],
+        } as ChatMessage,
+      ],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_ORPHANED',
+      transitionId: 't-review:abc',
+      notice: 'Esta aprobación ya fue resuelta',
+    });
+    expect(next.error).toBeNull();
+    expect(next.notice).toBe('Esta aprobación ya fue resuelta');
+    expect(next.sessionState).toBe('idle');
+    expect(next.messages[0].hitlActions).toBeUndefined();
+    expect(next.messages[0].resolvedPayload).toBe('{"action":"orphaned"}');
+    expect(next.messages[0].resolvedAt).toBeInstanceOf(Date);
+  });
+
+  it('does not touch surfaces that do not match the transitionId', () => {
+    const other = {
+      id: 'assistant-other',
+      role: 'assistant' as const,
+      content: A2UI_MARKER + '{}',
+      cpnId: 'cpn-other',
+      cpnRole: 'planner',
+      timestamp: new Date('2026-04-20T00:00:00Z'),
+      hitlTransitionId: 't-other',
+    } as ChatMessage;
+    const state: ChatState = {
+      ...initialState,
+      messages: [other],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_ORPHANED',
+      transitionId: 't-review:abc',
+      notice: 'x',
+    });
+    expect(next.messages[0].resolvedPayload).toBeUndefined();
+  });
+
+  it('CLEAR_NOTICE resets notice without touching messages', () => {
+    const state: ChatState = { ...initialState, notice: 'hello' };
+    const next = chatReducer(state, { type: 'CLEAR_NOTICE' });
+    expect(next.notice).toBeNull();
+    expect(next.messages).toBe(state.messages);
+  });
+});

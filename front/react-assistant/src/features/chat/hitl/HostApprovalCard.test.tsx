@@ -203,4 +203,142 @@ describe('HostApprovalCard', () => {
     // wrapping so screen readers get the whole thing.
     expect(cmd.textContent).toContain('for f in');
   });
+
+  // ── Single-gate spec additions (spec-process-bugfix-tool-hitl-single-gate) ──
+
+  it('AC-002 — renders clean parsed command and collapses raw invocation JSON', () => {
+    render(
+      <HostApprovalCard
+        payload={buildPayload({
+          command: 'uname -a && whoami',
+          invocation: {
+            tool: 'bash_exec',
+            args: { command: 'bash', args: ['-c', 'uname -a && whoami'] },
+          },
+        })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    // Primary COMANDO block shows the parsed shell command only — never
+    // the raw JSON wrapper.
+    const cmdBlock = screen.getByTestId('host-approval-command');
+    expect(cmdBlock).toHaveTextContent('uname -a && whoami');
+    expect(cmdBlock.textContent).not.toContain('bash_exec');
+    // The disclosure is rendered but collapsed by default.
+    const details = screen.getByTestId('host-approval-technical-details') as HTMLDetailsElement;
+    expect(details).toBeInTheDocument();
+    expect(details.open).toBe(false);
+    // The raw JSON block lives inside the disclosure and carries the
+    // tool + args payload verbatim.
+    const pre = screen.getByTestId('host-approval-invocation-json');
+    expect(pre.textContent).toContain('"tool": "bash_exec"');
+    expect(pre.textContent).toContain('"uname -a && whoami"');
+  });
+
+  it('toggles the technical-details disclosure on click', () => {
+    render(
+      <HostApprovalCard
+        payload={buildPayload({
+          invocation: { tool: 'bash_exec', args: { command: 'bash', args: ['-c', 'ls'] } },
+        })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    const details = screen.getByTestId('host-approval-technical-details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    // Native <details> flips `open` on summary click and dispatches `toggle`
+    // on the element. jsdom supports both; we drive the summary click so the
+    // render path (including the `onToggle` handler) exercises end-to-end.
+    const summary = details.querySelector('summary')!;
+    fireEvent.click(summary);
+    details.dispatchEvent(new Event('toggle'));
+    expect(details.open).toBe(true);
+  });
+
+  it('does not render the disclosure when invocation is absent (legacy payload)', () => {
+    render(
+      <HostApprovalCard payload={buildPayload()} onRespond={vi.fn()} />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('host-approval-technical-details')).toBeNull();
+  });
+
+  it('AC-008 — hides "Aprobar y recordar" when rememberAvailable=false', () => {
+    render(
+      <HostApprovalCard
+        payload={buildPayload({ rememberAvailable: false })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('host-approval-approve-remember')).toBeNull();
+    // Other buttons stay in place.
+    expect(screen.getByTestId('host-approval-approve-once')).toBeInTheDocument();
+    expect(screen.getByTestId('host-approval-deny')).toBeInTheDocument();
+    expect(screen.getByTestId('host-approval-deny-blacklist')).toBeInTheDocument();
+  });
+
+  it('renders the remember button when rememberAvailable is undefined or true', () => {
+    const { unmount } = render(
+      <HostApprovalCard payload={buildPayload()} onRespond={vi.fn()} />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('host-approval-approve-remember')).toBeInTheDocument();
+    unmount();
+    render(
+      <HostApprovalCard
+        payload={buildPayload({ rememberAvailable: true })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('host-approval-approve-remember')).toBeInTheDocument();
+  });
+
+  it('maps the new `risk` field — `danger` → dangerous band', () => {
+    render(
+      <HostApprovalCard
+        payload={buildPayload({ risk: 'danger', risk_band: undefined })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('host-approval-card')).toHaveAttribute(
+      'data-risk-band',
+      'dangerous',
+    );
+  });
+
+  it('AC-005 — renders "Aprobación obsoleta" when obsolete=true and all actions are disabled', () => {
+    const onRespond = vi.fn();
+    render(
+      <HostApprovalCard
+        payload={buildPayload()}
+        obsolete
+        onRespond={onRespond}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('host-approval-obsolete-notice')).toHaveTextContent(
+      /Obsolete approval|Aprobación obsoleta/,
+    );
+    // Buttons lock so the user cannot retry against a dead transition.
+    expect(screen.getByTestId('host-approval-approve-once')).toBeDisabled();
+    expect(screen.getByTestId('host-approval-deny')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('host-approval-deny'));
+    expect(onRespond).not.toHaveBeenCalled();
+  });
+
+  it('prefers payload.title over the default when provided', () => {
+    render(
+      <HostApprovalCard
+        payload={buildPayload({ title: 'Compilación solicitada' })}
+        onRespond={vi.fn()}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByText('Compilación solicitada')).toBeInTheDocument();
+  });
 });

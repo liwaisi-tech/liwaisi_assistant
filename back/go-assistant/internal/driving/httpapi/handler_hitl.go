@@ -57,6 +57,15 @@ func (h *Handlers) HandleResolveHITL(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "session not found")
 			return
 		}
+		// Orphan check must precede ErrSessionInactive because the orphan
+		// error is constructed with %w wrapping and could otherwise be
+		// shadowed by an intermediate matcher. The envelope shape is
+		// specified verbatim by spec §4.3 and is load-bearing for the
+		// frontend stale-card dismissal path (REQ-007 / AC-004).
+		if errors.Is(err, app.ErrTransitionOrphaned) {
+			writeHITLOrphaned(w, transitionID)
+			return
+		}
 		if errors.Is(err, app.ErrSessionInactive) {
 			writeError(w, http.StatusConflict, "session inactive")
 			return
@@ -74,4 +83,29 @@ func (h *Handlers) HandleResolveHITL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, StatusResponse{Status: "resolved"})
+}
+
+// hitlOrphanedError is the structured error envelope emitted when
+// ResolveHITL fails with ErrTransitionOrphaned. The shape is load-bearing:
+// the frontend branches on `error.code == "HITL_TRANSITION_ORPHANED"` to
+// dismiss a stale approval card with a neutral toast (spec §4.3, §9.4).
+type hitlOrphanedError struct {
+	Error hitlOrphanedBody `json:"error"`
+}
+
+type hitlOrphanedBody struct {
+	Code         string `json:"code"`
+	Message      string `json:"message"`
+	TransitionID string `json:"transitionId"`
+}
+
+// writeHITLOrphaned writes the §4.3 envelope with HTTP 409.
+func writeHITLOrphaned(w http.ResponseWriter, transitionID string) {
+	writeJSON(w, http.StatusConflict, hitlOrphanedError{
+		Error: hitlOrphanedBody{
+			Code:         "HITL_TRANSITION_ORPHANED",
+			Message:      "Esta aprobación ya fue resuelta",
+			TransitionID: transitionID,
+		},
+	})
 }

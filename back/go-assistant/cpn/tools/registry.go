@@ -368,8 +368,14 @@ func (r *Registry) InjectIntoCPN(c *cpn.CPN) {
 		if t.ToolName == "" {
 			continue
 		}
+		// Try qualified/anchor lookup first; fall back to bare-name scan so
+		// topologies can use short names like "bash_exec" instead of
+		// "system/bash_exec" (GAP-3 resolution rules, REQ-003).
 		entry, ok := r.resolveLocked(t.ToolName)
-		if !ok || entry.Schema == nil {
+		if !ok {
+			entry = r.resolveByBareNameLocked(t.ToolName)
+		}
+		if entry == nil || entry.Schema == nil {
 			continue
 		}
 		t.ToolMeta = &cpn.ToolMeta{
@@ -382,6 +388,28 @@ func (r *Registry) InjectIntoCPN(c *cpn.CPN) {
 			t.Executor = entry.Executor
 		}
 	}
+}
+
+// resolveByBareNameLocked finds the latest non-deprecated entry whose Name
+// matches bareName across all namespaces. Caller must hold r.mu (any mode).
+func (r *Registry) resolveByBareNameLocked(bareName string) *ToolEntry {
+	var best *ToolEntry
+	var bestAnchor string
+	for anchor, entries := range r.byAnchor {
+		if len(entries) == 0 || entries[0].Name != bareName {
+			continue
+		}
+		candidate := pickLatestNonDeprecated(entries)
+		if candidate == nil {
+			continue
+		}
+		// Deterministic tie-break: alphabetical anchor (same as ResolveByName).
+		if best == nil || anchor < bestAnchor {
+			best = candidate
+			bestAnchor = anchor
+		}
+	}
+	return best
 }
 
 // InjectIntoFuncRegistry registers every tool executor into the given

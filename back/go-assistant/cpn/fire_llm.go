@@ -484,6 +484,22 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					Timestamp: time.Now(),
 				})
 
+				// REQ-001/REQ-002 (spec-process-bugfix-tool-hitl-single-gate):
+				// emit HITLRequestedPayload{CustomSurface:true} so the
+				// integration-layer event callback (cmd/server/main.go) sees
+				// the typed struct and suppresses its legacy t-review card.
+				// Previously this site emitted a map[string]any, which the
+				// type-switch in main.go did not match → the legacy WARN
+				// branch fired and a second "Review Required" card appeared
+				// after the host.approval surface (the Gate B defect).
+				//
+				// GUD-002: record the skip so on-call can confirm in logs
+				// that the topology/builder pair are cooperating.
+				slog.DebugContext(ctx, "fire_llm tool-HITL: skipping legacy t-review wiring (host.approval owns surface)",
+					"transition_id", t.ID,
+					"tool_name", tc.ToolName,
+					"requires_hitl", true,
+				)
 				c.emit(&Event{
 					Type:           EventHITLRequested,
 					TransitionID:   t.ID,
@@ -492,12 +508,9 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					CPNID:          c.ID,
 					CPNDepth:       c.Depth,
 					CPNRole:        c.Role,
-					Payload: map[string]any{
-						"custom_surface": true,
-						"tool_name":      tc.ToolName,
-						"arguments":      string(tc.Arguments),
-						"tool_call_id":   tc.ID,
-						"description":    toolTransition.ToolMeta.Description,
+					Payload: HITLRequestedPayload{
+						Prompt:        "Permiso para operar en tu máquina",
+						CustomSurface: true,
 					},
 					Timestamp: time.Now(),
 				})
@@ -756,49 +769,77 @@ func formatRespondingModel(echoed, authored string) string {
 	return id + " · openrouter"
 }
 
+// HostApprovalInvocation is the raw-invocation sub-payload of
+// HostApprovalPayload. Kept separate so the frontend's collapsed
+// "Detalles técnicos" panel can render only this object.
+// REQ-004 / SEC-002 — MUST reflect the exact arguments passed to the host
+// adapter; divergence is a critical security bug.
+type HostApprovalInvocation struct {
+	Tool string          `json:"tool"`
+	Args json.RawMessage `json:"args"`
+}
+
+// HostApprovalPayload is the A2UI surface payload for the HOST·HITL gate.
+// Shape defined in spec-process-bugfix-tool-hitl-single-gate.md §4.1.
+// The outer envelope adds a `schema` discriminator and a `hostApproval`
+// wrapper for frontend parity with the previous shape.
+type HostApprovalPayload struct {
+	Command           string                 `json:"command"`
+	Invocation        HostApprovalInvocation `json:"invocation"`
+	Risk              string                 `json:"risk"`
+	Title             string                 `json:"title"`
+	Context           string                 `json:"context,omitempty"`
+	RememberAvailable bool                   `json:"rememberAvailable,omitempty"`
+}
+
 // buildToolApprovalA2UI generates the $$a2ui: host.approval payload that the
 // frontend renders as a HostApprovalCard with Approve / Reject buttons.
-// The card schema mirrors spec-architecture-host-gate-security-policy.md §3.
-// risk_band defaults to "caution" for exec tools and "safe" for read-only.
+// The payload shape is defined by HostApprovalPayload (spec §4.1).
+//
+// command is the human-readable shell command extracted via
+// ParseShellInvocation; invocation.args echoes the raw tool-call arguments
+// for the collapsed "Detalles técnicos" disclosure. When the parser flags
+// an unrecognised shape the risk escalates to "caution" regardless of tool.
 func buildToolApprovalA2UI(toolName string, args json.RawMessage) string {
-	type hostApproval struct {
-		RiskBand  string `json:"risk_band"`
-		Command   string `json:"command"`
-		Operation string `json:"operation"`
-	}
-	type a2uiPayload struct {
-		Schema       string      `json:"schema"`
-		HostApproval hostApproval `json:"hostApproval"`
-	}
-
-	op := "exec"
 	risk := "caution"
-	switch toolName {
-	case "file_write":
-		op = "write_file"
-	case "file_read":
-		op = "exec"
+	if toolName == "file_read" {
 		risk = "safe"
 	}
 
-	// Build a readable command string from the raw JSON args.
-	command := toolName
-	argsStr := strings.TrimSpace(string(args))
-	if argsStr != "" && argsStr != "{}" && argsStr != "null" {
-		command = toolName + " " + argsStr
+	command, parsed := ParseShellInvocation(toolName, args)
+	if !parsed && risk == "safe" {
+		// Unknown/unrecognised shape — bump to caution per spec §9.2.
+		risk = "caution"
 	}
-	if len(command) > 200 {
-		command = command[:197] + "…"
+	if len(command) > 400 {
+		command = command[:397] + "…"
 	}
 
-	p := a2uiPayload{
-		Schema: "host.approval",
-		HostApproval: hostApproval{
-			RiskBand:  risk,
-			Command:   command,
-			Operation: op,
-		},
+	// Preserve the raw arg bytes verbatim so the Details panel can display
+	// them byte-identical to the executed invocation (SEC-002).
+	invocationArgs := json.RawMessage(args)
+	if len(invocationArgs) == 0 {
+		invocationArgs = json.RawMessage("{}")
 	}
-	raw, _ := json.Marshal(p)
+
+	payload := HostApprovalPayload{
+		Command: command,
+		Invocation: HostApprovalInvocation{
+			Tool: toolName,
+			Args: invocationArgs,
+		},
+		Risk:  risk,
+		Title: "Permiso para operar en tu máquina",
+	}
+
+	// Wrap in the A2UI envelope used by the frontend HostApprovalCard parser.
+	envelope := struct {
+		Schema       string              `json:"schema"`
+		HostApproval HostApprovalPayload `json:"hostApproval"`
+	}{
+		Schema:       "host.approval",
+		HostApproval: payload,
+	}
+	raw, _ := json.Marshal(envelope)
 	return "$$a2ui:" + string(raw)
 }

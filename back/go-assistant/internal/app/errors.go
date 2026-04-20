@@ -25,6 +25,17 @@ var ErrNoPersistence = errors.New("persistence not configured")
 // Introduced by the ghost-session rehydration bugfix (spec REQ-003, §4.1, §4.2).
 var ErrSessionInactive = errors.New("session inactive")
 
+// ErrTransitionOrphaned is returned by ResolveHITL when the session is alive
+// (or was alive in-process) but the specific HITL transition cannot be
+// resolved because its token has already been consumed or the flow moved past
+// the gate. Distinct from ErrSessionInactive, which represents a dead/idle
+// session with no live producer at all (e.g. fresh rehydration).
+//
+// Frontends SHOULD treat this as a benign race (stale card, multi-tab, etc.)
+// and dismiss the card with a neutral notice instead of a hard error banner.
+// See spec-process-bugfix-tool-hitl-single-gate.md §4.3 / §9.4 (REQ-006).
+var ErrTransitionOrphaned = errors.New("hitl transition already resolved or orphaned")
+
 // ErrPersistenceUnavailable is returned when the persistence layer fails or is
 // unreachable during rehydration. It is distinct from ErrNoPersistence, which
 // indicates the deployment is running without persistence by design. Handlers

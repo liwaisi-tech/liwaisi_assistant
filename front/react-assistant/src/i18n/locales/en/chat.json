@@ -72,6 +72,11 @@
       "respondedAt": "Responded at {{time}}",
       "responded": "Responded"
     },
+    "hostApproval": {
+      "technicalDetails": "Technical details",
+      "obsolete": "Obsolete approval",
+      "orphanedToast": "This approval has already been resolved"
+    },
     "clarify": {
       "badge": {
         "label": "Follow-up {{n}} of {{max}}",

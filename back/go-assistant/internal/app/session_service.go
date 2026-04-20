@@ -21,7 +21,7 @@ import (
 // fallbackDefaultModel is the compile-time safety net used only when the
 // model registry is unreachable AND WithDefaultModel was never called. Keep
 // it in the domain package so the app layer never imports infra/openrouter.
-const fallbackDefaultModel = "google/gemma-4-31b-it"
+const fallbackDefaultModel = "google/gemini-3-flash-preview"
 
 // rehydrateTimeout bounds the time a single-flight rehydration can block the
 // service on a persistence round-trip. Keeps ghost-session lookups bounded so
@@ -398,6 +398,13 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	// failed runs (e.g., HITL rejection leaving tokens in p-classified/p-plan).
 	session.Root.Reset()
 
+	// Re-seed p-host-capabilities after Reset (which clears every place
+	// including this well-known terminal place). Without this, IsComplete
+	// fails on every turn past the first: p-host-capabilities is terminal
+	// but empty, so the CPN deadlocks as soon as t-direct/t-execute deposit
+	// to p-output. The seed is cheap (cache lookup, TTL-gated).
+	s.ensureHostCapabilitiesSeed(ctx, session.Root)
+
 	// Sync conversation history to CPN so LLM transitions have context.
 	// Must happen AFTER Reset (which clears History).
 	msgs := session.Messages()
@@ -719,28 +726,55 @@ func (s *SessionService) CancelSession(sessionID string) {
 
 // ResolveHITL forwards a human response to a waiting HITL transition.
 //
-// Rehydrates the session from persistence on in-memory miss (REQ-003a). If the
-// session has no in-flight execution to accept the response, returns
-// ErrSessionInactive so the caller can distinguish "ghost" from "idle" and
-// prompt the user for a new run rather than silently failing.
+// Rehydrates the session from persistence on in-memory miss (REQ-003a). The
+// error contract distinguishes two failure modes (spec §4.3, REQ-006):
+//
+//   - ErrSessionInactive: the session has no live in-memory execution state
+//     (freshly rehydrated / ghost session). The user should be prompted to
+//     start a new run.
+//   - ErrTransitionOrphaned: the session is (or was) live in-process but this
+//     specific transition is no longer waiting — its token has been consumed
+//     already, the flow moved past the gate, or the CPN has reached a
+//     terminal state. The frontend should dismiss the stale card with a
+//     neutral notice (REQ-007).
 func (s *SessionService) ResolveHITL(ctx context.Context, sessionID, transitionID string, resp cpn.HITLResponse) error {
 	session, _, err := s.getOrRehydrate(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 
-	// HITL resolution requires an in-flight execution to be waiting on a
-	// human response. If no CPN run is live (Running/Waiting), any rehydrated
-	// topology is idle and there is no HITL channel registered for a real
-	// transition. Signal this explicitly so the frontend can prompt a new run.
 	s.mu.RLock()
 	st := s.states[sessionID]
 	s.mu.RUnlock()
+
+	// Precise predicate for the two failure modes (spec §4.3, REQ-006):
+	//
+	//   ErrSessionInactive  — the CPN has no live execution at all (no state
+	//                         record, or state ∉ {Running, Waiting}). A freshly
+	//                         rehydrated ("ghost") session lands here because
+	//                         rehydrate() seeds StateIdle. The user should be
+	//                         prompted to start a new run.
+	//
+	//   ErrTransitionOrphaned — the CPN IS live (Running/Waiting) but the
+	//                           specific transition is no longer awaiting a
+	//                           response. This is the duplicate-gate case
+	//                           described in spec §7: the tool already fired
+	//                           via the host-HITL channel and a stale t-review
+	//                           card is being resolved against a flow that has
+	//                           moved on. The frontend dismisses the card with
+	//                           a neutral notice (REQ-007 / AC-004).
 	if st == nil || !isExecutionLive(st.get()) {
 		return fmt.Errorf("%w: %s", ErrSessionInactive, sessionID)
 	}
 
-	return session.ResolveHITL(ctx, transitionID, resp)
+	if err := session.ResolveHITL(ctx, transitionID, resp); err != nil {
+		if errors.Is(err, cpn.ErrNoHITLWaiting) {
+			return fmt.Errorf("%w: transition %q on session %s: %w",
+				ErrTransitionOrphaned, transitionID, sessionID, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // isExecutionLive reports whether a session state indicates an in-flight CPN

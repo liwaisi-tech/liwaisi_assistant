@@ -39,6 +39,8 @@ export function ChatContainer({
     sendMessage,
     resolveHITL,
     error,
+    notice,
+    clearNotice,
     currentActivity,
     recentReceipt,
     dismissReceipt,
@@ -115,6 +117,36 @@ export function ChatContainer({
         recentReceipt={recentReceipt}
         onReceiptDismiss={dismissReceipt}
       />
+      {notice && (
+        <div className="px-4 pt-2">
+          <div
+            role="status"
+            data-testid="chat-notice"
+            className="mx-auto max-w-3xl flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-xs font-medium"
+            style={{
+              backgroundColor: 'var(--bg-input)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-dim)',
+              fontFamily: "'DM Sans', system-ui, sans-serif",
+            }}
+          >
+            <span>{notice}</span>
+            <button
+              type="button"
+              onClick={clearNotice}
+              aria-label="Dismiss"
+              className="text-[11px] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+              style={{
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-dim)',
+                backgroundColor: 'transparent',
+              }}
+            >
+              {'\u2715'}
+            </button>
+          </div>
+        </div>
+      )}
       <MessageInput
         onSend={handleSend}
         disabled={sessionState === 'running' || sessionState === 'waiting'}

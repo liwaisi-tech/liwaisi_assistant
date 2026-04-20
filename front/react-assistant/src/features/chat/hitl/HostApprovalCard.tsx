@@ -38,6 +38,14 @@ import type {
 interface HostApprovalCardProps {
   payload: HostApprovalPayload;
   /**
+   * When true, the card renders in a display-only "obsolete" state with a
+   * neutral "Aprobación obsoleta" notice in place of action buttons. Used
+   * during rehydration of pre-fix chats (§9.3, CON-002): persisted
+   * `t-review` rows and stale host-approval surfaces that have no live
+   * transition to back them must render locked without crashing.
+   */
+  obsolete?: boolean;
+  /**
    * Previously-submitted action for this prompt, if any. When set, the
    * buttons render locked in the chosen state — the same pattern the
    * existing A2UI HITL buttons use under ResolutionContext
@@ -113,6 +121,20 @@ const bandStyle: Record<
     badgeBorder: 'rgba(127, 29, 29, 0.5)',
   },
 };
+
+// resolveBand maps the new REQ-003/§4.1 `risk` field (safe|caution|danger)
+// and the legacy `risk_band` field (safe|caution|dangerous|forbidden) onto
+// the internal band key so the rest of the render path is unchanged. The
+// new `danger` value is treated as the existing `dangerous` band so the
+// rose rail + always-HITL semantics still apply.
+function resolveBand(payload: HostApprovalPayload): HostApprovalRiskBand {
+  if (payload.risk === 'danger') return 'dangerous';
+  if (payload.risk === 'caution') return 'caution';
+  if (payload.risk === 'safe') return 'safe';
+  const legacy = payload.risk_band;
+  if (legacy && legacy in bandStyle) return legacy;
+  return 'caution';
+}
 
 // Spanish-LATAM copy — per brief. Kept inline rather than in i18n JSON
 // because the brief pinned the exact wording; a future i18n pass should
@@ -261,16 +283,21 @@ export const HostApprovalCard = memo(function HostApprovalCard({
   onRespond,
   error,
   onRetry,
+  obsolete = false,
 }: HostApprovalCardProps) {
   const { t } = useTranslation('chat');
   const [expanded, setExpanded] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const band: HostApprovalRiskBand =
-    payload.risk_band in bandStyle ? payload.risk_band : 'caution';
+  const band: HostApprovalRiskBand = resolveBand(payload);
   const style = bandStyle[band];
 
-  const locked = resolvedAction != null;
+  const locked = resolvedAction != null || obsolete;
   const forbidden = band === 'forbidden';
+  // AC-008: hide "Aprobar y recordar" when the backend tells us it is not
+  // available (e.g. the user already used it for an equivalent command, or
+  // the tool policy forbids sticky approvals).
+  const rememberHidden = payload.rememberAvailable === false;
 
   const handle = useCallback(
     (action: HostApprovalAction) => {
@@ -338,25 +365,39 @@ export const HostApprovalCard = memo(function HostApprovalCard({
               <span aria-hidden="true">{band === 'dangerous' ? '\u25B2' : '\u25CF'}</span>
               {COPY.riskLabel}: {COPY.riskBand[band]}
             </span>
-            <span
-              className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide"
-              style={{
-                backgroundColor: 'var(--bg-input)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-dim)',
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-              data-testid="host-approval-operation-pill"
-            >
-              {COPY.operation[payload.operation] ?? payload.operation}
-            </span>
+            {payload.operation && (
+              <span
+                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide"
+                style={{
+                  backgroundColor: 'var(--bg-input)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-dim)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+                data-testid="host-approval-operation-pill"
+              >
+                {COPY.operation[payload.operation] ?? payload.operation}
+              </span>
+            )}
           </div>
           <h3
             className="text-sm font-semibold leading-snug"
             style={{ color: 'var(--text-primary)' }}
           >
-            {COPY.title}
+            {payload.title ?? COPY.title}
           </h3>
+          {payload.context && (
+            <p
+              className="text-[11px]"
+              style={{
+                color: 'var(--text-muted)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+              data-testid="host-approval-context"
+            >
+              {payload.context}
+            </p>
+          )}
         </div>
       </header>
 
@@ -396,6 +437,49 @@ export const HostApprovalCard = memo(function HostApprovalCard({
             {expanded || !commandIsLong ? payload.command : truncatedCommand}
           </button>
         </div>
+
+        {/* Technical details disclosure — REQ-005 / AC-002. Renders the raw
+            tool-invocation JSON (tool name + args) inside a collapsed-by-
+            default `<details>`. Kept styled like the alternatives panel so
+            the card stays visually coherent. Only rendered when the backend
+            supplied an `invocation` bag; legacy payloads fall through. */}
+        {payload.invocation && (
+          <details
+            className="rounded-lg"
+            open={detailsOpen}
+            onToggle={(e) => setDetailsOpen((e.target as HTMLDetailsElement).open)}
+            style={{
+              backgroundColor: 'var(--bg-input)',
+              border: '1px solid var(--border-dim)',
+            }}
+            data-testid="host-approval-technical-details"
+          >
+            <summary
+              className="cursor-pointer list-none px-3 py-2 text-[11px] font-medium flex items-center gap-1.5"
+              style={{
+                color: 'var(--text-secondary)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              <span aria-hidden="true">{detailsOpen ? '\u25BE' : '\u25B8'}</span>
+              {t('a2ui.hostApproval.technicalDetails', {
+                defaultValue: 'Detalles técnicos',
+              })}
+            </summary>
+            <pre
+              className="px-3 pb-3 pt-1 text-[11px] leading-snug overflow-x-auto"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: "'JetBrains Mono', monospace",
+                whiteSpace: 'pre',
+                margin: 0,
+              }}
+              data-testid="host-approval-invocation-json"
+            >
+              {JSON.stringify(payload.invocation, null, 2)}
+            </pre>
+          </details>
+        )}
 
         {/* Rationale */}
         {payload.rationale && (
@@ -486,16 +570,18 @@ export const HostApprovalCard = memo(function HostApprovalCard({
             chosen={resolvedAction === 'approve-once'}
             onClick={() => handle('approve-once')}
           />
-          <ActionButton
-            dataTestid="host-approval-approve-remember"
-            label={COPY.actions.approveRemember}
-            tone="approve"
-            emphasis="soft"
-            tooltip={COPY.tooltips.approveRemember}
-            disabled={locked || forbidden || band === 'dangerous'}
-            chosen={resolvedAction === 'approve-and-remember'}
-            onClick={() => handle('approve-and-remember')}
-          />
+          {!rememberHidden && (
+            <ActionButton
+              dataTestid="host-approval-approve-remember"
+              label={COPY.actions.approveRemember}
+              tone="approve"
+              emphasis="soft"
+              tooltip={COPY.tooltips.approveRemember}
+              disabled={locked || forbidden || band === 'dangerous'}
+              chosen={resolvedAction === 'approve-and-remember'}
+              onClick={() => handle('approve-and-remember')}
+            />
+          )}
           <span
             aria-hidden="true"
             className="mx-1 hidden sm:inline-block"
@@ -526,8 +612,27 @@ export const HostApprovalCard = memo(function HostApprovalCard({
           />
         </div>
 
+        {/* Obsolete notice — AC-005 / §9.3. Rendered when a rehydrated pre-
+            fix chat carries a surface with no live transition to back it.
+            The buttons above are already locked via `obsolete → locked`;
+            this line gives the user a neutral reason why. */}
+        {obsolete && !resolvedAction && (
+          <p
+            className="text-[11px]"
+            data-testid="host-approval-obsolete-notice"
+            style={{
+              color: 'var(--text-muted)',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            {t('a2ui.hostApproval.obsolete', {
+              defaultValue: 'Aprobación obsoleta',
+            })}
+          </p>
+        )}
+
         {/* Locked status line — kept subtle; the ✓ on the chosen button is the primary cue. */}
-        {locked && (
+        {locked && resolvedAction && (
           <p
             className="text-[11px]"
             data-testid="host-approval-resolved-state"

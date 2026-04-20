@@ -3,7 +3,7 @@ import type { BackendSessionState, SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload, ToolExecutedPayload } from '../types/sse';
 import type { ChatMessage, HITLAction, ToolExecution } from '../types/chat';
 import type { A2UIAction } from '../features/chat/a2ui/types';
-import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
+import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError, HITLTransitionOrphanedError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
 
@@ -46,6 +46,14 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
+  /**
+   * Neutral, non-error notice string surfaced above the composer. Used for
+   * benign races (e.g. HITL_TRANSITION_ORPHANED: the card the user just
+   * clicked was already resolved by a parallel channel). Rendered in a
+   * slate/muted style — distinct from the red `error` banner.
+   * REQ-007 / AC-004 / §9.4.
+   */
+  notice: string | null;
   currentActivity: CurrentActivity | null;
   recentReceipt: RecentReceipt | null;
 }
@@ -65,6 +73,13 @@ export type ChatAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string; suppressBubble?: boolean }
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction; resolvedPayload?: string }
+  // HITL_ORPHANED: the backend reported HITL_TRANSITION_ORPHANED for the
+  // given transitionId. Locks the surface with a stable `{"action":
+  // "orphaned"}` envelope (parallels the existing `expired` sentinel) so
+  // the renderer dims buttons without flashing a red error banner, and
+  // raises a neutral `notice` string. §4.3 / REQ-007 / AC-004.
+  | { type: 'HITL_ORPHANED'; transitionId: string; notice: string }
+  | { type: 'CLEAR_NOTICE' }
   | { type: 'ACTIVITY_START'; transitionId: string; cpnId: string; sessionId: string; verb: string; detail?: string }
   | { type: 'ACTIVITY_END'; transitionId: string; sessionId: string; durationMs?: number; costUsd?: number }
   | { type: 'ACTIVITY_RECEIPT_SHOW'; durationMs: number; costUsd: number }
@@ -438,6 +453,34 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, sessionState: 'waiting', currentActivity: null, messages: stamped };
     }
 
+    case 'HITL_ORPHANED': {
+      // Lock every stale surface keyed by this transition. We also sweep
+      // surfaces that carry a live `hitlActions` bag (no transitionId yet)
+      // for the same parentage so legacy pre-fix `t-review` rows get the
+      // same obsolete treatment the new host-approval cards use (CON-002).
+      const orphaned = '{"action":"orphaned"}';
+      const next = state.messages.map((m) => {
+        if (m.hitlTransitionId !== action.transitionId) return m;
+        return {
+          ...m,
+          hitlActions: undefined,
+          resolvedPayload: orphaned,
+          resolvedAt: new Date(),
+        };
+      });
+      return {
+        ...state,
+        // Clear the red error banner: this is a benign race, not a failure.
+        error: null,
+        notice: action.notice,
+        sessionState: 'idle',
+        messages: next,
+      };
+    }
+
+    case 'CLEAR_NOTICE':
+      return { ...state, notice: null };
+
     case 'HITL_RESOLVED':
       return {
         ...state,
@@ -576,6 +619,7 @@ export const initialState: ChatState = {
   messages: [],
   sessionState: 'idle',
   error: null,
+  notice: null,
   currentActivity: null,
   recentReceipt: null,
 };
@@ -604,6 +648,10 @@ export interface UseChatReturn {
   sendMessage: (content: string) => Promise<void>;
   resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
   error: string | null;
+  /** Neutral informational notice (e.g. stale HITL dismissal). */
+  notice: string | null;
+  /** Clear the transient neutral notice. */
+  clearNotice: () => void;
   currentActivity: CurrentActivity | null;
   recentReceipt: RecentReceipt | null;
   dismissReceipt: () => void;
@@ -826,6 +874,10 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     dispatch({ type: 'ACTIVITY_RECEIPT_DISMISS' });
   }, []);
 
+  const clearNotice = useCallback(() => {
+    dispatch({ type: 'CLEAR_NOTICE' });
+  }, []);
+
   const handleResolveHITL = useCallback(
     async (transitionId: string, action: HITLAction, content?: string) => {
       if (!sessionId) return;
@@ -852,6 +904,19 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           ...((action === 'revise' || action === 'submit') && content ? { content } : {}),
         });
       } catch (err) {
+        // REQ-007 / AC-004: a HITL_TRANSITION_ORPHANED response is a benign
+        // race (another tab or parallel channel already resolved the gate,
+        // or the rehydrated card has no live backing). Dismiss the stale
+        // card with a neutral notice instead of a red "Failed to respond"
+        // banner.
+        if (err instanceof HITLTransitionOrphanedError) {
+          dispatch({
+            type: 'HITL_ORPHANED',
+            transitionId: err.transitionId ?? transitionId,
+            notice: 'Esta aprobación ya fue resuelta',
+          });
+          return;
+        }
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
       }
     },
@@ -934,6 +999,8 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     sendMessage,
     resolveHITL: handleResolveHITL,
     error: state.error,
+    notice: state.notice,
+    clearNotice,
     currentActivity: state.currentActivity,
     recentReceipt: state.recentReceipt,
     dismissReceipt,

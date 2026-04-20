@@ -1594,6 +1594,24 @@ const HOST_APPROVAL_ACTIONS = new Set<HostApprovalAction>([
  * spec-process-bugfix-a2ui-hitl-rehydration.md — surface must survive a
  * reload byte-identically).
  */
+/**
+ * isObsoleteEnvelope returns true when the resolved-payload envelope marks
+ * the surface as stale — either the rehydration-time `expired` sentinel or
+ * the live-race `orphaned` sentinel. Callers render an "Aprobación
+ * obsoleta" notice instead of interactive buttons (§9.3 / AC-005).
+ */
+function isObsoleteEnvelope(payload: string | undefined): boolean {
+  if (!payload) return false;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const a = (parsed as Record<string, unknown>).action;
+    return a === 'expired' || a === 'orphaned';
+  } catch {
+    return false;
+  }
+}
+
 function extractHostApprovalAction(payload: string | undefined): HostApprovalAction | null {
   if (!payload) return null;
   try {
@@ -1698,6 +1716,12 @@ export function A2UIMessageRenderer({
   if (deferredPayload.schema === 'host.approval' && deferredPayload.hostApproval) {
     const resolvedAction = extractHostApprovalAction(resolvedPayload);
     const hostApproval: HostApprovalPayload = deferredPayload.hostApproval;
+    // AC-005 / §9.3: the reducer marks pre-fix surfaces with
+    // `{"action":"expired"}` and the orphaned-resolve path marks stale
+    // cards with `{"action":"orphaned"}`. Either envelope means the card
+    // has no live transition to back it — render it locked with the
+    // neutral "Aprobación obsoleta" notice instead of crashing.
+    const isObsolete = !resolvedAction && isObsoleteEnvelope(resolvedPayload);
     return (
       <ResolutionContext.Provider value={resolutionValue}>
         <div className={contentClass}>
@@ -1708,6 +1732,7 @@ export function A2UIMessageRenderer({
             payload={hostApproval}
             resolvedAction={resolvedAction}
             resolvedAt={resolvedAt}
+            obsolete={isObsolete}
             onRespond={(action) =>
               handleAction({
                 type: 'hitl:host-approval',
