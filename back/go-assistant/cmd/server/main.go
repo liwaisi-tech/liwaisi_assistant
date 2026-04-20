@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
@@ -295,8 +296,17 @@ func main() {
 	// through the policy gate's HandleRequiresHITL helper. Only active when
 	// the policy gate is installed — the allow-all fallback never raises
 	// the sentinel.
+	var awakeningModeReg *gate.AwakeningModeRegistry
 	if pg, ok := hostGateImpl.(*gate.PolicyHostGate); ok {
 		hostRuntime.HITLHandler = &gate.SessionHITLHandler{Gate: pg}
+		// Share an awakening-mode registry between the gate and the
+		// SessionService so silent-deny (CON-003 / AC-005) activates
+		// for the right session while `brae-awakens` is driving it.
+		awakeningModeReg = gate.NewAwakeningModeRegistry()
+		pg.AwakeningMode = awakeningModeReg
+		// Resolve the session id from ctx so the gate can check the
+		// awakening-mode flag per-session.
+		pg.SessionIDResolver = cpnSessionIDFromContext
 	}
 	serviceOpts = append(serviceOpts, app.WithHostRuntime(hostRuntime))
 	logger.Info("host runtime initialized", "gate", gateKind(hostGateImpl))
@@ -316,6 +326,25 @@ func main() {
 			}),
 		)
 		logger.Info("host capability registry enabled")
+
+		// ── brae-awakens topology (REQ-001, CON-001, AC-001) ──────────
+		// The factory matches the signature SessionService expects; the
+		// repo + host-id are closed over.
+		serviceOpts = append(serviceOpts,
+			app.WithAwakensFactory(func(sid string, deps awakens.Deps) *cpn.CPN {
+				if deps.Repository == nil {
+					deps.Repository = hostCapRepo
+				}
+				if deps.Source == "" {
+					deps.Source = awakens.SourceAwakening
+				}
+				return awakens.TopologyFactory(sid, deps)
+			}),
+		)
+		if awakeningModeReg != nil {
+			serviceOpts = append(serviceOpts, app.WithAwakeningMode(awakeningModeReg))
+		}
+		logger.Info("brae-awakens topology enabled")
 	}
 
 	// ── Mutation audit log (GAP-7 REQ-005) ─────────────────────────────
@@ -903,6 +932,14 @@ func buildHITLReviewCard(_, transitionID string) string {
 		return "" // caller's WARN already fired; swallow to avoid stranding the SSE stream
 	}
 	return "$$a2ui:" + string(data)
+}
+
+// cpnSessionIDFromContext is the bridge the PolicyHostGate uses to recover
+// the owning session ID from a CPN fire's ctx. The cpn executor threads the
+// ID via cpn.WithSessionID before calling gate.Check (see fire_bash.go), so
+// a thin shim is enough here — avoids leaking ctx keys into infra/host/gate.
+func cpnSessionIDFromContext(ctx context.Context) string {
+	return cpn.SessionIDFromContext(ctx)
 }
 
 // gateKind reports a short name for the active HostGate implementation

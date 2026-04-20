@@ -1,15 +1,23 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
+import type { AwakeningPhase } from '../../hooks/useChat';
 
 interface MessageInputProps {
   onSend: (content: string) => void;
   disabled: boolean;
   sessionState?: SessionState;
+  /**
+   * Awakening gate (spec §4.4 / REQ-008). When `pending`, the composer
+   * shows a distinctive "brae is waking up…" placeholder instead of the
+   * generic "waiting for response…" so the user understands this is the
+   * one-shot self-discovery turn, not an arbitrary backend delay.
+   */
+  awakeningPhase?: AwakeningPhase;
   error: string | null;
 }
 
-export function MessageInput({ onSend, disabled, sessionState, error }: MessageInputProps) {
+export function MessageInput({ onSend, disabled, sessionState, awakeningPhase, error }: MessageInputProps) {
   const { t } = useTranslation('chat');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -36,6 +44,17 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
     }
   }, [handleSend]);
 
+  // Placeholder copy is derived at render — cheap string choice, no effect
+  // needed (vercel rerender-derived-state-no-effect). The awakening branch
+  // wins over the generic waiting/disabled branches so users understand
+  // the first-boot discovery turn is distinct from ordinary latency.
+  const placeholder = useMemo(() => {
+    if (awakeningPhase === 'pending') return t('messageInput.placeholderAwakening');
+    if (!disabled) return t('messageInput.placeholder');
+    if (sessionState === 'waiting') return t('messageInput.placeholderWaiting');
+    return t('messageInput.placeholderDisabled');
+  }, [awakeningPhase, disabled, sessionState, t]);
+
   return (
     <div className="border-t px-4 py-3"
          style={{ borderColor: 'var(--border-dim)', backgroundColor: 'var(--bg-surface)' }}>
@@ -52,13 +71,12 @@ export function MessageInput({ onSend, disabled, sessionState, error }: MessageI
             ref={textareaRef}
             className="message-textarea flex-1 bg-transparent text-sm leading-relaxed placeholder:text-slate-500 focus:outline-none"
             style={{ color: 'var(--text-primary)', fontFamily: "'DM Sans', system-ui, sans-serif" }}
-            placeholder={disabled
-              ? (sessionState === 'waiting' ? t('messageInput.placeholderWaiting') : t('messageInput.placeholderDisabled'))
-              : t('messageInput.placeholder')}
+            placeholder={placeholder}
             disabled={disabled}
             onKeyDown={handleKeyDown}
             rows={1}
             aria-label={t('messageInput.inputAriaLabel')}
+            data-awakening={awakeningPhase === 'pending' ? 'true' : undefined}
           />
           <button
             type="button"

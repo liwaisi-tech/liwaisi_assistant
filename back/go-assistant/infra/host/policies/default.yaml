@@ -14,7 +14,10 @@
 version: 1
 
 defaults:
-  sandbox: readonly
+  # Container is the sandbox. If bwrap/firejail is baked into the image,
+  # switch to "readonly". Keeping "none" here lets safe-band introspection
+  # actually execute in minimal alpine images (no bwrap binary present).
+  sandbox: none
   cpu_seconds_budget: 120
   bytes_written_budget: 268435456      # 256 MiB
   outbound_requests_budget: 50
@@ -42,6 +45,14 @@ safe_patterns:
   - "^(/(usr/)?bin/)?(ls|cat|pwd|echo|uname|whoami|id|hostname|which|env)(\\s|$)"
   - "^(/(usr/)?bin/)?(head|tail|wc|grep|find|basename|dirname)(\\s|$)"
   - "^(/(usr/)?bin/)?(date|uptime|df|du|free)(\\s|$)"
+  # Awakening introspection class (spec §4.5, SEC-001..SEC-004).
+  # Auto-approved, no HITL surface, used by the `brae-awakens` flow.
+  - "^(printenv|arch|getconf|busybox\\s+--list)(\\s|$)"
+  - "^command\\s+-v\\s+[A-Za-z0-9_.-]+\\s*$"
+  - "^cat\\s+/etc/[A-Za-z0-9_./-]+\\s*$"
+  - "^cat\\s+/proc/[A-Za-z0-9_./-]+\\s*$"
+  - "^head\\s+-n\\s+[0-9]+\\s+/[A-Za-z0-9_./-]+\\s*$"
+  - "^tail\\s+-n\\s+[0-9]+\\s+/[A-Za-z0-9_./-]+\\s*$"
 
 # ── Caution (HITL every run unless "approve-and-remember") ───────────────
 # REQ-050: compilers, package managers, network clients.

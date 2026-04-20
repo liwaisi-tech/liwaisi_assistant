@@ -26,7 +26,7 @@ func TestHexagonal_NoOSImports(t *testing.T) {
 			return werr
 		}
 		if info.IsDir() {
-			if path != "." && (info.Name() == "tools" || info.Name() == "prompts" || info.Name() == "persist" || info.Name() == "synthesis") {
+			if path != "." && (info.Name() == "tools" || info.Name() == "prompts" || info.Name() == "persist" || info.Name() == "synthesis" || info.Name() == "awakens" || info.Name() == "testdata") {
 				return filepath.SkipDir
 			}
 			return nil

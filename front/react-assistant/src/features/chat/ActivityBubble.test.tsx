@@ -233,4 +233,31 @@ describe('ActivityBubble — accessibility', () => {
     });
     expect(status.getAttribute('aria-label')).toBe('Thinking');
   });
+
+  // Awakening-phase labels ride the generic transition_started wire with a
+  // backend-localised `display_label` (spec-architecture-brae-awakening-
+  // self-discovery.md BEH-004). The bubble must surface whatever verb the
+  // backend supplied without re-translation on the frontend.
+  it('renders the Spanish "Despertando\u2026" verb for awakening transitions', () => {
+    render(
+      <ActivityBubble
+        activity={activity({ verb: 'Despertando\u2026', detail: 'uname -a' })}
+        receipt={null}
+        prefersReducedMotion={true}
+      />,
+    );
+    expect(screen.getByText('Despertando\u2026')).toBeInTheDocument();
+    expect(screen.getByText('uname -a')).toBeInTheDocument();
+  });
+
+  it('renders the English "Waking up\u2026" verb when locale is en', () => {
+    render(
+      <ActivityBubble
+        activity={activity({ verb: 'Waking up\u2026', detail: 'command -v git' })}
+        receipt={null}
+        prefersReducedMotion={true}
+      />,
+    );
+    expect(screen.getByText('Waking up\u2026')).toBeInTheDocument();
+  });
 });

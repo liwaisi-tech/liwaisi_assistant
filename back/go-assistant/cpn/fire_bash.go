@@ -73,7 +73,11 @@ func fireBash(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 			Command: cfg.Command,
 			Sandbox: cfg.SandboxProfile,
 		}
-		if err := gate.Check(ctx, op); err != nil {
+		// Thread the owning session ID so infra/host/gate's
+		// SessionIDResolver (and the awakening silent-deny registry)
+		// can correlate the ctx back to a session (SEC-004 / CON-003).
+		gateCtx := WithSessionID(ctx, c.SessionID)
+		if err := gate.Check(gateCtx, op); err != nil {
 			// REQ-001..REQ-005: when the gate asks for a human decision we
 			// route through the policy-gate's HandleRequiresHITL helper via
 			// the HostRuntime.HITLHandler seam. The handler resolves to nil

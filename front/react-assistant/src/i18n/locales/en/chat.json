@@ -32,6 +32,7 @@
     "placeholder": "Type a message...",
     "placeholderWaiting": "Review the plan above...",
     "placeholderDisabled": "Waiting for response...",
+    "placeholderAwakening": "brae is waking up\u2026",
     "sendAriaLabel": "Send message",
     "inputAriaLabel": "Message input",
     "hint": "Press Enter to send, Shift+Enter for newline"

@@ -1,11 +1,11 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { BackendSessionState, SessionState } from '../types/api';
 import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload, ToolExecutedPayload } from '../types/sse';
 import type { ChatMessage, HITLAction, ToolExecution } from '../types/chat';
 import type { A2UIAction } from '../features/chat/a2ui/types';
 import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError, HITLTransitionOrphanedError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
-import { A2UI_MARKER } from '../features/chat/a2ui/constants';
+import { A2UI_MARKER, AWAKENING_CPN_ROLE } from '../features/chat/a2ui/constants';
 
 // A2UI_ACTION_MARKER prefixes any user message that carries a serialized
 // v0.8 userAction envelope. The CPN's `t-recv-response` transition (GAP-CPN)
@@ -639,12 +639,57 @@ export interface UseChatOptions {
   onSessionNotFound?: (sessionId: string) => void;
 }
 
+/**
+ * AwakeningPhase gates the composer while the `brae-awakens` CPN topology
+ * (spec-architecture-brae-awakening-self-discovery.md §4.3) drives the
+ * session's first agentic turn.
+ *   • `pending`  — fresh session, no assistant message has landed yet.
+ *                  Composer is disabled, placeholder reads "brae is waking up…".
+ *   • `complete` — either the awakening card arrived (cpnRole='awakening')
+ *                  or the session already has at least one assistant row
+ *                  (rehydration of an older chat). Composer is unlocked.
+ * See REQ-008 / AC-001 / BEH-003.
+ */
+export type AwakeningPhase = 'pending' | 'complete';
+
+/**
+ * Pure awakening-phase derivation. Exported so the state machine is
+ * covered by focused unit tests without driving the full reducer/hook.
+ * See `useChat.test.ts > awakening phase` for the contract under test.
+ */
+export function computeAwakeningPhase(
+  sessionId: string | null,
+  messages: ChatMessage[],
+  sessionState: SessionState,
+): AwakeningPhase {
+  if (!sessionId) return 'complete';
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      // Explicit awakening role is the happy path; any assistant row at
+      // all means the agent has spoken (either live or rehydrated) so
+      // the gate opens either way.
+      if (m.cpnRole === AWAKENING_CPN_ROLE) return 'complete';
+      return 'complete';
+    }
+  }
+  if (sessionState === 'running' || sessionState === 'waiting') {
+    return 'pending';
+  }
+  return 'complete';
+}
+
 export interface UseChatReturn {
   messages: ChatMessage[];
   sessionState: SessionState;
   sessionId: string | null;
   isConnected: boolean;
   connectionState: SSEConnectionState;
+  /**
+   * Awakening gate — `pending` until the session's first assistant message
+   * lands, then `complete`. Drives MessageInput's disabled state and its
+   * "waking up" placeholder copy (REQ-008 / AC-001).
+   */
+  awakeningPhase: AwakeningPhase;
   sendMessage: (content: string) => Promise<void>;
   resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
   error: string | null;
@@ -990,12 +1035,24 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [sessionId],
   );
 
+  // Awakening gate (spec §4.4 / REQ-008 / AC-001). Derived from the
+  // message list + session state so no extra reducer action is required:
+  // the moment a STREAM_CHUNK lands that introduces an assistant message
+  // — especially one stamped with cpnRole='awakening' — we flip to
+  // 'complete'. `useMemo` keeps the derivation cheap and stable across
+  // unrelated re-renders (vercel rerender-derived-state-no-effect).
+  const awakeningPhase: AwakeningPhase = useMemo(
+    () => computeAwakeningPhase(sessionId, state.messages, state.sessionState),
+    [sessionId, state.messages, state.sessionState],
+  );
+
   return {
     messages: state.messages,
     sessionState: state.sessionState,
     sessionId,
     isConnected,
     connectionState,
+    awakeningPhase,
     sendMessage,
     resolveHITL: handleResolveHITL,
     error: state.error,

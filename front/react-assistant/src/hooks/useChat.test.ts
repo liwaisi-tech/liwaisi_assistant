@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chatReducer, initialState, type ChatState } from './useChat';
+import { chatReducer, computeAwakeningPhase, initialState, type ChatState } from './useChat';
 import type { ChatMessage } from '../types/chat';
 import type { StreamChunkData } from '../types/sse';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
@@ -760,5 +760,60 @@ describe('chatReducer — HITL_ORPHANED (bugfix-tool-hitl-single-gate)', () => {
     const next = chatReducer(state, { type: 'CLEAR_NOTICE' });
     expect(next.notice).toBeNull();
     expect(next.messages).toBe(state.messages);
+  });
+});
+
+// Awakening gate state machine — spec-architecture-brae-awakening-self-
+// discovery.md §4.4, REQ-008 / AC-001 / BEH-003. The composer must stay
+// locked while a brand-new session's awakening turn is in flight and
+// unlock the moment the first assistant message lands (live or rehydrated).
+describe('awakening phase — computeAwakeningPhase', () => {
+  it('returns complete when there is no session id (empty/home state)', () => {
+    expect(computeAwakeningPhase(null, [], 'idle')).toBe('complete');
+  });
+
+  it('returns pending for a running session with no assistant messages yet', () => {
+    expect(computeAwakeningPhase('sess-1', [], 'running')).toBe('pending');
+  });
+
+  it('returns pending while HITL is waiting and no assistant row has arrived', () => {
+    // Defensive: the awakening turn should never reach HITL before the
+    // first card lands, but if it did we still lock the composer so the
+    // user cannot double-queue messages before the session is ready.
+    expect(computeAwakeningPhase('sess-1', [], 'waiting')).toBe('pending');
+  });
+
+  it('flips to complete the moment an awakening-role assistant message arrives', () => {
+    const awakeningMsg: ChatMessage = {
+      id: 'a',
+      role: 'assistant',
+      content: '$$a2ui:{}',
+      isStreaming: false,
+      cpnRole: 'awakening',
+      timestamp: new Date(),
+    };
+    expect(computeAwakeningPhase('sess-1', [awakeningMsg], 'running')).toBe('complete');
+  });
+
+  it('treats any assistant message as awakening-complete (rehydration path)', () => {
+    // Rehydrated messages from GET /sessions/:id do NOT carry cpnRole —
+    // the backend's MessageResponse omits it. The gate must still open
+    // so reopening an old chat does not lock the composer.
+    const rehydrated: ChatMessage = {
+      id: 'a',
+      role: 'assistant',
+      content: 'hello',
+      isStreaming: false,
+      timestamp: new Date(),
+    };
+    expect(computeAwakeningPhase('sess-1', [rehydrated], 'idle')).toBe('complete');
+  });
+
+  it('returns complete for an idle session with no messages (legacy pre-awakening)', () => {
+    // Sessions that predate the awakening topology never emit a first-
+    // turn card. REQ-005 requires the fallback path to still produce one,
+    // but we refuse to hold the composer hostage for sessions in a
+    // terminal idle state.
+    expect(computeAwakeningPhase('sess-1', [], 'idle')).toBe('complete');
   });
 });

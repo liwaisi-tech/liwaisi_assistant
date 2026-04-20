@@ -47,6 +47,7 @@ export function ChatContainer({
     injectLocalMessage,
     updateMessageContent,
     sendUserAction,
+    awakeningPhase,
   } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
@@ -149,8 +150,13 @@ export function ChatContainer({
       )}
       <MessageInput
         onSend={handleSend}
-        disabled={sessionState === 'running' || sessionState === 'waiting'}
+        disabled={
+          sessionState === 'running' ||
+          sessionState === 'waiting' ||
+          awakeningPhase === 'pending'
+        }
         sessionState={sessionState}
+        awakeningPhase={awakeningPhase}
         error={error}
       />
       {showClearDialog && (

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 )
@@ -101,6 +102,17 @@ type SessionService struct {
 	// mutationLog is the GAP-7 audit log for topology mutations. When non-nil,
 	// every created CPN inherits it so MutateTopology calls are persisted.
 	mutationLog cpn.MutationAuditLog
+
+	// awakensFactory constructs the `brae-awakens` topology on new session
+	// creation (spec-architecture-brae-awakening-self-discovery). Nil
+	// disables the awakening path and preserves the legacy
+	// host-discovery-cpn seed (CON-006).
+	awakensFactory AwakensFactory
+
+	// awakeningMode flags sessions currently driving `brae-awakens` so the
+	// host-gate can silently deny non-introspection commands (CON-003,
+	// SEC-004, AC-005). Nil disables the silent-deny path.
+	awakeningMode AwakeningModeMarker
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -244,11 +256,19 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	root.MutationLog = s.mutationLog
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
-	// GAP-2: seed the well-known p-host-capabilities place from the most
-	// recent snapshot, running host-discovery-cpn first if the cache is cold
-	// or stale. Failures are logged but never block session creation —
-	// downstream consumers PEEK and tolerate absence.
-	s.ensureHostCapabilitiesSeed(ctx, root)
+
+	// brae-awakens (REQ-001, CON-001, AC-001). When configured, the
+	// awakening topology runs synchronously before the session becomes
+	// usable, emits the first assistant message (cpn_role="awakening"),
+	// persists a snapshot (source="awakening" or "awakening-fallback"),
+	// and seeds p-host-capabilities. Failures fall through to the legacy
+	// seed so session creation never blocks.
+	// Fast path: seed from an existing DB snapshot if one is fresh. We
+	// never block session creation on discovery — the full awakening runs
+	// asynchronously below after the session row exists.
+	s.seedHostCapabilitiesFromCache(ctx, root)
+
+	runAwakeningAsync := s.awakensFactory != nil && isInteractiveChannel(channel)
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -358,6 +378,13 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		if err := s.persist.Sessions.Create(ctx, rec); err != nil {
 			s.logger.Warn("persist session create", "session_id", id, "error", err)
 		}
+	}
+
+	// Kick off awakening in the background. The session is already usable;
+	// when awakening completes, it appends the first-turn A2UI card as an
+	// assistant message (AC-001) which the frontend picks up over SSE.
+	if runAwakeningAsync {
+		go s.runAwakeningAsync(session)
 	}
 
 	s.logger.Info("session created", "session_id", id, "user_id", userID, "channel", channel)
@@ -1316,6 +1343,14 @@ func (s *SessionService) injectPersonality(ctx context.Context, c *cpn.CPN, user
 		return
 	}
 
+	// REQ-007 / PAT-003: append the "## Environment awareness" block using
+	// the latest host_capability_snapshots row for the session's host_id.
+	// The block is rendered by AsSystemPrompt() under the personality's
+	// Tensions section.
+	if block := s.environmentAwarenessBlock(ctx); block != "" {
+		personality.EnvironmentAwareness = block
+	}
+
 	// Prefix all LLM transitions' system prompts with the personality.
 	promptPrefix := personality.AsSystemPrompt()
 	for _, t := range c.Transitions {
@@ -1875,9 +1910,24 @@ func (s *SessionService) ensureHostCapabilitiesSeed(ctx context.Context, root *c
 		return
 	}
 
-	// Cache miss or stale — run discovery inline (one-shot). The factory
-	// may be nil (e.g. persistence disabled in tests); in that case we
-	// still tolerate the session start without a seed.
+	// Cache miss or stale — the awakening path owns capability discovery
+	// when wired (REQ-001). Its deterministic fallback persists a snapshot
+	// asynchronously, so the next SendMessage will hit the cache branch
+	// above. We MUST NOT spawn legacy host-discovery-cpn here: its
+	// composite probes are not in the introspection safe band and would
+	// block on a 30s HITL timeout on every user message. Safer to proceed
+	// without a seed and let downstream consumers Peek defensively.
+	if s.awakensFactory != nil {
+		if err != nil && !errorsIsHostSnapshotNotFound(err) {
+			s.logger.Warn("host capability lookup failed; proceeding without seed",
+				slog.String("host_id", hostID),
+				slog.Any("error", err),
+			)
+		}
+		return
+	}
+
+	// Legacy path (no awakening factory wired): run discovery inline.
 	if s.hostDiscoveryFactory == nil {
 		if err != nil && !errorsIsHostSnapshotNotFound(err) {
 			s.logger.Warn("host capability lookup failed",
@@ -1974,4 +2024,20 @@ func trimMachineID(data []byte) string {
 // the sentinel.
 func errorsIsHostSnapshotNotFound(err error) bool {
 	return errors.Is(err, persist.ErrHostSnapshotNotFound)
+}
+
+// environmentAwarenessBlock returns the "## Environment awareness" block
+// to inject into later-turn system prompts (REQ-007). Reads the latest
+// host_capability_snapshots row for the resolved host_id; returns "" on
+// any error so injection degrades silently.
+func (s *SessionService) environmentAwarenessBlock(ctx context.Context) string {
+	if s.hostCapabilityRepo == nil {
+		return ""
+	}
+	hostID := s.resolveHostID(ctx)
+	snap, err := s.hostCapabilityRepo.LatestForHost(ctx, hostID)
+	if err != nil {
+		return ""
+	}
+	return awakens.EnvironmentAwarenessBlock(snap)
 }

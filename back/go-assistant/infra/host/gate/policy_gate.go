@@ -45,6 +45,13 @@ type PolicyHostGate struct {
 	// BudgetEstimator returns the predicted BudgetEstimate for an op.
 	// When nil, the gate uses DefaultEstimate().
 	BudgetEstimator func(op cpn.GateOp) BudgetEstimate
+
+	// AwakeningMode tracks the set of sessions currently running the
+	// `brae-awakens` topology. When the current session is registered, any
+	// non-introspection shell command is SILENTLY denied (no HITL card) —
+	// CON-003 / SEC-004 / AC-005. Introspection commands continue through
+	// the normal safe-band path. Nil disables the feature (legacy).
+	AwakeningMode *AwakeningModeRegistry
 }
 
 // Compile-time interface check.
@@ -139,6 +146,23 @@ func (g *PolicyHostGate) Evaluate(ctx context.Context, op cpn.GateOp) Decision {
 		RiskBand:  RiskUnknown,
 		Sandbox:   g.resolveSandbox(op, policy),
 		SessionID: sessionID,
+	}
+
+	// Awakening-mode silent-deny (CON-003 / SEC-004 / AC-005). When the
+	// current session is running `brae-awakens`, any command that the
+	// introspection classifier rejects is denied without a HITL prompt.
+	// Introspection commands fall through and are approved by the
+	// downstream safe-band matcher. This short-circuit runs BEFORE kill
+	// ops and budget checks so an LLM-issued destructive command cannot
+	// leak into the user's HITL surface even if the classifier were to
+	// somehow grant it a budget.
+	if g.AwakeningMode != nil && g.AwakeningMode.Active(sessionID) &&
+		(op.Kind == "exec" || op.Kind == "spawn_pty") &&
+		!isIntrospectionCommand(op.Command) {
+		dec.Verdict = VerdictDeny
+		dec.RiskBand = RiskForbidden
+		dec.Reason = "awakening mode: command outside introspection allow-list"
+		return dec
 	}
 
 	// Kill ops bypass policy classification but are still budget-checked.

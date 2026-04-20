@@ -123,12 +123,16 @@ export type ButtonSize = 'sm' | 'lg';
 
 /** Card variant.
  *  - `default`: baseline card (existing behavior, no change).
+ *  - `info`: elevated info surface used by the brae-awakening first-turn
+ *    card (§4.4 of spec-architecture-brae-awakening-self-discovery.md).
+ *    Draws a subtle gradient, a JetBrains-Mono title, and a small
+ *    "◉ awakened" glyph in the header.
  *  - `escape-frustration`: 3px accent-coloured left rail; used on the
  *    frustration escape-hatch (REQ-121..123).
  *  - `escape-contradiction`: 3px muted-coloured left rail; used on the
  *    contradiction escape-hatch (REQ-124..125).
  * See spec-architecture-cpn-iterative-clarification-loop §4.4. */
-export type CardVariant = 'default' | 'escape-frustration' | 'escape-contradiction';
+export type CardVariant = 'default' | 'info' | 'escape-frustration' | 'escape-contradiction';
 
 /** Progress bar state. */
 export interface ProgressProps {

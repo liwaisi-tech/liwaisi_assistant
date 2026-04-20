@@ -1,0 +1,31 @@
+{
+  "os": { "name": "Alpine Linux", "version": "3.21", "kernel": "6.17", "arch": "aarch64" },
+  "shell": { "path": "/bin/sh", "implementation": "busybox-ash" },
+  "identity": { "user": "app", "uid": 100, "gid": 101, "home": "/home/app" },
+  "present_tools": [
+    { "name": "sh", "provider": "busybox" },
+    { "name": "awk", "provider": "busybox", "version": "1.37.0" },
+    { "name": "sed", "provider": "busybox" },
+    { "name": "grep", "provider": "busybox" },
+    { "name": "tar", "provider": "busybox", "version": "1.37.0" },
+    { "name": "wget", "provider": "busybox" }
+  ],
+  "absent_tools": ["git", "python3", "node", "go", "gcc", "make"],
+  "capabilities": [
+    { "name": "can-script-sh",      "satisfied": true,  "evidence": ["/bin/sh"] },
+    { "name": "can-text-process",   "satisfied": true,  "evidence": ["awk","sed","grep"] },
+    { "name": "can-fetch-url",      "satisfied": true,  "evidence": ["wget"] },
+    { "name": "can-version-control", "satisfied": false, "evidence": [] },
+    { "name": "can-run-python",     "satisfied": false, "evidence": [] }
+  ],
+  "tools_to_register": [
+    { "name": "shell-exec", "basis": "sh" },
+    { "name": "text-search", "basis": "grep" }
+  ],
+  "narrative_md": "Desperté en Alpine 3.21 (aarch64, kernel 6.17). Shell es busybox sh.",
+  "probe_trace": [
+    { "cmd": "uname -a", "exit": 0 },
+    { "cmd": "cat /etc/os-release", "exit": 0 },
+    { "cmd": "command -v git", "exit": 1 }
+  ]
+}

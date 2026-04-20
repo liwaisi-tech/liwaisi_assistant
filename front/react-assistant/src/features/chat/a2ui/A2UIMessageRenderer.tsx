@@ -252,15 +252,26 @@ function extractResolvedHITLAction(payload: string | undefined): string | null {
 
 function CardComponent({ component, onAction }: ComponentProps) {
   const title = component.props.title as string | undefined;
-  // `variant` drives the escape-hatch card's left-rail accent. The accent
-  // tint distinguishes the two escape flavors at a glance without a new
-  // surface type: frustration uses --accent (offer of agency), contradiction
-  // uses --text-muted (neutral path-framing per REQ-124). Default is unchanged.
+  // `variant` drives the card's accent treatment:
+  //   • `info` — brae-awakening first-turn card (spec §4.4). A distinctive
+  //     elevated surface: low-amplitude accent-tinted gradient, a pulsing
+  //     glyph in the header, JetBrains Mono title. Not a generic banner —
+  //     this is brae's "eyes-open" moment and should read like a terminal
+  //     line after `uname -a` finishes.
+  //   • `escape-frustration` / `escape-contradiction` — existing iterative-
+  //     clarification escape-hatch left-rail treatments.
+  //   • `default` — baseline, unchanged.
+  const rawVariant = component.props.variant;
   const variant: CardVariant =
-    component.props.variant === 'escape-frustration' ||
-    component.props.variant === 'escape-contradiction'
-      ? (component.props.variant as CardVariant)
+    rawVariant === 'info' ||
+    rawVariant === 'escape-frustration' ||
+    rawVariant === 'escape-contradiction'
+      ? (rawVariant as CardVariant)
       : 'default';
+
+  if (variant === 'info') {
+    return <InfoCard title={title}>{renderChildren(component.children, onAction)}</InfoCard>;
+  }
 
   const variantStyle =
     variant === 'escape-frustration'
@@ -286,6 +297,75 @@ function CardComponent({ component, onAction }: ComponentProps) {
           {title}
         </h4>
       )}
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// InfoCard is the elevated surface for the awakening first-turn message.
+// Visual contract (spec §4.4 + design guidance):
+//   • Low-amplitude radial gradient seeded from the card's top-left corner
+//     so the card reads as "lit from within" without shouting.
+//   • 1px accent-tinted border with a 10% tint fill behind the gradient.
+//   • Header: pulsing glyph (◉) → JetBrains Mono title in --text-primary.
+//   • Body inherits default text rendering — stack / divider / text handle
+//     their own spacing.
+// The gradient and pulse use tokens already in use elsewhere in the app so
+// no new CSS variables are introduced.
+function InfoCard({ title, children }: { title?: string; children: JSX.Element[] | null }) {
+  return (
+    <div
+      data-testid="awakening-card"
+      className="rounded-xl p-4 my-2 relative overflow-hidden"
+      style={{
+        backgroundImage:
+          'radial-gradient(120% 140% at 0% 0%, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0.04) 35%, transparent 70%)',
+        backgroundColor: 'var(--bg-surface)',
+        border: '1px solid rgba(14, 165, 233, 0.28)',
+        boxShadow: '0 0 24px -12px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.02)',
+      }}
+    >
+      {title && (
+        <div className="flex items-center gap-2 mb-3">
+          <span
+            aria-hidden="true"
+            className="activity-pulse"
+            style={{
+              display: 'inline-block',
+              width: 8,
+              height: 8,
+              borderRadius: 9999,
+              background: 'var(--accent)',
+              boxShadow: '0 0 8px var(--accent-glow)',
+            }}
+          />
+          <h4
+            className="text-sm font-semibold tracking-tight"
+            style={{
+              color: 'var(--text-primary)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {title}
+          </h4>
+        </div>
+      )}
+      <div className="relative">{children}</div>
+    </div>
+  );
+}
+
+// ── stack ───────────────────────────────────────────────────────────────────
+// Vertical flex container used by the awakening card (spec §4.4). Rendered
+// with a small gap so nested `text` children get breathing room without
+// each one having to carry its own margin. Maps to A2UI v0.8 `stack`.
+function StackComponent({ component, onAction }: ComponentProps) {
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'sm';
+  const gapClass = gap === 'lg' ? 'gap-3' : gap === 'md' ? 'gap-2' : 'gap-1.5';
+  return (
+    <div className={`flex flex-col ${gapClass} my-1`}>
       {renderChildren(component.children, onAction)}
     </div>
   );
@@ -427,9 +507,10 @@ function FormComponent({ component, onAction }: ComponentProps) {
 // sequentially; `gap` maps to Tailwind spacing (`sm|md|lg`).
 
 function RowComponent({ component, onAction }: ComponentProps) {
-  const gap = (component.props.gap as string) ?? 'sm';
-  const wrap = component.props.wrap !== false;
-  const align = (component.props.align as string) ?? 'center';
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'sm';
+  const wrap = props.wrap !== false;
+  const align = (props.align as string) ?? 'center';
   const gapCls = gap === 'lg' ? 'gap-3' : gap === 'md' ? 'gap-2' : 'gap-1.5';
   const wrapCls = wrap ? 'flex-wrap' : '';
   const alignCls = align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : 'items-center';
@@ -447,8 +528,9 @@ function RowComponent({ component, onAction }: ComponentProps) {
 // `gap` maps to the same spacing tokens as `row`.
 
 function ColumnComponent({ component, onAction }: ComponentProps) {
-  const gap = (component.props.gap as string) ?? 'md';
-  const align = (component.props.align as string) ?? 'stretch';
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'md';
+  const align = (props.align as string) ?? 'stretch';
   const gapCls = gap === 'lg' ? 'gap-3' : gap === 'sm' ? 'gap-1.5' : 'gap-2';
   const alignCls =
     align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : align === 'center' ? 'items-center' : 'items-stretch';
@@ -1523,6 +1605,7 @@ const componentCatalog: Record<string, React.FC<ComponentProps>> = {
   checkbox: CheckBoxComponent,
   multiplechoice: MultipleChoiceComponent,
   divider: DividerComponent,
+  stack: StackComponent,
   alert: AlertComponent,
   badge: BadgeComponent,
   choice: ChoiceComponent,
@@ -1534,7 +1617,11 @@ function A2UIComponentRenderer({ component, onAction }: ComponentProps) {
   if (!Comp) {
     return <UnknownComponent component={component} />;
   }
-  return <Comp component={component} onAction={onAction} />;
+  // Normalize: components emitted without a `props` object (valid in A2UI
+  // v0.8 for prop-less primitives like `stack`, `divider`) would otherwise
+  // crash every `component.props.X` access downstream. Guarantee a shape.
+  const normalized = component.props ? component : { ...component, props: {} };
+  return <Comp component={normalized} onAction={onAction} />;
 }
 
 // ── Main Renderer ──────────────────────────────────────────────────────────
