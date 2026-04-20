@@ -24,7 +24,13 @@ var _ cpn.LLMClient = (*Client)(nil)
 // at session resolve time via internal/app/session_service.go.
 //
 // When a future spec changes the default, edit this one line (CON-003).
-const PRODUCT_DEFAULT_MODEL = "google/gemma-4-31b-it"
+const PRODUCT_DEFAULT_MODEL = "google/gemini-3-flash-preview"
+
+// FALLBACK_MODEL is used when the resolved model returns ErrNotFound (404)
+// from OpenRouter — e.g. a preview slug is retired or a user preference
+// points at a model the API no longer serves. Must be a slug OpenRouter is
+// guaranteed to serve; Anthropic Haiku is cheap, fast, and never-retired.
+const FALLBACK_MODEL = "anthropic/claude-haiku-4-5"
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
@@ -53,8 +59,10 @@ var AvailableModels = []string{
 	// Anthropic
 	"anthropic/claude-opus-4-6",
 	"anthropic/claude-sonnet-4-6",
+	"anthropic/claude-haiku-4-5",
 	"anthropic/claude-haiku-4-5-20251001",
 	// Google
+	"google/gemini-3-flash-preview",
 	"google/gemma-4-31b-it",
 	"google/gemma-4-26b-a4b-it",
 	"google/gemini-3.1-flash-lite-preview",
@@ -264,7 +272,16 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (llmResp cpn
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+		mapped := mapHTTPStatusToError(resp.StatusCode)
+		// Fallback: retry once with FALLBACK_MODEL when the resolved model is
+		// unknown to OpenRouter. Skip if we are already on the fallback.
+		if errors.Is(mapped, cpn.ErrNotFound) && resolvedModel != FALLBACK_MODEL {
+			fallback := *req
+			fallback.Model = FALLBACK_MODEL
+			resolvedModel = FALLBACK_MODEL
+			return c.Complete(ctx, &fallback)
+		}
+		return cpn.LLMResponse{}, mapped
 	}
 
 	switch resolved.Endpoint {
@@ -363,7 +380,16 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+		mapped := mapHTTPStatusToError(resp.StatusCode)
+		// Fallback: retry once with FALLBACK_MODEL when the resolved model is
+		// unknown to OpenRouter. Skip if we are already on the fallback.
+		if errors.Is(mapped, cpn.ErrNotFound) && resolvedModel != FALLBACK_MODEL {
+			fallback := *req
+			fallback.Model = FALLBACK_MODEL
+			resolvedModel = FALLBACK_MODEL
+			return c.CompleteStream(ctx, &fallback, onChunk)
+		}
+		return cpn.LLMResponse{}, mapped
 	}
 
 	sh := NewStreamHandler()
