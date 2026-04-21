@@ -17,7 +17,7 @@ import (
 
 // fakeAwakeningModeRegistry is a minimal test double that records Begin/End
 // calls so we can assert the runAwakening path brackets the execution with
-// the registry flag (CON-003).
+// the registry flag.
 type fakeAwakeningModeRegistry struct {
 	begins []string
 	ends   []string
@@ -28,11 +28,10 @@ func (f *fakeAwakeningModeRegistry) End(sid string)   { f.ends = append(f.ends, 
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-// AC-008: a fresh snapshot in the repository must short-circuit the full
-// brae-awakens run — no factory call, no LLM traffic — and still yield a
-// non-empty A2UI first-turn envelope.
+// A fresh snapshot in the repository must short-circuit the full brae-awakens
+// run — no factory call, no LLM traffic — and still yield a non-empty A2UI
+// first-turn envelope.
 func TestRunAwakening_CacheHitShortCircuits(t *testing.T) {
-	t.Parallel()
 	restore := stubHostIDResolver(t, "machine-cache")
 	defer restore()
 
@@ -78,7 +77,7 @@ func TestRunAwakening_CacheHitShortCircuits(t *testing.T) {
 }
 
 // errAwakeningNotConfigured must surface when the factory or repo is nil so
-// CreateSession can cleanly fall back to ensureHostCapabilitiesSeed (CON-006).
+// CreateSession can cleanly skip the flow.
 func TestRunAwakening_NotConfiguredWhenFactoryNil(t *testing.T) {
 	t.Parallel()
 	svc := &SessionService{logger: testLogger()}
@@ -88,11 +87,10 @@ func TestRunAwakening_NotConfiguredWhenFactoryNil(t *testing.T) {
 	}
 }
 
-// AC-004: when the LLM is not configured, runAwakening must route through
-// the legacy host-discovery path and tag the snapshot source as
-// "awakening-fallback".
-func TestRunAwakening_FallbackWhenLLMAbsent(t *testing.T) {
-	t.Parallel()
+// When the LLM is not configured but a factory + repo are wired, runAwakening
+// MUST return an error rather than falling back to any legacy path. First-boot
+// awakening is required to succeed via the LLM path.
+func TestRunAwakening_ErrorsWhenLLMAbsent(t *testing.T) {
 	restore := stubHostIDResolver(t, "machine-fb")
 	defer restore()
 
@@ -102,30 +100,52 @@ func TestRunAwakening_FallbackWhenLLMAbsent(t *testing.T) {
 		logger:             testLogger(),
 		hostCapabilityRepo: repo,
 		awakensFactory: func(string, awakens.Deps) *cpn.CPN {
-			t.Fatal("factory must not run when LLM is nil — fallback should fire first")
+			t.Fatal("factory must not run when LLM is nil — error must propagate first")
 			return nil
 		},
 		awakeningMode: mode,
 		// llm intentionally left nil.
 	}
 
-	snap, envelope, source, err := svc.runAwakening(context.Background(), "sess-fb")
-	if err != nil {
-		t.Fatalf("runAwakening: %v", err)
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-fb")
+	if err == nil {
+		t.Fatal("expected error when LLM is nil; got nil")
 	}
-	if source != awakens.SourceAwakeningFallback {
-		t.Errorf("source = %q; want %q", source, awakens.SourceAwakeningFallback)
+	if errors.Is(err, errAwakeningNotConfigured) {
+		t.Fatalf("expected a distinct LLM-missing error, not errAwakeningNotConfigured; got %v", err)
 	}
-	if snap.ID != "" {
-		t.Errorf("snap.ID = %q; want empty (no discovery ran)", snap.ID)
-	}
-	if len(envelope.Components) == 0 {
-		t.Error("fallback envelope must carry at least one component (BEH-003)")
+	if !strings.Contains(err.Error(), "LLM") {
+		t.Errorf("error message should mention LLM; got %q", err.Error())
 	}
 }
 
-// AC-001 shape: appendAwakeningMessage writes a cpn_role="awakening"
-// message with an A2UI JSON payload the front-end can decode.
+// When the factory returns nil, runAwakening propagates an error to the
+// caller instead of falling back.
+func TestRunAwakening_ErrorsWhenFactoryReturnsNil(t *testing.T) {
+	restore := stubHostIDResolver(t, "machine-nil")
+	defer restore()
+
+	repo := persist.NewMemoryHostCapabilityRepository()
+	svc := &SessionService{
+		logger:             testLogger(),
+		hostCapabilityRepo: repo,
+		llm:                &mockLLMClient{},
+		awakensFactory: func(string, awakens.Deps) *cpn.CPN {
+			return nil
+		},
+	}
+
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-nil-factory")
+	if err == nil {
+		t.Fatal("expected error when factory returns nil; got nil")
+	}
+	if !strings.Contains(err.Error(), "factory") {
+		t.Errorf("error should mention factory; got %q", err.Error())
+	}
+}
+
+// appendAwakeningMessage writes a cpn_role="awakening" message with an A2UI
+// JSON payload the front-end can decode.
 func TestAppendAwakeningMessage_ShapeAndCPNRole(t *testing.T) {
 	t.Parallel()
 
@@ -150,8 +170,6 @@ func TestAppendAwakeningMessage_ShapeAndCPNRole(t *testing.T) {
 	if got.Role != cpn.RoleAssistant {
 		t.Errorf("Role = %q; want assistant", got.Role)
 	}
-	// Content must carry the A2UI marker the frontend uses to detect
-	// structured payloads, with a valid v0.8 envelope body.
 	if !strings.HasPrefix(got.Content, cpn.A2UIMarker) {
 		t.Fatalf("content missing %q prefix: %q", cpn.A2UIMarker, got.Content)
 	}

@@ -15,6 +15,11 @@ import (
 // FlowName is the registry name used by session service + tests.
 const FlowName = "brae-awakens"
 
+// SourceAwakening is the `source` value written to host_capability_snapshots
+// on the happy path (REQ-004). First-boot awakening MUST succeed via this
+// path — there is no fallback source after the bootstrap-fix.
+const SourceAwakening = "awakening"
+
 // ── Place ids (exported for tests and wiring). ───────────────────────────────
 
 const (
@@ -32,7 +37,17 @@ const (
 // ── Transition ids. ──────────────────────────────────────────────────────────
 
 const (
-	TransitionAwakenLLM           = "t-awaken-llm"
+	// TransitionAwakenLLMBootstrap is the first-turn LLM call. Its inputs
+	// are (trigger, system-prompt) — both seeded at topology creation — so
+	// it is enabled immediately on Run(). Eliminates the deadlock that the
+	// pre-split single `t-awaken-llm` suffered (no initial shell-result).
+	TransitionAwakenLLMBootstrap = "t-awaken-llm-bootstrap"
+	// TransitionAwakenLLMFollowup handles any LLM iteration after a shell
+	// probe has produced a p-awaken-shell-result token. fire_llm already
+	// runs the tool-call loop in-process; this transition is vestigial in
+	// the common path but preserved for CPN-level symmetry with future
+	// places/flows that may route shell results through tokens.
+	TransitionAwakenLLMFollowup   = "t-awaken-llm-followup"
 	TransitionAwakenShell         = "t-awaken-shell"
 	TransitionAwakenReport        = "t-awaken-report"
 	TransitionAwakenPersist       = "t-awaken-persist"
@@ -46,7 +61,7 @@ const (
 type Deps struct {
 	Repository persist.HostCapabilityRepository
 	HostID     string
-	Source     string // SourceAwakening or SourceAwakeningFallback
+	Source     string // Defaults to SourceAwakening when empty.
 	Clock      Clock
 }
 
@@ -57,27 +72,31 @@ type Deps struct {
 // Wiring in production (see session_service.go):
 //  1. Call TopologyFactory(sessionID, deps).
 //  2. Set root.LLMClient, root.HostRuntime, root.ToolRegistry.
-//  3. root.Run(ctx). The deadline is enforced by the caller (CON-001: 30s).
+//  3. root.Run(ctx). The deadline is enforced by the caller.
 //
-// When the LLM is unreachable, callers invoke RunFallback instead; the
-// factory still compiles so legacy compat (CON-006) holds.
+// When root.Run returns an error, callers propagate it. There is no
+// fallback — first-boot awakening must succeed via the LLM path.
 func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 	places := map[string]*cpn.Place{
 		PlaceAwakenTrigger:      cpn.NewPlace(PlaceAwakenTrigger, cpn.ColorString, cpn.SpaceComputation),
 		PlaceAwakenSystemPrompt: cpn.NewPlace(PlaceAwakenSystemPrompt, cpn.ColorString, cpn.SpaceComputation),
 		PlaceAwakenShellCall:    cpn.NewPlace(PlaceAwakenShellCall, cpn.ColorShellCmd, cpn.SpaceComputation),
 		PlaceAwakenShellResult:  cpn.NewPlace(PlaceAwakenShellResult, cpn.ColorShellResult, cpn.SpaceComputation),
-		PlaceAwakeningReport:    cpn.NewPlace(PlaceAwakeningReport, cpn.ColorHostFact, cpn.SpaceComputation),
-		PlaceHostCapabilitiesWK: cpn.NewPlace(PlaceHostCapabilitiesWK, cpn.ColorHostFact, cpn.SpaceComputation),
-		PlaceAwakeningSnapshot:  cpn.NewPlace(PlaceAwakeningSnapshot, cpn.ColorHostFact, cpn.SpaceComputation),
-		PlaceAwakeningMessage:   cpn.NewPlace(PlaceAwakeningMessage, cpn.ColorEvent, cpn.SpaceComputation),
-		PlaceAwakeningToolBatch:             cpn.NewPlace(PlaceAwakeningToolBatch, cpn.ColorArtifact, cpn.SpaceComputation),
-		PlaceAwakeningToolBatch + "-done":   cpn.NewPlace(PlaceAwakeningToolBatch+"-done", cpn.ColorEvent, cpn.SpaceComputation),
-		PlaceAwakeningMessage + "-emitted":  cpn.NewPlace(PlaceAwakeningMessage+"-emitted", cpn.ColorEvent, cpn.SpaceComputation),
+		// PlaceAwakeningReport holds the LLM's final structured output.
+		// Color is ColorJSON because fire_llm deposits a ColorJSON token
+		// whenever LLMConfig.RequireJSON is true (inferOutputColor).
+		PlaceAwakeningReport:               cpn.NewPlace(PlaceAwakeningReport, cpn.ColorJSON, cpn.SpaceComputation),
+		PlaceHostCapabilitiesWK:            cpn.NewPlace(PlaceHostCapabilitiesWK, cpn.ColorHostFact, cpn.SpaceComputation),
+		PlaceAwakeningSnapshot:             cpn.NewPlace(PlaceAwakeningSnapshot, cpn.ColorHostFact, cpn.SpaceComputation),
+		PlaceAwakeningMessage:              cpn.NewPlace(PlaceAwakeningMessage, cpn.ColorEvent, cpn.SpaceComputation),
+		PlaceAwakeningToolBatch:            cpn.NewPlace(PlaceAwakeningToolBatch, cpn.ColorArtifact, cpn.SpaceComputation),
+		PlaceAwakeningToolBatch + "-done":  cpn.NewPlace(PlaceAwakeningToolBatch+"-done", cpn.ColorEvent, cpn.SpaceComputation),
+		PlaceAwakeningMessage + "-emitted": cpn.NewPlace(PlaceAwakeningMessage+"-emitted", cpn.ColorEvent, cpn.SpaceComputation),
 	}
 
 	transitions := map[string]*cpn.Transition{
-		TransitionAwakenLLM:           newLLMTransition(),
+		TransitionAwakenLLMBootstrap:  newLLMBootstrapTransition(),
+		TransitionAwakenLLMFollowup:   newLLMFollowupTransition(),
 		TransitionAwakenShell:         newShellTransition(),
 		TransitionAwakenReport:        newReportTransition(),
 		TransitionAwakenPersist:       newPersistTransition(deps),
@@ -102,8 +121,8 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 }
 
 // seedAwakenTrigger places a single start-token on p-awaken-trigger and the
-// system-prompt token on p-awaken-system-prompt so the LLM transition fires
-// immediately on Run().
+// system-prompt token on p-awaken-system-prompt so the bootstrap LLM
+// transition fires immediately on Run().
 func seedAwakenTrigger(c *cpn.CPN) {
 	if trigger, ok := c.Places[PlaceAwakenTrigger]; ok {
 		_ = trigger.Deposit(&cpn.Token{
@@ -121,26 +140,58 @@ func seedAwakenTrigger(c *cpn.CPN) {
 	}
 }
 
-// newLLMTransition is the `t-awaken-llm` transition. It consumes the trigger
-// + system prompt + any shell results and emits either a shell call or the
-// terminal report. Wired as NodeKindLLM so fire_llm.go drives the model.
+// newLLMBootstrapTransition is the first-turn LLM transition. Its inputs are
+// the trigger + system-prompt tokens seeded at topology creation, so it is
+// enabled immediately on Run() — no dependency on a not-yet-produced
+// shell-result token. This is the core of the deadlock fix.
 //
-// Callers configure LLMClient/LLMConfig on the returned CPN before Run().
-func newLLMTransition() *cpn.Transition {
+// Callers configure LLMClient on the owning CPN; LLMConfig is set here with
+// RequireJSON=true so the LLM is constrained to emit a structured
+// AwakeningReport JSON object.
+func newLLMBootstrapTransition() *cpn.Transition {
 	t := cpn.NewTransition(
-		TransitionAwakenLLM,
+		TransitionAwakenLLMBootstrap,
 		cpn.NodeKindLLM,
-		[]string{PlaceAwakenTrigger, PlaceAwakenSystemPrompt, PlaceAwakenShellResult},
-		[]string{PlaceAwakenShellCall, PlaceAwakeningReport},
+		[]string{PlaceAwakenTrigger, PlaceAwakenSystemPrompt},
+		[]string{PlaceAwakeningReport},
 	)
 	t.SystemPrompt = SystemPrompt
 	t.LLMTools = []string{TransitionAwakenShell}
+	t.LLMConfig = &cpn.LLMConfig{
+		Role:        "awakening",
+		MaxTokens:   2048,
+		Temperature: 0.2,
+		RequireJSON: true,
+	}
+	return t
+}
+
+// newLLMFollowupTransition handles any LLM iteration that depends on a
+// p-awaken-shell-result token appearing. fire_llm's in-process tool-call
+// loop normally produces the final report in a single bootstrap firing, so
+// this transition rarely activates in practice — but it models the
+// loop-turn input shape explicitly and keeps the topology self-describing.
+func newLLMFollowupTransition() *cpn.Transition {
+	t := cpn.NewTransition(
+		TransitionAwakenLLMFollowup,
+		cpn.NodeKindLLM,
+		[]string{PlaceAwakenShellResult},
+		[]string{PlaceAwakeningReport},
+	)
+	t.SystemPrompt = SystemPrompt
+	t.LLMTools = []string{TransitionAwakenShell}
+	t.LLMConfig = &cpn.LLMConfig{
+		Role:        "awakening",
+		MaxTokens:   2048,
+		Temperature: 0.2,
+		RequireJSON: true,
+	}
 	return t
 }
 
 // newShellTransition is `t-awaken-shell`. The executor wires it to the
 // Host-adapter through the standard fire_bash path; the `introspection`
-// policy class silently denies non-introspection commands per CON-003.
+// policy class silently denies non-introspection commands.
 func newShellTransition() *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenShell,
@@ -151,16 +202,15 @@ func newShellTransition() *cpn.Transition {
 	t.BashConfig = &cpn.BashConfig{
 		Command:          "sh",
 		Args:             []string{"-c", "true"}, // overridden per-call by fire_bash
-		Timeout:          2 * time.Second,        // CON-002: hostDiscoveryProbeTimeout
+		Timeout:          2 * time.Second,
 		AllowNonZeroExit: true,
 	}
 	return t
 }
 
 // newReportTransition validates the LLM structured output into an
-// AwakeningReport token (§9.4). A validation failure returns a structured
-// error; the caller retries up to 2 times (handled by executor retry
-// policy) then falls through to awakening-fallback.
+// AwakeningReport token. A validation failure returns a structured error;
+// the caller may retry via the executor's retry policy.
 func newReportTransition() *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenReport,
@@ -192,8 +242,8 @@ func newReportTransition() *cpn.Transition {
 }
 
 // newPersistTransition writes the projected snapshot via the repository and
-// ALSO seeds the well-known p-host-capabilities place so later CPNs in the
-// session see the fresh snapshot (REQ-007, PAT-002 consumer #1).
+// seeds the well-known p-host-capabilities place so later CPNs in the
+// session see the fresh snapshot.
 func newPersistTransition(deps Deps) *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenPersist,
@@ -239,9 +289,8 @@ func newPersistTransition(deps Deps) *cpn.Transition {
 	return t
 }
 
-// newRegisterToolsTransition is a ColorArtifact Tool that wraps
-// RegisterBatch — bound to ≤MaxToolsToRegister registrations (CON-004) and
-// idempotent (CON-005).
+// newRegisterToolsTransition wraps RegisterBatch — bound to
+// MaxToolsToRegister registrations and idempotent.
 func newRegisterToolsTransition() *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenRegisterTools,
@@ -249,19 +298,13 @@ func newRegisterToolsTransition() *cpn.Transition {
 		[]string{PlaceAwakeningToolBatch},
 		[]string{PlaceAwakeningToolBatch + "-done"},
 	)
-	// Ensure the output place exists.
 	t.ToolHandler = func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		report, err := coerceReport(consumed[0].Payload)
 		if err != nil {
 			return nil, err
 		}
-		// The ToolRegistry is attached on the owning CPN; we read it via
-		// the CPN field indirection. Because Transition.ToolHandler does
-		// not receive *CPN, we stash the registry on the CPN and late-bind
-		// via a closure set by SetToolRegistry.
 		registry := toolRegistryFromContext(ctx)
 		if registry == nil {
-			// No registry wired — treat as no-op (dev/test mode).
 			return map[string]cpn.Token{}, nil
 		}
 		_, regErr := RegisterBatch(ctx, registry, report, nil)
@@ -276,7 +319,7 @@ func newRegisterToolsTransition() *cpn.Transition {
 // newEmitMessageTransition builds the A2UI envelope. Downstream session
 // plumbing (emit-first-assistant-message) consumes the resulting Event
 // token and persists it as the session's first `messages` row with
-// cpn_role = "awakening" (AC-001).
+// cpn_role = "awakening".
 func newEmitMessageTransition() *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenEmitMessage,

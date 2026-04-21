@@ -257,12 +257,12 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
 
-	// brae-awakens (REQ-001, CON-001, AC-001). When configured, the
-	// awakening topology runs synchronously before the session becomes
-	// usable, emits the first assistant message (cpn_role="awakening"),
-	// persists a snapshot (source="awakening" or "awakening-fallback"),
-	// and seeds p-host-capabilities. Failures fall through to the legacy
-	// seed so session creation never blocks.
+	// brae-awakens. When configured, the awakening topology runs
+	// asynchronously (see runAwakeningAsync below) and — on success —
+	// emits the first assistant message (cpn_role="awakening"), persists
+	// a snapshot (source="awakening"), and seeds p-host-capabilities.
+	// First-boot awakening has no fallback: failures are logged and the
+	// session remains without a fresh snapshot.
 	// Fast path: seed from an existing DB snapshot if one is fresh. We
 	// never block session creation on discovery — the full awakening runs
 	// asynchronously below after the session row exists.

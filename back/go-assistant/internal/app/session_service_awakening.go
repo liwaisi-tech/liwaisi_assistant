@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,8 +15,9 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
-// awakeningDeadline is the hard upper-bound for the `brae-awakens` topology
-// (CON-001). Exceeded → fallback to legacy host-discovery-cpn (AC-009).
+// awakeningDeadline is the hard upper-bound for the `brae-awakens` topology.
+// First-boot awakening MUST succeed within this window. When it does not,
+// session creation fails — there is no fallback.
 const awakeningDeadline = 30 * time.Second
 
 // AwakeningModeMarker is the minimal interface SessionService expects from
@@ -34,30 +34,31 @@ type AwakensFactory func(sessionID string, deps awakens.Deps) *cpn.CPN
 
 // WithAwakensFactory wires the `brae-awakens` topology factory. When set,
 // new interactive sessions run the awakening flow before becoming usable.
-// Nil disables the awakening path — legacy host-discovery-cpn continues to
-// run as the pre-existing seed (CON-006).
+// Nil disables the awakening path — CreateSession then treats the session
+// as if no awakening is configured and does not run the flow.
 func WithAwakensFactory(f AwakensFactory) SessionServiceOption {
 	return func(s *SessionService) { s.awakensFactory = f }
 }
 
 // WithAwakeningMode wires the session-scoped awakening-mode registry used by
-// the host-gate to silently deny non-introspection commands (CON-003, SEC-004,
-// AC-005) while `brae-awakens` is driving a session.
+// the host-gate to silently deny non-introspection commands while
+// `brae-awakens` is driving a session.
 func WithAwakeningMode(m AwakeningModeMarker) SessionServiceOption {
 	return func(s *SessionService) { s.awakeningMode = m }
 }
 
 // runAwakening performs the brae-awakens first-turn boot flow for a fresh
 // interactive session. It returns the projected snapshot + the first-turn
-// A2UI envelope + the chosen source tag. On LLM-unreachable or timeout it
-// falls through to the legacy host-discovery path (REQ-010, AC-004, AC-009).
+// A2UI envelope + the chosen source tag.
 //
-// The method is synchronous by design: REQ-001 blocks session readiness on
-// the awakening turn. It is bounded by awakeningDeadline so callers never
+// The method is synchronous by design: session readiness blocks on the
+// awakening turn. It is bounded by awakeningDeadline so callers never
 // hang past 30 seconds.
 //
 // When no awakensFactory / LLM / host-capability repo is wired, returns
-// (zero, zero, nil) so CreateSession can fall back to legacy behaviour.
+// errAwakeningNotConfigured so CreateSession can skip the flow cleanly.
+// Any other error — LLM unreachable, topology deadlock, missing terminal
+// emission — is propagated to the caller; there is no fallback path.
 func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
 	var zero persist.HostCapabilitySnapshot
 	if s.awakensFactory == nil || s.hostCapabilityRepo == nil {
@@ -66,8 +67,7 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 
 	hostID := s.resolveHostID(ctx)
 
-	// REQ-009 / AC-008 — 24h cache hit skips shell probes but still emits
-	// the first-turn card.
+	// 24h cache hit skips shell probes but still emits the first-turn card.
 	if snap, fresh, err := awakens.LookupCachedSnapshot(ctx, s.hostCapabilityRepo, hostID, awakens.DefaultCacheTTL, awakens.SystemClock); err == nil && fresh {
 		envelope := firstTurnMessageFromSnapshot(snap)
 		s.logger.Info("awakening: served from 24h cache",
@@ -78,9 +78,10 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 		return snap, envelope, snap.Source, nil
 	}
 
-	// If no LLM is wired, the normal path cannot run — fall back directly.
+	// First-boot awakening requires a live LLM. Missing provider is a
+	// configuration failure — bubble it up rather than silently degrading.
 	if s.llm == nil {
-		return s.runAwakeningFallback(ctx, sessionID, hostID)
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: LLM client not configured")
 	}
 
 	// Build and run the awakens CPN.
@@ -92,7 +93,7 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 	}
 	root := s.awakensFactory(sessionID, deps)
 	if root == nil {
-		return s.runAwakeningFallback(ctx, sessionID, hostID)
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: factory returned nil topology")
 	}
 	root.LLMClient = s.llm
 	root.Cost = s.cost
@@ -114,27 +115,17 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 	}
 
 	if err := root.Run(runCtx); err != nil {
-		s.logger.Warn("awakening: LLM path failed; falling through to legacy discovery",
-			slog.String("session_id", sessionID),
-			slog.Any("error", err),
-		)
-		return s.runAwakeningFallback(ctx, sessionID, hostID)
+		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", err)
 	}
 
 	// Extract the emitted A2UI envelope and snapshot from the terminal places.
 	envelope, ok := extractEmittedMessage(root)
 	if !ok {
-		s.logger.Warn("awakening: CPN completed but emitted no A2UI envelope; falling back",
-			slog.String("session_id", sessionID))
-		return s.runAwakeningFallback(ctx, sessionID, hostID)
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: CPN completed but emitted no A2UI envelope")
 	}
 	snap, ok := extractAwakeningSnapshot(root)
 	if !ok {
-		// The CPN ran but no snapshot landed on p-host-capabilities —
-		// legacy consumers depend on it, so fall back to populate one.
-		s.logger.Warn("awakening: CPN completed but deposited no snapshot",
-			slog.String("session_id", sessionID))
-		return s.runAwakeningFallback(ctx, sessionID, hostID)
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: CPN completed but deposited no snapshot")
 	}
 	s.logger.Info("awakening: complete",
 		slog.String("session_id", sessionID),
@@ -142,184 +133,6 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 		slog.String("source", awakens.SourceAwakening),
 	)
 	return snap, envelope, awakens.SourceAwakening, nil
-}
-
-// runAwakeningFallback runs a deterministic introspection probe through the
-// host adapter (bypassing the LLM) and produces a populated snapshot + A2UI
-// envelope. Shell commands are kept to the `introspection` safe band
-// (uname, whoami, id, cat /etc/os-release, command -v X) and are issued
-// directly through the adapter so HITL is never invoked.
-//
-// When the host runtime is not wired (tests) we degrade to a zero snapshot
-// plus a minimal envelope so the session still becomes usable (BEH-003).
-func (s *SessionService) runAwakeningFallback(ctx context.Context, sessionID, hostID string) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
-	if s.hostRuntime == nil || s.hostRuntime.Adapter == nil {
-		s.logger.Info("awakening: LLM path unavailable; serving synthesized envelope",
-			slog.String("session_id", sessionID),
-			slog.String("host_id", hostID),
-			slog.String("source", awakens.SourceAwakeningFallback),
-		)
-		return persist.HostCapabilitySnapshot{}, synthesizedFallbackEnvelope(), awakens.SourceAwakeningFallback, nil
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	report := s.deterministicProbe(probeCtx)
-	snap := report.Project(hostID, awakens.SourceAwakeningFallback, time.Now().UTC())
-	if snap.ID == "" {
-		snap.ID = uuid.NewString()
-	}
-
-	if s.hostCapabilityRepo != nil {
-		if err := s.hostCapabilityRepo.Save(ctx, snap); err != nil {
-			s.logger.Warn("awakening-fallback: save snapshot",
-				slog.String("session_id", sessionID), slog.Any("error", err))
-		}
-	}
-
-	envelope := awakens.BuildFirstTurnMessage(report)
-	s.logger.Info("awakening: deterministic fallback probe complete",
-		slog.String("session_id", sessionID),
-		slog.String("host_id", hostID),
-		slog.String("os", report.OS.Name),
-		slog.String("arch", report.OS.Arch),
-		slog.Int("present_tools", len(report.PresentTools)),
-		slog.Int("absent_tools", len(report.AbsentTools)),
-		slog.String("source", awakens.SourceAwakeningFallback),
-	)
-	return snap, envelope, awakens.SourceAwakeningFallback, nil
-}
-
-// deterministicProbe issues the small set of read-only commands in the
-// `introspection` safe band directly through the host adapter and assembles
-// an AwakeningReport. Bypasses the CPN / gate because these calls are
-// internal bootstrap, not user-authored tool invocations.
-func (s *SessionService) deterministicProbe(ctx context.Context) awakens.AwakeningReport {
-	adapter := s.hostRuntime.Adapter
-
-	run := func(cmd string, args ...string) (string, int) {
-		res, err := adapter.Exec(ctx, cpn.ExecRequest{
-			Command:      cmd,
-			Args:         args,
-			Timeout:      2 * time.Second,
-			AllowNonZero: true,
-		})
-		if err != nil {
-			return "", -1
-		}
-		return strings.TrimSpace(string(res.Stdout)), res.ExitCode
-	}
-
-	// Kernel / OS.
-	kernelRel, _ := run("uname", "-r")
-	arch, _ := run("uname", "-m")
-	osReleaseOut, _ := run("cat", "/etc/os-release")
-	osName, osVersion, _ := parseOSReleaseFile(osReleaseOut)
-
-	// Identity.
-	user, _ := run("whoami")
-	uid, gid := 0, 0
-	if out, exit := run("id", "-u"); exit == 0 {
-		uid, _ = strconv.Atoi(out)
-	}
-	if out, exit := run("id", "-g"); exit == 0 {
-		gid, _ = strconv.Atoi(out)
-	}
-
-	// Shell: /etc/passwd lookup for the user's login shell, fall back to /bin/sh.
-	shell := "/bin/sh"
-	if user != "" {
-		if passwd, exit := run("cat", "/etc/passwd"); exit == 0 {
-			if got := loginShellFromPasswd(passwd, user); got != "" {
-				shell = got
-			}
-		}
-	}
-
-	// Binary probes — small shortlist of tools most commonly referenced.
-	// `which` is in the host-gate safe band and succeeds (exit 0 + absolute
-	// path on stdout) only when the binary is on PATH, so we get presence
-	// without touching the path jail.
-	probes := []string{
-		"sh", "bash", "ash", "dash",
-		"awk", "sed", "grep", "find", "tar", "gzip", "xz",
-		"wget", "curl",
-		"git", "make", "gcc", "cc",
-		"python", "python3", "node", "npm", "go", "ruby", "perl",
-		"sqlite3", "jq", "yq",
-	}
-
-	var present []awakens.AwakeningTool
-	var absent []string
-	var trace []awakens.AwakeningProbe
-
-	for _, name := range probes {
-		path, exit := run("which", name)
-		if exit == 0 && path != "" {
-			present = append(present, awakens.AwakeningTool{Name: name})
-		} else {
-			absent = append(absent, name)
-		}
-		trace = append(trace, awakens.AwakeningProbe{Cmd: "which " + name, Exit: exit})
-	}
-
-	if osName == "" {
-		osName = "Linux"
-	}
-	if arch == "" {
-		arch = "unknown"
-	}
-
-	return awakens.AwakeningReport{
-		OS:           awakens.AwakeningOS{Name: osName, Version: osVersion, Kernel: kernelRel, Arch: arch},
-		Shell:        awakens.AwakeningShell{Path: shell},
-		Identity:     awakens.AwakeningIdentity{User: user, UID: uid, GID: gid},
-		PresentTools: present,
-		AbsentTools:  absent,
-		ProbeTrace:   trace,
-	}
-}
-
-// parseOSReleaseFile parses /etc/os-release KEY=VALUE lines, returning the
-// pretty name, version id, and the full parsed map. Quotes are stripped.
-func parseOSReleaseFile(raw string) (name, version string, kv map[string]string) {
-	kv = map[string]string{}
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.IndexByte(line, '=')
-		if eq <= 0 {
-			continue
-		}
-		k := strings.TrimSpace(line[:eq])
-		v := strings.Trim(strings.TrimSpace(line[eq+1:]), `"'`)
-		kv[k] = v
-	}
-	name = kv["NAME"]
-	if name == "" {
-		name = kv["PRETTY_NAME"]
-	}
-	version = kv["VERSION_ID"]
-	return name, version, kv
-}
-
-// loginShellFromPasswd returns the shell field for user from /etc/passwd, or
-// "" when the user is not found.
-func loginShellFromPasswd(passwd, user string) string {
-	prefix := user + ":"
-	for _, line := range strings.Split(passwd, "\n") {
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		parts := strings.Split(line, ":")
-		if len(parts) >= 7 {
-			return parts[6]
-		}
-	}
-	return ""
 }
 
 // errAwakeningNotConfigured signals that the awakening path cannot run
@@ -364,10 +177,9 @@ func extractAwakeningSnapshot(c *cpn.CPN) (persist.HostCapabilitySnapshot, bool)
 }
 
 // firstTurnMessageFromSnapshot derives a minimal A2UI envelope from an
-// existing snapshot — used when the cache is fresh (AC-008) or the
-// fallback path synthesised one. It projects the snapshot back into an
-// AwakeningReport shape just for rendering; the underlying snapshot
-// semantics are unchanged.
+// existing snapshot — used when the cache is fresh. It projects the
+// snapshot back into an AwakeningReport shape just for rendering; the
+// underlying snapshot semantics are unchanged.
 func firstTurnMessageFromSnapshot(snap persist.HostCapabilitySnapshot) awakens.A2UIMessage {
 	report := awakens.AwakeningReport{
 		OS: awakens.AwakeningOS{
@@ -388,20 +200,6 @@ func firstTurnMessageFromSnapshot(snap persist.HostCapabilitySnapshot) awakens.A
 		}
 	}
 	return awakens.BuildFirstTurnMessage(report)
-}
-
-// synthesizedFallbackEnvelope is the last-resort card shown when neither the
-// awakening path nor the legacy host-discovery path is wired. BEH-003 still
-// requires an invitation to the user.
-func synthesizedFallbackEnvelope() awakens.A2UIMessage {
-	return awakens.A2UIMessage{
-		Components: []map[string]any{
-			{
-				"type":  "text",
-				"props": map[string]any{"content": "¿En qué trabajamos hoy?"},
-			},
-		},
-	}
 }
 
 // runAwakeningAsync runs the awakening flow on a fresh background context so
@@ -447,10 +245,9 @@ func (s *SessionService) seedHostCapabilitiesFromCache(ctx context.Context, root
 }
 
 // appendAwakeningMessage writes the first-turn A2UI envelope as the
-// session's opening `assistant` message with cpn_role="awakening"
-// (AC-001). The content is the JSON-encoded envelope — downstream
-// frontends parse it as A2UI v0.8 per §4.4. Best-effort: persistence
-// errors are logged but non-fatal.
+// session's opening `assistant` message with cpn_role="awakening". The
+// content is the JSON-encoded envelope — downstream frontends parse it as
+// A2UI v0.8. Best-effort: persistence errors are logged but non-fatal.
 func (s *SessionService) appendAwakeningMessage(ctx context.Context, session *cpn.Session, envelope awakens.A2UIMessage) {
 	if session == nil {
 		return
@@ -497,16 +294,14 @@ func (s *SessionService) seedAwakeningOnRoot(root *cpn.CPN, snap persist.HostCap
 func envelopeToJSON(e awakens.A2UIMessage) ([]byte, error) { return json.Marshal(e) }
 
 // isInteractiveChannel reports whether the channel participates in
-// conversational turn-taking (REQ-001). Today every defined ChannelType
-// is interactive; the helper is a seam for future non-interactive
-// channels (batch, webhook) that should skip awakening.
+// conversational turn-taking. Today every defined ChannelType is
+// interactive; the helper is a seam for future non-interactive channels
+// (batch, webhook) that should skip awakening.
 func isInteractiveChannel(ch cpn.ChannelType) bool {
 	switch ch {
 	case cpn.ChannelWeb, cpn.ChannelWhatsApp, cpn.ChannelTelegram:
 		return true
 	default:
-		// Unknown channels default to interactive so new front-ends
-		// inherit the behaviour; they can opt out explicitly later.
 		return true
 	}
 }

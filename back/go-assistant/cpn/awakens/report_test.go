@@ -140,15 +140,6 @@ func TestProject_LegacyShape(t *testing.T) {
 	}
 }
 
-func TestFallbackTagging(t *testing.T) {
-	t.Parallel()
-	r := validReport()
-	snap := r.Project("h", SourceAwakeningFallback, time.Now())
-	if snap.Source != "awakening-fallback" {
-		t.Fatalf("fallback source mismatch: %q", snap.Source)
-	}
-}
-
 func TestRedactEnvKey(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{

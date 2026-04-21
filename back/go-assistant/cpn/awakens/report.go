@@ -16,8 +16,8 @@ import (
 // The struct tolerates partial LLM responses — Validate() enforces the
 // minimum fields required for a usable snapshot, but optional sections
 // (capabilities, tools_to_register, probe_trace) may be empty without
-// failing validation. A report that fails Validate() MUST be retried or
-// fall through to awakening-fallback per §9.4.
+// failing validation. A report that fails Validate() MUST be retried; the
+// awakening flow has no fallback path.
 type AwakeningReport struct {
 	OS            AwakeningOS             `json:"os"`
 	Shell         AwakeningShell          `json:"shell"`
@@ -148,8 +148,8 @@ var envRedactRe = regexp.MustCompile(`(?i)(token|key|password|secret|credential|
 // shape so existing readers of host_capability_snapshots (REQ-validation #6)
 // keep working without migration.
 //
-// source is injected by the caller — normal path passes "awakening",
-// fallback path passes "awakening-fallback" (REQ-010).
+// source is injected by the caller — first-boot awakening always passes
+// "awakening" (SourceAwakening).
 func (r AwakeningReport) Project(hostID, source string, capturedAt time.Time) persist.HostCapabilitySnapshot {
 	// Build binaries from present_tools.
 	binaries := make([]persist.BinaryProbe, 0, len(r.PresentTools)+len(r.AbsentTools))

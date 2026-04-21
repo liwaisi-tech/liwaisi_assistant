@@ -10,6 +10,24 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
+// recordRepo is a test double used across the awakens package tests.
+type recordRepo struct {
+	saved []persist.HostCapabilitySnapshot
+}
+
+func (r *recordRepo) Save(_ context.Context, s persist.HostCapabilitySnapshot) error {
+	r.saved = append(r.saved, s)
+	return nil
+}
+func (r *recordRepo) LatestForHost(_ context.Context, _ string) (persist.HostCapabilitySnapshot, error) {
+	return persist.HostCapabilitySnapshot{}, persist.ErrHostSnapshotNotFound
+}
+func (r *recordRepo) AppendProbeResult(_ context.Context, _ string, _ persist.BinaryProbe) error {
+	return nil
+}
+
+var _ persist.HostCapabilityRepository = (*recordRepo)(nil)
+
 func TestTopologyFactory_Shape(t *testing.T) {
 	t.Parallel()
 	c := TopologyFactory("sess-1", Deps{HostID: "host-1"})
@@ -27,7 +45,8 @@ func TestTopologyFactory_Shape(t *testing.T) {
 		}
 	}
 	expectedTransitions := []string{
-		TransitionAwakenLLM, TransitionAwakenShell, TransitionAwakenReport,
+		TransitionAwakenLLMBootstrap, TransitionAwakenLLMFollowup,
+		TransitionAwakenShell, TransitionAwakenReport,
 		TransitionAwakenPersist, TransitionAwakenRegisterTools, TransitionAwakenEmitMessage,
 	}
 	for _, id := range expectedTransitions {
@@ -46,6 +65,63 @@ func TestTopologyFactory_Shape(t *testing.T) {
 	}
 }
 
+// TestBootstrapTransition_InputsEnabledAtStart is the core of the bootstrap
+// fix: the first LLM transition MUST be firable with only the seed tokens
+// (trigger + system-prompt). Any dependency on p-awaken-shell-result would
+// re-introduce the deadlock.
+func TestBootstrapTransition_InputsEnabledAtStart(t *testing.T) {
+	t.Parallel()
+	c := TopologyFactory("sess-boot", Deps{})
+	tt := c.Transitions[TransitionAwakenLLMBootstrap]
+	if tt == nil {
+		t.Fatal("bootstrap transition missing")
+	}
+	wantInputs := map[string]bool{
+		PlaceAwakenTrigger:      true,
+		PlaceAwakenSystemPrompt: true,
+	}
+	if len(tt.InputPlaces) != len(wantInputs) {
+		t.Fatalf("bootstrap inputs: got %v want %v", tt.InputPlaces, wantInputs)
+	}
+	for _, in := range tt.InputPlaces {
+		if !wantInputs[in] {
+			t.Errorf("unexpected bootstrap input %q (must not depend on shell-result)", in)
+		}
+	}
+	// canFire should be true right after construction.
+	if !tt.CanFire(c.Places) {
+		t.Fatal("bootstrap transition must be firable from initial marking")
+	}
+}
+
+// TestFollowupTransition_WaitsForShellResult ensures the followup LLM is
+// gated on p-awaken-shell-result only, and is NOT firable from the initial
+// marking.
+func TestFollowupTransition_WaitsForShellResult(t *testing.T) {
+	t.Parallel()
+	c := TopologyFactory("sess-follow", Deps{})
+	tt := c.Transitions[TransitionAwakenLLMFollowup]
+	if tt == nil {
+		t.Fatal("followup transition missing")
+	}
+	if len(tt.InputPlaces) != 1 || tt.InputPlaces[0] != PlaceAwakenShellResult {
+		t.Errorf("followup inputs: got %v want [%s]", tt.InputPlaces, PlaceAwakenShellResult)
+	}
+	if tt.CanFire(c.Places) {
+		t.Fatal("followup must NOT be firable from initial marking (no shell-result token)")
+	}
+}
+
+// TestNoLegacyLLMTransition guards against reintroduction of the single
+// `t-awaken-llm` transition that caused the deadlock.
+func TestNoLegacyLLMTransition(t *testing.T) {
+	t.Parallel()
+	c := TopologyFactory("sess-legacy", Deps{})
+	if _, ok := c.Transitions["t-awaken-llm"]; ok {
+		t.Fatal("legacy t-awaken-llm must not be present; use bootstrap/followup split")
+	}
+}
+
 func TestReportTransition_ValidatesPayload(t *testing.T) {
 	t.Parallel()
 	c := TopologyFactory("sess-1", Deps{})
@@ -54,7 +130,7 @@ func TestReportTransition_ValidatesPayload(t *testing.T) {
 	r := validReport()
 	raw, _ := json.Marshal(r)
 	out, err := tt.ToolHandler(context.Background(), []cpn.Token{
-		{Color: cpn.ColorHostFact, Space: cpn.SpaceComputation, Payload: json.RawMessage(raw)},
+		{Color: cpn.ColorJSON, Space: cpn.SpaceComputation, Payload: json.RawMessage(raw)},
 	})
 	if err != nil {
 		t.Fatalf("report transition: %v", err)
@@ -64,7 +140,7 @@ func TestReportTransition_ValidatesPayload(t *testing.T) {
 	}
 	// Invalid payload rejected.
 	_, err = tt.ToolHandler(context.Background(), []cpn.Token{
-		{Color: cpn.ColorHostFact, Space: cpn.SpaceComputation, Payload: "not json"},
+		{Color: cpn.ColorJSON, Space: cpn.SpaceComputation, Payload: "not json"},
 	})
 	if err == nil {
 		t.Fatalf("invalid payload must return err")
@@ -166,7 +242,7 @@ func TestGoldenTranscript_Alpine(t *testing.T) {
 	if snap.Source != SourceAwakening {
 		t.Errorf("source: %q", snap.Source)
 	}
-	// Expected present/absent tools per AC-002.
+	// Expected present/absent tools.
 	expectedPresent := map[string]bool{"sh": true, "awk": true, "sed": true, "grep": true, "tar": true, "wget": true}
 	expectedAbsent := map[string]bool{"git": true, "python3": true, "node": true, "go": true, "gcc": true}
 	for _, b := range snap.Binaries {
@@ -199,6 +275,3 @@ func TestGoldenTranscript_Alpine(t *testing.T) {
 		t.Errorf("A2UI envelope must have card + trailing text")
 	}
 }
-
-// recordRepo defined in fallback_test.go is reused.
-var _ persist.HostCapabilityRepository = (*recordRepo)(nil)
