@@ -20,6 +20,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis/jit"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
@@ -78,6 +79,9 @@ func main() {
 	// the linter, canonicaliser, materialiser, and digest hooks on cpn/.
 	safeRegistry := synthesis.NewSafeRegistry()
 	synthesis.RegisterDefaults(safeRegistry)
+	// Contribute jit-fanout / jit-aggregate so JIT-composed topologies lint
+	// (spec-architecture-brae-jit-cpn-builder.md §4.6). Must run BEFORE Seal.
+	jit.Register(safeRegistry)
 	if err := safeRegistry.LoadBashSnippetsFile(envOr("BASH_SNIPPETS_PATH", "cpn/synthesis/bash_snippets.yaml")); err != nil {
 		logger.Warn("synthesis: load bash snippets failed", slog.Any("error", err))
 	}
