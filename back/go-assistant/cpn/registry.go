@@ -41,6 +41,16 @@ var ErrRegistryConflict = errors.New("cpn: registry row was modified by another 
 // first (REQ-API-006).
 var ErrCannotDeleteDefault = errors.New("cpn: cannot delete the product default; reassign it first")
 
+// ErrDuplicateRegistryID is returned by Insert when the registry_id already
+// exists. Adapters translate pg error 23505 into this sentinel so the HTTP
+// layer can respond with 409 via errors.Is — no string probes (REQ-FIX-010).
+var ErrDuplicateRegistryID = errors.New("cpn: registry_id already exists")
+
+// ErrModelInUse is returned by Delete when the row is still referenced by a
+// role default (model_role_defaults). The caller must reassign the role
+// before the row can be removed (REQ-FIX-006).
+var ErrModelInUse = errors.New("cpn: model is bound to a role default")
+
 // ErrInvalidInput is returned when required arguments (e.g. registry_id) are empty.
 var ErrInvalidInput = errors.New("cpn: invalid input")
 

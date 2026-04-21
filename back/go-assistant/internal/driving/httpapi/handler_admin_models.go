@@ -28,7 +28,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -330,7 +329,7 @@ func (h *Handlers) HandleAdminRegisterModel(w http.ResponseWriter, r *http.Reque
 			writeErrorCode(w, http.StatusBadRequest, "invalid_input", err.Error())
 			return
 		}
-		if adminDuplicate(err) {
+		if errors.Is(err, cpn.ErrDuplicateRegistryID) {
 			writeErrorCode(w, http.StatusConflict, "duplicate_registry_id", "registry_id already exists")
 			return
 		}
@@ -624,13 +623,3 @@ func isValidLicenseStatus(s string) bool {
 	return false
 }
 
-// adminDuplicate detects a unique-violation on registry_id. The adapter returns
-// a wrapped pgx error; we probe by string because the cpn port deliberately
-// does not leak pgconn types.
-func adminDuplicate(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "duplicate") || strings.Contains(msg, "already exists")
-}

@@ -412,7 +412,7 @@ func (r *ModelRegistryRepository) Insert(ctx context.Context, entry *cpn.ModelRe
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return fmt.Errorf("postgres model registry insert: registry_id=%q already exists: %w", entry.RegistryID, err)
+			return fmt.Errorf("postgres model registry insert: registry_id=%q: %w", entry.RegistryID, cpn.ErrDuplicateRegistryID)
 		}
 		return fmt.Errorf("postgres model registry insert: %w", err)
 	}

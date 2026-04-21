@@ -137,7 +137,7 @@ func (f *fakeRegistry) Insert(_ context.Context, e *cpn.ModelRegistryEntry) erro
 		return f.insertErr
 	}
 	if _, ok := f.entries[e.RegistryID]; ok {
-		return cpn.ErrInvalidInput // simulate duplicate
+		return cpn.ErrDuplicateRegistryID
 	}
 	// Enforce REQ-LIC-003 invariant in the fake.
 	e.License.Status = cpn.LicenseUnreviewed
