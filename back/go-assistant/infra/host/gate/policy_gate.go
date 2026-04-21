@@ -53,6 +53,108 @@ type PolicyHostGate struct {
 	// CON-003 / SEC-004 / AC-005. Introspection commands continue through
 	// the normal safe-band path. Nil disables the feature (legacy).
 	AwakeningMode *AwakeningModeRegistry
+
+	// auditPool lazily holds the bounded worker pool that drains audit
+	// writes off the hot path. Unbounded `go func()` spawning was removed
+	// in REQ-FIX-008; the pool caps concurrent DB writes at
+	// auditWorkerCount and drops (with a metric) on queue full / shutdown.
+	auditPoolOnce sync.Once
+	auditPool     *auditWorkerPool
+}
+
+// auditWorkerCount caps concurrent audit DB writers. 16 matches the
+// BudgetTracker cadence and is small enough to avoid saturating the
+// connection pool under burst.
+const auditWorkerCount = 16
+
+// auditQueueSize is how many decisions may be queued before Submit drops
+// with a warn log. Sized to roughly one second of sustained gate throughput.
+const auditQueueSize = 256
+
+// auditJob bundles a decision record with the GateOp kind so the worker
+// can emit a meaningful log on failure.
+type auditJob struct {
+	rec    *persist.GateDecisionRecord
+	opKind string
+}
+
+// auditWorkerPool drains audit writes asynchronously. Cf. REQ-FIX-008 and
+// spec §4.5.
+type auditWorkerPool struct {
+	queue    chan auditJob
+	wg       sync.WaitGroup
+	store    persist.GateDecisionRepository
+	logger   *slog.Logger
+	shutdown chan struct{}
+	// closed guards against double-Close on the queue channel.
+	closeOnce sync.Once
+}
+
+func newAuditWorkerPool(store persist.GateDecisionRepository, logger *slog.Logger) *auditWorkerPool {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	p := &auditWorkerPool{
+		queue:    make(chan auditJob, auditQueueSize),
+		store:    store,
+		logger:   logger,
+		shutdown: make(chan struct{}),
+	}
+	for range auditWorkerCount {
+		p.wg.Add(1)
+		go p.worker()
+	}
+	return p
+}
+
+func (p *auditWorkerPool) worker() {
+	defer p.wg.Done()
+	for job := range p.queue {
+		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := p.store.Insert(writeCtx, job.rec); err != nil {
+			p.logger.Warn("gate: audit insert failed", "error", err, "op", job.opKind)
+		}
+		cancel()
+	}
+}
+
+// Submit enqueues a job non-blocking. On full queue the record is dropped
+// and logged — audit continuity is best-effort, never a hot-path block.
+func (p *auditWorkerPool) Submit(job auditJob) {
+	// Fast-path: if shutdown has been signalled, record the drop and bail
+	// BEFORE touching p.queue (which is closed by Shutdown; a send would
+	// panic).
+	select {
+	case <-p.shutdown:
+		p.logger.Warn("gate: audit dropped on shutdown", "op", job.opKind)
+		return
+	default:
+	}
+	select {
+	case p.queue <- job:
+	default:
+		p.logger.Warn("gate: audit queue full; dropping record", "op", job.opKind)
+	}
+}
+
+// Shutdown signals workers to finish the queue and waits for them or for
+// ctx to expire — whichever comes first.
+func (p *auditWorkerPool) Shutdown(ctx context.Context) error {
+	p.closeOnce.Do(func() {
+		close(p.shutdown)
+		close(p.queue)
+	})
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Compile-time interface check.
@@ -476,14 +578,32 @@ func (g *PolicyHostGate) auditAsync(ctx context.Context, dec Decision, op cpn.Ga
 		return
 	}
 	rec := newAuditRecord(dec, op, hitlResponseID)
-	go func() {
-		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := g.Decisions.Insert(writeCtx, rec); err != nil {
-			g.Logger.Warn("gate: audit insert failed", "error", err, "op", op.Kind)
-		}
-	}()
+	g.ensureAuditPool().Submit(auditJob{rec: rec, opKind: op.Kind})
 	_ = ctx
+}
+
+// ensureAuditPool lazily starts the bounded worker pool on first use. The
+// pool survives for the lifetime of the gate; callers MAY call
+// ShutdownAuditPool at process exit to drain pending writes.
+func (g *PolicyHostGate) ensureAuditPool() *auditWorkerPool {
+	g.auditPoolOnce.Do(func() {
+		logger := g.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		g.auditPool = newAuditWorkerPool(g.Decisions, logger)
+	})
+	return g.auditPool
+}
+
+// ShutdownAuditPool signals the audit worker pool to drain and waits up to
+// ctx's deadline. Safe to call multiple times; also safe when the pool was
+// never started (no-op).
+func (g *PolicyHostGate) ShutdownAuditPool(ctx context.Context) error {
+	if g.auditPool == nil {
+		return nil
+	}
+	return g.auditPool.Shutdown(ctx)
 }
 
 // AuditDecision writes a decision synchronously. Used by the HITL post-
