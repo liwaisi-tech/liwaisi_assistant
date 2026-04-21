@@ -288,9 +288,15 @@ func (a *OSHostAdapter) Stat(_ context.Context, path string) (cpn.FileInfo, erro
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 // guard enforces SEC-001: path traversal and the deny list.
+//
+// Deny matching runs against a canonicalised command line: the command's
+// basename plus each arg with whitespace collapsed to a single space. The
+// previous form matched strings.Contains(command+" "+strings.Join(args, " "),
+// deny) which was bypassable by padding args with extra whitespace
+// (e.g. args=[" -rf", " /"] yielded "rm  -rf /" which does not contain the
+// literal "rm -rf /"). Canonicalisation closes that seam while keeping the
+// fork-bomb-style multi-token rules intact (SEC-FIX-007 / AC-007).
 func (a *OSHostAdapter) guard(command string, args []string) error {
-	// Check command and each arg separately against the dot-dot regex so
-	// adjacency to spaces does not leak a traversal through the seams.
 	candidates := append([]string{command}, args...)
 	for _, c := range candidates {
 		if containsDotDot(c) {
@@ -298,12 +304,26 @@ func (a *OSHostAdapter) guard(command string, args []string) error {
 				"command or arguments contain path traversal (..)", nil)
 		}
 	}
-	joined := command + " " + strings.Join(args, " ")
+
+	canonCmd := filepath.Base(strings.TrimSpace(command))
+	parts := make([]string, 0, 1+len(args))
+	parts = append(parts, canonCmd)
+	for _, a := range args {
+		// strings.Fields normalises any internal whitespace run to single
+		// spaces; an empty/whitespace-only arg contributes nothing.
+		parts = append(parts, strings.Fields(a)...)
+	}
+	canonLine := strings.Join(parts, " ")
+
 	for _, deny := range a.DenyList {
 		if deny == "" {
 			continue
 		}
-		if strings.Contains(joined, deny) {
+		canonDeny := strings.Join(strings.Fields(deny), " ")
+		if canonDeny == "" {
+			continue
+		}
+		if strings.Contains(canonLine, canonDeny) {
 			return cpn.NewHostError(cpn.HostErrCodeDenyList,
 				fmt.Sprintf("command matches deny rule %q", deny), nil)
 		}
