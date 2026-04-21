@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -122,22 +123,36 @@ func scanEntry(row interface {
 	e.UpdatedAt = updatedAt
 	e.IsProductDefault = isProductDefault
 
+	// REQ-FIX-004: routes is load-bearing for invocation — a corrupt value
+	// MUST propagate, not silently default to []. The other JSONB columns
+	// are advisory and may default, but emit a warn so the corruption is
+	// visible in the log stream.
+	if err := json.Unmarshal(routesJSON, &e.Routes); err != nil {
+		return nil, fmt.Errorf("postgres model registry: decode routes for %q: %w", e.RegistryID, err)
+	}
 	if err := json.Unmarshal(modalitiesJSON, &e.Modalities); err != nil {
+		slog.Warn("postgres model registry: decode modalities failed; using default",
+			"registry_id", e.RegistryID, "error", err)
 		e.Modalities = cpn.Modalities{Input: []string{"text"}, Output: []string{"text"}}
 	}
 	if err := json.Unmarshal(capabilitiesJSON, &e.Capabilities); err != nil {
+		slog.Warn("postgres model registry: decode capabilities failed; using default",
+			"registry_id", e.RegistryID, "error", err)
 		e.Capabilities = cpn.Capabilities{}
 	}
 	if err := json.Unmarshal(supportedParamsJSON, &e.SupportedParams); err != nil {
+		slog.Warn("postgres model registry: decode supported_parameters failed; using default",
+			"registry_id", e.RegistryID, "error", err)
 		e.SupportedParams = []string{}
 	}
 	if err := json.Unmarshal(defaultParamsJSON, &e.DefaultParams); err != nil {
+		slog.Warn("postgres model registry: decode default_parameters failed; using default",
+			"registry_id", e.RegistryID, "error", err)
 		e.DefaultParams = map[string]any{}
 	}
-	if err := json.Unmarshal(routesJSON, &e.Routes); err != nil {
-		e.Routes = []cpn.Route{}
-	}
 	if err := json.Unmarshal(sourceMetadataJSON, &e.SourceMetadata); err != nil {
+		slog.Warn("postgres model registry: decode source_metadata failed; using default",
+			"registry_id", e.RegistryID, "error", err)
 		e.SourceMetadata = map[string]any{}
 	}
 	return e, nil
