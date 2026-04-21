@@ -338,7 +338,14 @@ func (g *PolicyHostGate) RecordActual(_ context.Context, op cpn.GateOp, actual B
 	if g.Budgets == nil {
 		return nil
 	}
-	g.Budgets.RecordActual(g.sessionIDFromOp(op), actual)
+	sid := op.SessionID
+	if sid == "" {
+		// Caller failed to plumb a session id through GateOp. Bucket into a
+		// named-"unknown" so one mis-wired caller can't siphon budget from
+		// real sessions (REQ-FIX-009).
+		sid = "unknown"
+	}
+	g.Budgets.RecordActual(sid, actual)
 	return nil
 }
 
@@ -385,11 +392,6 @@ func (g *PolicyHostGate) sessionID(ctx context.Context) string {
 	}
 	return "default"
 }
-
-// sessionIDFromOp is a best-effort fallback when RecordActual is called
-// outside a request ctx (unused in production yet; retained for API
-// symmetry). Always returns "default".
-func (g *PolicyHostGate) sessionIDFromOp(_ cpn.GateOp) string { return "default" }
 
 // resolveSandbox returns the profile the op will run under. When the op
 // supplies one explicitly, that wins; otherwise the policy default is

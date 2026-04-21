@@ -164,6 +164,11 @@ type GateOp struct {
 	Command string
 	Path    string
 	Sandbox SandboxProfile
+	// SessionID is the owning CPN session — populated by fire_bash and other
+	// transition callers so PolicyHostGate can scope budget counters +
+	// remembered approvals per session instead of bucketing everything into
+	// a global "default" (REQ-FIX-009).
+	SessionID string
 }
 
 // ── Ports ───────────────────────────────────────────────────────────────────

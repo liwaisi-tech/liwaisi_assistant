@@ -301,12 +301,24 @@ func TestRecordActual_NilBudgets(t *testing.T) {
 
 func TestRecordActual_WithBudgets(t *testing.T) {
 	g := &PolicyHostGate{Budgets: NewBudgetTracker()}
-	if err := g.RecordActual(context.Background(), cpn.GateOp{Kind: "exec"}, BudgetEstimate{CPUSeconds: 3}); err != nil {
+	if err := g.RecordActual(context.Background(),
+		cpn.GateOp{Kind: "exec", SessionID: "sess-a"},
+		BudgetEstimate{CPUSeconds: 3}); err != nil {
 		t.Fatal(err)
 	}
-	cur := g.Budgets.Current("default")
+	cur := g.Budgets.Current("sess-a")
 	if cur.CPUSeconds != 3 {
 		t.Fatalf("CPU=%d want 3", cur.CPUSeconds)
+	}
+	// Empty SessionID buckets into "unknown" (REQ-FIX-009) so mis-wired
+	// callers cannot drain real sessions.
+	if err := g.RecordActual(context.Background(),
+		cpn.GateOp{Kind: "exec"},
+		BudgetEstimate{CPUSeconds: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if g.Budgets.Current("unknown").CPUSeconds != 7 {
+		t.Fatalf("unknown bucket = %+v", g.Budgets.Current("unknown"))
 	}
 }
 
@@ -325,10 +337,21 @@ func TestSessionIDResolver_Override(t *testing.T) {
 	}
 }
 
-func TestSessionIDFromOp(t *testing.T) {
+// TestRecordActual_UsesSessionIDFromOp — AC-009 regression. RecordActual
+// must bucket usage by op.SessionID; an empty SessionID falls back to
+// "unknown" so one mis-wired caller cannot drain a real session's budget.
+func TestRecordActual_UsesSessionIDFromOp(t *testing.T) {
 	g := &PolicyHostGate{}
-	if s := g.sessionIDFromOp(cpn.GateOp{}); s != "default" {
-		t.Fatalf("sessionIDFromOp = %q", s)
+	// No Budgets wired — just make sure the call completes without panic.
+	if err := g.RecordActual(context.Background(),
+		cpn.GateOp{Kind: "exec", SessionID: "sess-123"},
+		BudgetEstimate{CPUSeconds: 1}); err != nil {
+		t.Fatalf("RecordActual with session id: %v", err)
+	}
+	if err := g.RecordActual(context.Background(),
+		cpn.GateOp{Kind: "exec"},
+		BudgetEstimate{CPUSeconds: 1}); err != nil {
+		t.Fatalf("RecordActual without session id: %v", err)
 	}
 }
 

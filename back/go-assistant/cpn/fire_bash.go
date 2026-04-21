@@ -69,9 +69,10 @@ func fireBash(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 			gateKind = "spawn_pty"
 		}
 		op := GateOp{
-			Kind:    gateKind,
-			Command: cfg.Command,
-			Sandbox: cfg.SandboxProfile,
+			Kind:      gateKind,
+			Command:   cfg.Command,
+			Sandbox:   cfg.SandboxProfile,
+			SessionID: c.SessionID,
 		}
 		// Thread the owning session ID so infra/host/gate's
 		// SessionIDResolver (and the awakening silent-deny registry)
