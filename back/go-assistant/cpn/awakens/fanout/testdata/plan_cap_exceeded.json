@@ -2,22 +2,155 @@
   "rationale": "exceeds CON-002 cap",
   "timeout_per_probe_ms": 1000,
   "probes": [
-    { "id": "p01", "kind": "binary", "target": "a", "command": "command -v a" },
-    { "id": "p02", "kind": "binary", "target": "b", "command": "command -v b" },
-    { "id": "p03", "kind": "binary", "target": "c", "command": "command -v c" },
-    { "id": "p04", "kind": "binary", "target": "d", "command": "command -v d" },
-    { "id": "p05", "kind": "binary", "target": "e", "command": "command -v e" },
-    { "id": "p06", "kind": "binary", "target": "f", "command": "command -v f" },
-    { "id": "p07", "kind": "binary", "target": "g", "command": "command -v g" },
-    { "id": "p08", "kind": "binary", "target": "h", "command": "command -v h" },
-    { "id": "p09", "kind": "binary", "target": "i", "command": "command -v i" },
-    { "id": "p10", "kind": "binary", "target": "j", "command": "command -v j" },
-    { "id": "p11", "kind": "binary", "target": "k", "command": "command -v k" },
-    { "id": "p12", "kind": "binary", "target": "l", "command": "command -v l" },
-    { "id": "p13", "kind": "binary", "target": "m", "command": "command -v m" },
-    { "id": "p14", "kind": "binary", "target": "n", "command": "command -v n" },
-    { "id": "p15", "kind": "binary", "target": "o", "command": "command -v o" },
-    { "id": "p16", "kind": "binary", "target": "p", "command": "command -v p" },
-    { "id": "p17", "kind": "binary", "target": "q", "command": "command -v q" }
+    {
+      "id": "cmd-0",
+      "kind": "binary",
+      "target": "t0",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-1",
+      "kind": "binary",
+      "target": "t1",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-2",
+      "kind": "binary",
+      "target": "t2",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-3",
+      "kind": "binary",
+      "target": "t3",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-4",
+      "kind": "binary",
+      "target": "t4",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-5",
+      "kind": "binary",
+      "target": "t5",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-6",
+      "kind": "binary",
+      "target": "t6",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-7",
+      "kind": "binary",
+      "target": "t7",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-8",
+      "kind": "binary",
+      "target": "t8",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-9",
+      "kind": "binary",
+      "target": "t9",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-10",
+      "kind": "binary",
+      "target": "t10",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-11",
+      "kind": "binary",
+      "target": "t11",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-12",
+      "kind": "binary",
+      "target": "t12",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-13",
+      "kind": "binary",
+      "target": "t13",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-14",
+      "kind": "binary",
+      "target": "t14",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-15",
+      "kind": "binary",
+      "target": "t15",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-16",
+      "kind": "binary",
+      "target": "t16",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-17",
+      "kind": "binary",
+      "target": "t17",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-18",
+      "kind": "binary",
+      "target": "t18",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-19",
+      "kind": "binary",
+      "target": "t19",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-20",
+      "kind": "binary",
+      "target": "t20",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-21",
+      "kind": "binary",
+      "target": "t21",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-22",
+      "kind": "binary",
+      "target": "t22",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-23",
+      "kind": "binary",
+      "target": "t23",
+      "command": "command -v a"
+    },
+    {
+      "id": "cmd-24",
+      "kind": "binary",
+      "target": "t24",
+      "command": "command -v a"
+    }
   ]
 }

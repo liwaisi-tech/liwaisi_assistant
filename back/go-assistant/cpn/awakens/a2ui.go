@@ -21,9 +21,9 @@ type A2UIMessage struct {
 func (m A2UIMessage) Marshal() ([]byte, error) { return json.Marshal(m) }
 
 // BuildFirstTurnMessage renders an AwakeningReport as the §4.4 A2UI envelope.
-// The `title` + surrounding copy are fixed Spanish strings matching the
-// reference design; narrative_md supplies the body. BEH-003 is honoured by
-// the trailing "¿En qué trabajamos hoy?" prompt.
+// The `title` + surrounding copy are fixed English strings; the frontend
+// localises at render time via the user's language preference. BEH-003 is
+// honoured by the trailing "What are we working on today?" prompt.
 func BuildFirstTurnMessage(r AwakeningReport) A2UIMessage {
 	var headline string
 	switch {
@@ -38,7 +38,7 @@ func BuildFirstTurnMessage(r AwakeningReport) A2UIMessage {
 			}
 		}
 	default:
-		headline = fmt.Sprintf("Desperté en %s (%s).", r.OS.Name, r.OS.Arch)
+		headline = fmt.Sprintf("Woke up on %s (%s).", r.OS.Name, r.OS.Arch)
 	}
 
 	presentNames := make([]string, 0, len(r.PresentTools))
@@ -49,19 +49,19 @@ func BuildFirstTurnMessage(r AwakeningReport) A2UIMessage {
 	stack := []map[string]any{
 		{
 			"type":  "text",
-			"props": map[string]any{"content": "**Tengo:** " + strings.Join(presentNames, ", ")},
+			"props": map[string]any{"content": "**Available:** " + strings.Join(presentNames, ", ")},
 		},
 	}
 	if len(r.AbsentTools) > 0 {
 		stack = append(stack, map[string]any{
 			"type":  "text",
-			"props": map[string]any{"content": "**Me falta:** " + strings.Join(r.AbsentTools, ", ")},
+			"props": map[string]any{"content": "**Missing:** " + strings.Join(r.AbsentTools, ", ")},
 		})
 	}
 
 	card := map[string]any{
 		"type":  "card",
-		"props": map[string]any{"variant": "info", "title": "brae está listo"},
+		"props": map[string]any{"variant": "info", "title": "brae is ready"},
 		"children": []map[string]any{
 			{"type": "text", "props": map[string]any{"content": headline}},
 			{"type": "divider"},
@@ -72,7 +72,7 @@ func BuildFirstTurnMessage(r AwakeningReport) A2UIMessage {
 	return A2UIMessage{
 		Components: []map[string]any{
 			card,
-			{"type": "text", "props": map[string]any{"content": "¿En qué trabajamos hoy?"}},
+			{"type": "text", "props": map[string]any{"content": "What are we working on today?"}},
 		},
 	}
 }

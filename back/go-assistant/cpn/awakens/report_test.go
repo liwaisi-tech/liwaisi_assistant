@@ -24,7 +24,7 @@ func validReport() AwakeningReport {
 		ToolsRegister: []AwakeningToolRegister{
 			{Name: "shell-exec", Basis: "sh"},
 		},
-		NarrativeMD: "Desperté en Alpine.",
+		NarrativeMD: "Woke up on Alpine.",
 		ProbeTrace:  []AwakeningProbe{{Cmd: "uname -a", Exit: 0}},
 	}
 }

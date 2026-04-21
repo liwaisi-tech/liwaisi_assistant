@@ -9,24 +9,24 @@ const AWAKENING_PAYLOAD: A2UIPayload = {
   components: [
     {
       type: 'card',
-      props: { variant: 'info', title: 'brae est\u00e1 listo' },
+      props: { variant: 'info', title: 'brae is ready' },
       children: [
         {
           type: 'text',
-          props: { content: 'Despert\u00e9 en Alpine 3.21 (aarch64, kernel 6.17). Shell: busybox sh.' },
+          props: { content: 'Woke up on Alpine 3.21 (aarch64, kernel 6.17). Shell: /bin/sh (busybox ash).' },
         },
         { type: 'divider', props: {} },
         {
           type: 'stack',
           props: {},
           children: [
-            { type: 'text', props: { content: '**Tengo:** sh, awk, sed, grep, tar, wget' } },
-            { type: 'text', props: { content: '**Me falta:** git, python, node, go, gcc' } },
+            { type: 'text', props: { content: '**Available:** sh, awk, sed, grep, tar, wget' } },
+            { type: 'text', props: { content: '**Missing:** git, python, node, go, gcc' } },
           ],
         },
       ],
     },
-    { type: 'text', props: { content: '\u00bfEn qu\u00e9 trabajamos hoy?' } },
+    { type: 'text', props: { content: 'What are we working on today?' } },
   ],
 };
 
@@ -42,21 +42,21 @@ describe('Awakening A2UI card (spec §4.4)', () => {
     expect(screen.getByTestId('awakening-card')).toBeInTheDocument();
 
     // Title appears, rendered with the JetBrains-Mono display typography.
-    expect(screen.getByText('brae est\u00e1 listo')).toBeInTheDocument();
+    expect(screen.getByText('brae is ready')).toBeInTheDocument();
 
     // Body narrative.
     expect(
-      screen.getByText(/Despert\u00e9 en Alpine 3\.21 \(aarch64, kernel 6\.17\)/),
+      screen.getByText(/Woke up on Alpine 3\.21 \(aarch64, kernel 6\.17\)/),
     ).toBeInTheDocument();
 
     // Stack children render as inline markdown — the bold segments become
-    // <strong>Tengo:</strong> / <strong>Me falta:</strong>. Assert the
+    // <strong>Available:</strong> / <strong>Missing:</strong>. Assert the
     // bolded labels survived the markdown pass.
-    expect(screen.getByText('Tengo:')).toBeInTheDocument();
-    expect(screen.getByText('Me falta:')).toBeInTheDocument();
+    expect(screen.getByText('Available:')).toBeInTheDocument();
+    expect(screen.getByText('Missing:')).toBeInTheDocument();
 
     // Follow-up prompt (BEH-003 — awakening is not a dead-end monologue).
-    expect(screen.getByText('\u00bfEn qu\u00e9 trabajamos hoy?')).toBeInTheDocument();
+    expect(screen.getByText('What are we working on today?')).toBeInTheDocument();
   });
 
   it('falls back to the default card chrome for non-info variants', () => {

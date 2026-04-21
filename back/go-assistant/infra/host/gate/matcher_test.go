@@ -133,6 +133,42 @@ func TestNormaliseCommand(t *testing.T) {
 	}
 }
 
+// TestClassify_ShellWrapperUnwrap covers the `sh -c <inner>` unwrap: the
+// wrapper must not change the risk band a single inner command would have
+// earned directly, and compound inner scripts MUST stay RiskUnknown so
+// HITL still gates them.
+func TestClassify_ShellWrapperUnwrap(t *testing.T) {
+	p := defaultTestPolicy(t)
+	cases := []struct {
+		name string
+		cmd  string
+		want RiskBand
+	}{
+		{"safe inner via sh -c", "sh -c which python3", RiskSafe},
+		{"safe inner via /bin/sh -c", "/bin/sh -c which python3", RiskSafe},
+		{"safe inner via bash -c", "bash -c 'ls /tmp'", RiskSafe},
+		{"caution inner via sh -c", "/bin/sh -c gcc hello.c", RiskCaution},
+		{"forbidden inner still forbidden", "/bin/sh -c rm -rf /", RiskForbidden},
+		{"compound && stays unknown", "/bin/sh -c which python3 && ls", RiskUnknown},
+		{"compound ; stays unknown", "/bin/sh -c which x; which y", RiskUnknown},
+		{"pipe stays unknown", "/bin/sh -c ls | grep foo", RiskUnknown},
+		{"redirect stays unknown", "/bin/sh -c echo hi > /tmp/x", RiskUnknown},
+		{"cmd substitution stays unknown", "/bin/sh -c echo $(whoami)", RiskUnknown},
+		{"backtick stays unknown", "/bin/sh -c echo `whoami`", RiskUnknown},
+		{"wrong flag no unwrap", "/bin/sh -x ls", RiskUnknown},
+		{"non-shell binary no unwrap", "gcc -c hello.c", RiskCaution},
+		{"zsh not recognised as wrapper", "zsh -c ls", RiskUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := p.Classify(tc.cmd)
+			if got != tc.want {
+				t.Errorf("Classify(%q) = %s, want %s", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
 // FuzzMatcherBypass is the property-based regression check from spec §10.
 // A forbidden command must remain forbidden under trivial whitespace /
 // quoting obfuscation.

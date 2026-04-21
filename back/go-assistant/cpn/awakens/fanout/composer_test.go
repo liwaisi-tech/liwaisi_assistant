@@ -29,9 +29,10 @@ func TestCompose_3Probes_ShapeInvariants(t *testing.T) {
 		t.Fatalf("Compose returned error: %v", err)
 	}
 
-	// (a) len(Transitions) == 4 (3 probes + 1 reducer).
-	if got := len(c.Transitions); got != 4 {
-		t.Fatalf("expected 4 transitions (3 probes + reducer), got %d", got)
+	// (a) len(Transitions) == 3 LLM probes + 8 mandatory info probes + 1 reducer = 12.
+	expectedProbes := 3 + len(mandatoryInfoProbes())
+	if got, want := len(c.Transitions), expectedProbes+1; got != want {
+		t.Fatalf("expected %d transitions (%d probes + reducer), got %d", want, expectedProbes, got)
 	}
 
 	// (b) Each probe transition has a single output place.
@@ -127,10 +128,11 @@ func TestCompose_SeedsTriggerAndPlan(t *testing.T) {
 		t.Fatalf("Compose error: %v", err)
 	}
 	// One trigger token per probe — each probe transition consumes from
-	// the shared trigger place, so it must be seeded with len(probes)
-	// tokens to prevent sub-CPN deadlock.
-	if got, want := c.Places[PlaceTriggerID].Len(), len(plan.Probes); got != want {
-		t.Fatalf("trigger seed count: got %d want %d", got, want)
+	// the shared trigger place, so it must be seeded with (len(probes) +
+	// mandatoryInfoProbes) tokens to prevent sub-CPN deadlock.
+	wantTokens := len(plan.Probes) + len(mandatoryInfoProbes())
+	if got := c.Places[PlaceTriggerID].Len(); got != wantTokens {
+		t.Fatalf("trigger seed count: got %d want %d", got, wantTokens)
 	}
 	if c.Places[PlacePlanID].Len() != 1 {
 		t.Fatalf("plan place must be seeded with 1 token")
@@ -193,9 +195,10 @@ func TestCompose_DedupesDuplicateIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compose error: %v", err)
 	}
-	// Expect 2 probe transitions + 1 reducer = 3 transitions total.
-	if got := len(c.Transitions); got != 3 {
-		t.Fatalf("expected 3 transitions, got %d", got)
+	// 2 dedup'd LLM probes + 8 mandatory info probes + 1 reducer.
+	want := 2 + len(mandatoryInfoProbes()) + 1
+	if got := len(c.Transitions); got != want {
+		t.Fatalf("expected %d transitions, got %d", want, got)
 	}
 }
 

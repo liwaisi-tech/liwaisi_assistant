@@ -25,6 +25,18 @@ func (p *HostPolicy) Classify(command string) (RiskBand, int) {
 		return RiskUnknown, -1
 	}
 	norm := normaliseCommand(command)
+	// Shell-wrapper unwrap: when the command is `sh -c <inner>` (or bash,
+	// any -c / -lc variant), classify the INNER script's intent — not the
+	// literal wrapper. A `which python3` wrapped in `sh -c` should be as
+	// safe as `which python3` directly. Compound scripts (pipes, chains,
+	// redirects, command substitution) refuse to unwrap and fall through
+	// to RiskUnknown so the operator still sees a HITL prompt for
+	// anything non-trivial. Wrappers like `sh -c "rm -rf /"` keep firing
+	// the forbidden short-circuit because the inner still matches
+	// forbidden_patterns after unwrap.
+	if inner, ok := unwrapShellWrapper(norm); ok {
+		norm = inner
+	}
 
 	if ok, idx := p.forbidden.matches(norm); ok {
 		return RiskForbidden, idx
@@ -125,6 +137,73 @@ func unquote(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+// unwrapShellWrapper detects `sh -c <inner>` / `bash -c <inner>` and returns
+// the inner script when it is a single command. Returns ("", false) when
+// the command is not a recognised wrapper OR when the inner script
+// contains shell composition primitives (pipes, redirects, chains, command
+// substitution) — the caller then treats the whole command as unknown and
+// lets HITL gate it. Keeping the "compound → no unwrap" rule means the
+// unwrap never silently escalates privileges: only a literal single
+// command passes through, which is the exact intent a pattern-based
+// classifier can reason about.
+//
+// input is expected to already be normalised by normaliseCommand (leading
+// whitespace stripped, internal whitespace collapsed, argv[0] unquoted).
+func unwrapShellWrapper(normCmd string) (string, bool) {
+	head, rest, ok := splitFirstToken(normCmd)
+	if !ok || rest == "" {
+		return "", false
+	}
+	if !isShellWrapperBinary(head) {
+		return "", false
+	}
+	flagTok, inner, ok := splitFirstToken(rest)
+	if !ok || inner == "" {
+		return "", false
+	}
+	if flagTok != "-c" && flagTok != "-lc" {
+		return "", false
+	}
+	inner = strings.TrimSpace(inner)
+	inner = unquote(inner)
+	if inner == "" {
+		return "", false
+	}
+	if containsShellComposition(inner) {
+		return "", false
+	}
+	return inner, true
+}
+
+// isShellWrapperBinary reports whether head is one of the POSIX shell
+// binaries we recognise for unwrap. Kept deliberately narrow: exotic
+// shells (zsh, fish, ksh) fall through to literal classification so
+// their argument conventions are never assumed.
+func isShellWrapperBinary(head string) bool {
+	switch head {
+	case "sh", "bash",
+		"/bin/sh", "/bin/bash",
+		"/usr/bin/sh", "/usr/bin/bash":
+		return true
+	}
+	return false
+}
+
+// containsShellComposition reports whether s uses any shell composition
+// operator that would execute MORE than the single command implied by the
+// first token. These are precisely the primitives that could smuggle a
+// dangerous call past the pattern-based classifier if we unwrapped them
+// (e.g., `which python3 && rm -rf /`). Matches awakens.introspectionDenyTokens
+// but lives here to keep infra/host/gate free of cpn/awakens imports.
+func containsShellComposition(s string) bool {
+	for _, tok := range []string{"&&", "||", ";", "|", ">>", ">", "<", "$(", "`"} {
+		if strings.Contains(s, tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // CommandKey is the stable hashing input for the audit log's

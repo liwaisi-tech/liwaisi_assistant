@@ -508,16 +508,13 @@ func coerceReport(payload any) (AwakeningReport, error) {
 	}
 }
 
-// reportFromFanout bridges the probe-fanout reducer's minimal report (just
-// binaries + capabilities + notes) into the full awakens.AwakeningReport
-// the downstream persist / register / emit transitions consume. The
-// probe-layer does not produce OS / Shell / Identity metadata — those
-// sections are left zero-valued and enriched by later work
-// (see spec-architecture-brae-awakening-probe-fanout.md §7 "Rationale &
-// Context"). Validate() on the returned report is deliberately NOT called
-// here because the probe-only slice is legitimately partial; downstream
-// consumers that need validation call Validate() themselves on a merged
-// report.
+// reportFromFanout bridges the probe-fanout reducer's report into the full
+// awakens.AwakeningReport the downstream persist / register / emit transitions
+// consume. The probe layer now delivers OS / Shell / Identity data (from
+// composer-injected info probes) so we copy those through rather than faking
+// defaults. Validate() is deliberately NOT called here — the probe-only slice
+// is legitimately partial on cold probes; downstream consumers that need
+// validation call Validate() themselves on the final report.
 func reportFromFanout(r fanout.AwakeningReport) AwakeningReport {
 	present := make([]AwakeningTool, 0, len(r.Binaries))
 	absent := make([]string, 0)
@@ -540,26 +537,95 @@ func reportFromFanout(r fanout.AwakeningReport) AwakeningReport {
 	for _, tr := range r.ToolsRegister {
 		regs = append(regs, AwakeningToolRegister{Name: tr.Name, Basis: tr.Basis})
 	}
-	// Fill mandatory identity fields with container-safe defaults so
-	// AwakeningReport.Validate() passes downstream. The probe-fanout v0
-	// plan schema does not yet carry OS / Shell / Identity probes
-	// (follow-up: identity-kind probes or an os_hint block in the plan).
-	// The liwaisi backend deploys on Linux containers with /bin/sh as the
-	// gate-mandated POSIX shell, so these defaults are accurate today.
+
+	osOut := AwakeningOS{
+		Name:    strings.TrimSpace(r.OS.Name),
+		Version: strings.TrimSpace(r.OS.Version),
+		Kernel:  strings.TrimSpace(r.OS.Kernel),
+		Arch:    strings.TrimSpace(r.OS.Arch),
+	}
+	if osOut.Name == "" {
+		osOut.Name = "Linux"
+	}
+	if osOut.Arch == "" {
+		osOut.Arch = runtime.GOARCH
+	}
+
+	shellOut := AwakeningShell{
+		Path:           strings.TrimSpace(r.Shell.Path),
+		Implementation: strings.TrimSpace(r.Shell.Implementation),
+	}
+	if shellOut.Path == "" {
+		shellOut.Path = "/bin/sh"
+	}
+
+	identityOut := AwakeningIdentity{
+		User: strings.TrimSpace(r.Identity.User),
+		UID:  r.Identity.UID,
+		GID:  r.Identity.GID,
+		Home: strings.TrimSpace(r.Identity.Home),
+	}
+
 	out := AwakeningReport{
-		OS:            AwakeningOS{Name: "Linux", Arch: runtime.GOARCH},
-		Shell:         AwakeningShell{Path: "/bin/sh"},
+		OS:            osOut,
+		Shell:         shellOut,
+		Identity:      identityOut,
 		PresentTools:  present,
 		AbsentTools:   absent,
 		Capabilities:  caps,
 		ToolsRegister: regs,
-	}
-	if len(r.Notes) > 0 {
-		// Fold notes into NarrativeMD so persist-layer observability keeps
-		// them without inventing a new AwakeningReport.Notes field.
-		out.NarrativeMD = "probe notes:\n- " + strings.Join(r.Notes, "\n- ")
+		NarrativeMD:   buildNarrative(osOut, shellOut, identityOut, r.Notes),
 	}
 	return out
+}
+
+// buildNarrative composes the short Spanish headline the A2UI first-turn card
+// uses. Pulls OS / shell / identity data first so the card never leads with
+// "probe notes:" (previous bug) and always tells the user what brae woke up in.
+func buildNarrative(os AwakeningOS, shell AwakeningShell, ident AwakeningIdentity, notes []string) string {
+	var b strings.Builder
+	b.WriteString("Woke up on ")
+	b.WriteString(os.Name)
+	if os.Version != "" {
+		b.WriteByte(' ')
+		b.WriteString(os.Version)
+	}
+	if os.Arch != "" {
+		b.WriteString(" (")
+		b.WriteString(os.Arch)
+		b.WriteByte(')')
+	}
+	if os.Kernel != "" {
+		b.WriteString(", kernel ")
+		b.WriteString(os.Kernel)
+	}
+	b.WriteString(".")
+	if shell.Path != "" {
+		b.WriteString(" Shell: ")
+		b.WriteString(shell.Path)
+		if shell.Implementation != "" {
+			b.WriteString(" (")
+			b.WriteString(shell.Implementation)
+			b.WriteByte(')')
+		}
+		b.WriteByte('.')
+	}
+	if ident.User != "" {
+		b.WriteString(" User: ")
+		b.WriteString(ident.User)
+		if ident.Home != "" {
+			b.WriteString(" (home ")
+			b.WriteString(ident.Home)
+			b.WriteByte(')')
+		}
+		b.WriteByte('.')
+	}
+	if len(notes) > 0 {
+		b.WriteString("\nNotes: ")
+		b.WriteString(strings.Join(notes, "; "))
+		b.WriteByte('.')
+	}
+	return b.String()
 }
 
 // ── Tool-registry context plumbing ──────────────────────────────────────────

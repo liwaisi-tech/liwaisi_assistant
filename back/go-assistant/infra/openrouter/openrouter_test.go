@@ -1891,10 +1891,10 @@ func TestBuildModelRegistry_IgnoresEnv(t *testing.T) {
 }
 
 // TestProductDefaultModel asserts REQ-CFG-001: PRODUCT_DEFAULT_MODEL is a
-// compile-time constant pinned to Gemini 3 Flash Preview.
+// compile-time constant pinned to Gemini 2.5 Flash (GA).
 func TestProductDefaultModel(t *testing.T) {
-	if PRODUCT_DEFAULT_MODEL != "google/gemini-3-flash-preview" {
-		t.Fatalf("PRODUCT_DEFAULT_MODEL = %q, want google/gemini-3-flash-preview", PRODUCT_DEFAULT_MODEL)
+	if PRODUCT_DEFAULT_MODEL != "google/gemini-2.5-flash" {
+		t.Fatalf("PRODUCT_DEFAULT_MODEL = %q, want google/gemini-2.5-flash", PRODUCT_DEFAULT_MODEL)
 	}
 	for role, model := range DefaultModelRegistry {
 		if model != PRODUCT_DEFAULT_MODEL {

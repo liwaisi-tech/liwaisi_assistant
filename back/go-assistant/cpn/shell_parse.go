@@ -86,6 +86,62 @@ func ParseShellInvocation(tool string, args any) (command string, ok bool) {
 	return stringifyFallback(args), false
 }
 
+// DeriveHostGateOp builds a GateOp from a system-tool invocation
+// (bash_exec, file_read, file_write) so the HOST·HITL gate can classify
+// the call with full fidelity. Returns ok=false for tools that are not
+// host-gated — callers should fall back to generic tool handling.
+//
+// For bash_exec the full argv is joined into op.Command so the classifier
+// sees e.g. "/bin/sh -c ls /bin" instead of the bare wrapper "/bin/sh".
+// Without this, every shell invocation would be classified as RiskUnknown
+// and the approve-and-remember pattern would key only on the wrapper.
+func DeriveHostGateOp(toolName string, args any) (GateOp, bool) {
+	raw, ok := rawArgsJSON(args)
+	switch toolName {
+	case "bash_exec":
+		if !ok {
+			return GateOp{}, false
+		}
+		var parsed struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Command == "" {
+			return GateOp{}, false
+		}
+		full := parsed.Command
+		if len(parsed.Args) > 0 {
+			full = parsed.Command + " " + strings.Join(parsed.Args, " ")
+		}
+		return GateOp{Kind: "exec", Command: full}, true
+
+	case "file_read":
+		if !ok {
+			return GateOp{}, false
+		}
+		var parsed struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Path == "" {
+			return GateOp{}, false
+		}
+		return GateOp{Kind: "read_file", Path: parsed.Path}, true
+
+	case "file_write":
+		if !ok {
+			return GateOp{}, false
+		}
+		var parsed struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Path == "" {
+			return GateOp{}, false
+		}
+		return GateOp{Kind: "write_file", Path: parsed.Path}, true
+	}
+	return GateOp{}, false
+}
+
 func rawArgsJSON(args any) ([]byte, bool) {
 	if args == nil {
 		return nil, false

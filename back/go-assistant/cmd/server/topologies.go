@@ -121,20 +121,20 @@ func parseClassified(tokens []*cpn.Token) (classifierResult, bool) {
 	return classifierResult{}, false
 }
 
-// guardDirectConversation fires t-direct when the classifier output is neither
-// "task" nor "manage-models". The manage-models intent routes through its own
-// topology fragment (manage-models-flow, REQ-GAP-CPN-001) and must NOT be
-// hijacked by t-direct — otherwise a "lista mis modelos" utterance would get a
-// free-form chat reply instead of the ModelCardList surface.
+// guardDirectConversation fires t-direct when the classifier output is not a
+// task. manage-models is classified in the main topology but never dispatched
+// to its dedicated manage-models-flow fragment today; without a catch here
+// those tokens would stall p-classified and deadlock the run ("no enabled
+// transitions and no terminal marking"). Until the dispatcher ships we route
+// manage-models through t-direct so the user still gets an assistant reply.
+// See cmd/server/topologies_model_registry.go for the fragment that will
+// eventually own that intent.
 func guardDirectConversation(tokens []*cpn.Token) bool {
 	r, ok := parseClassified(tokens)
 	if !ok {
 		return true // default to conversation on parse failure
 	}
 	if strings.EqualFold(r.Intent, "task") {
-		return false
-	}
-	if strings.EqualFold(r.Intent, "manage-models") {
 		return false
 	}
 	return true

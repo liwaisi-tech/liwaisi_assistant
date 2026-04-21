@@ -411,12 +411,26 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 		default:
 		}
 
-		// Append the assistant message with tool calls.
-		assistantMsg := &LLMMessage{
-			Role:    "assistant",
-			Content: resp.Content,
+		// Append the assistant message with tool calls. When the LLM returns
+		// multiple tool_calls in a single turn, OpenAI/Gemini require ONE
+		// assistant message carrying all of them (followed by N tool
+		// messages, one per tool_call_id). LLMMessage.ToolCall is singular,
+		// so we emit one assistant message per tool_call and let
+		// formatChatMessages serialise each as its own assistant+tool pair.
+		// Carrying the tool_call on the assistant message is mandatory:
+		// without it the subsequent tool/role message has no matching
+		// tool_call_id and Gemini returns HTTP 400 "invalid request
+		// parameters" on the re-call.
+		for idx, tc := range resp.ToolCalls {
+			am := &LLMMessage{Role: "assistant", ToolCall: tc}
+			if idx == 0 {
+				am.Content = resp.Content // preserve any text the LLM emitted
+			}
+			messages = append(messages, am)
 		}
-		messages = append(messages, assistantMsg)
+		if len(resp.ToolCalls) == 0 {
+			messages = append(messages, &LLMMessage{Role: "assistant", Content: resp.Content})
+		}
 
 		// Execute each tool call.
 		for _, tc := range resp.ToolCalls {
@@ -458,10 +472,61 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 				Timestamp: startTime,
 			})
 
+			// Single-gate routing: for host-gated system tools (bash_exec,
+			// file_read, file_write) the HOST·HITL gate owns the approval
+			// surface end-to-end. We pre-check the gate here so that
+			// approve-and-remember actually persists (HandleRequiresHITL
+			// writes the learned safe-pattern + stamps the first-run
+			// ledger). Without this, fire_llm's generic tool-HITL card
+			// would intercept the approval but never reach the gate, and
+			// the subsequent gate.Check inside the executor would still
+			// return ErrRequiresHITL forever.
+			hostGated := false
+			if gateOp, derived := DeriveHostGateOp(tc.ToolName, tc.Arguments); derived &&
+				c.HostRuntime != nil && c.HostRuntime.Gate != nil && c.HostRuntime.HITLHandler != nil {
+				hostGated = true
+				gateCtx := WithSessionID(ctx, c.SessionID)
+				if gateErr := c.HostRuntime.Gate.Check(gateCtx, gateOp); gateErr != nil {
+					handled := c.HostRuntime.HITLHandler.HandleHITL(ctx, t, c, gateOp, gateErr)
+					if handled != nil {
+						// Denied — report back to the LLM as a tool error and
+						// skip executor. Emit resolved so the UI clears.
+						c.emit(&Event{
+							Type:           EventHITLResolved,
+							TransitionID:   t.ID,
+							TransitionKind: NodeKindTool,
+							SessionID:      c.SessionID,
+							CPNID:          c.ID,
+							Payload:        "rejected",
+							Timestamp:      time.Now(),
+						})
+						messages = append(messages, &LLMMessage{
+							Role: "tool",
+							ToolResult: &LLMToolResult{
+								ToolCallID: tc.ID,
+								Content:    "Tool execution rejected by user",
+							},
+						})
+						continue
+					}
+					c.emit(&Event{
+						Type:           EventHITLResolved,
+						TransitionID:   t.ID,
+						TransitionKind: NodeKindTool,
+						SessionID:      c.SessionID,
+						CPNID:          c.ID,
+						Payload:        "approved",
+						Timestamp:      time.Now(),
+					})
+				}
+			}
+
 			// HITL gate: tools with RequiresHITL block until human approval.
 			// TransitionID uses t.ID (the LLM transition) so the frontend can
 			// resolve via POST /hitl/{t.ID}, which maps to t.HITLConfig.Channel.
-			if toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
+			// Host-gated tools (handled above) skip this path to avoid a
+			// duplicate approval card.
+			if !hostGated && toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
 				// Emit the host.approval A2UI surface as a stream chunk so the
 				// frontend renders HostApprovalCard with Approve/Reject buttons.
 				// This mirrors the custom-surface pattern used by t-review.

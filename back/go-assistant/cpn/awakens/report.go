@@ -130,15 +130,86 @@ func (r *AwakeningReport) Validate() error {
 }
 
 // ParseReport decodes the LLM's structured output and runs Validate().
+// Tolerates prose-wrapped JSON (e.g. "I'll inspect... {json}" or markdown
+// code fences) which Gemini and other models emit when RequireJSON cannot
+// be set — OpenRouter rejects response_format=json_object together with
+// tools, so we rely on prompt discipline + best-effort extraction.
 func ParseReport(raw []byte) (AwakeningReport, error) {
+	candidate := raw
 	var r AwakeningReport
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return AwakeningReport{}, fmt.Errorf("%w: decode: %v", ErrInvalidReport, err)
+	if err := json.Unmarshal(candidate, &r); err != nil {
+		extracted, ok := extractJSONObject(raw)
+		if !ok {
+			return AwakeningReport{}, fmt.Errorf("%w: decode: %v; raw[:%d]=%q",
+				ErrInvalidReport, err, previewLen(raw), previewBytes(raw))
+		}
+		candidate = extracted
+		if err := json.Unmarshal(candidate, &r); err != nil {
+			return AwakeningReport{}, fmt.Errorf("%w: decode after extract: %v; extracted[:%d]=%q",
+				ErrInvalidReport, err, previewLen(candidate), previewBytes(candidate))
+		}
 	}
 	if err := r.Validate(); err != nil {
 		return AwakeningReport{}, err
 	}
 	return r, nil
+}
+
+// previewLen caps the logged preview so we do not spill a 4 KB blob into
+// structured logs on every decode error.
+func previewLen(b []byte) int {
+	if len(b) > 240 {
+		return 240
+	}
+	return len(b)
+}
+
+func previewBytes(b []byte) []byte {
+	return b[:previewLen(b)]
+}
+
+// extractJSONObject scans for the first balanced top-level JSON object in
+// the raw LLM output. Skips markdown fences and leading prose. Returns the
+// slice and true when a balanced {...} is found.
+func extractJSONObject(raw []byte) ([]byte, bool) {
+	start := -1
+	depth := 0
+	inString := false
+	escape := false
+	for i, b := range raw {
+		if start == -1 {
+			if b == '{' {
+				start = i
+				depth = 1
+			}
+			continue
+		}
+		if escape {
+			escape = false
+			continue
+		}
+		if b == '\\' && inString {
+			escape = true
+			continue
+		}
+		if b == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch b {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return raw[start : i+1], true
+			}
+		}
+	}
+	return nil, false
 }
 
 // envRedactRe matches env keys that must NOT be persisted (SEC-005/SEC-006).

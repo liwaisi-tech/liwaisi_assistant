@@ -85,7 +85,9 @@ func TestClassifierResult_ParsesManageModelsIntent(t *testing.T) {
 	}
 }
 
-// Guard behavior: t-direct must NOT hijack manage-models (REQ-GAP-CPN-002).
+// Guard behavior: t-direct catches manage-models until the dispatcher ships
+// (was "blocks" per REQ-GAP-CPN-002, but blocking stalled the CPN on intents
+// the manage-models fragment cannot yet be dispatched to — deadlock fix).
 func TestGuardDirectConversation_SkipsManageModels(t *testing.T) {
 	cases := []struct {
 		name string
@@ -93,7 +95,7 @@ func TestGuardDirectConversation_SkipsManageModels(t *testing.T) {
 		want bool
 	}{
 		{"conversation_fires_direct", `{"intent":"conversation"}`, true},
-		{"manage_models_blocks_direct", `{"intent":"manage-models","manage_kind":"list"}`, false},
+		{"manage_models_now_catches_direct", `{"intent":"manage-models","manage_kind":"list"}`, true},
 		{"task_blocks_direct", `{"intent":"task"}`, false},
 		{"garbage_defaults_direct", `not-json`, true},
 	}

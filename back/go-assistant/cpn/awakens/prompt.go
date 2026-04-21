@@ -33,8 +33,12 @@ fence, no commentary):
   ]
 }
 
+A separate fixed set of metadata probes (OS release, kernel, arch, shell,
+user, id, home, hostname) is ALREADY appended by the composer — you do NOT
+need to include those. Focus your plan on tool-presence and capability probes.
+
 Rules for the plan:
-  1. At most 16 probes total (MaxProbes=16). Pick the most informative set.
+  1. At most 12 probes total. Pick the most informative set.
   2. Each probe "id" MUST be a short lowercase slug; prefer the "cmd-<name>"
      pattern (e.g. "cmd-sh", "cmd-busybox", "cmd-python3").
   3. "kind" is "binary" for tool-presence checks, "capability" for feature

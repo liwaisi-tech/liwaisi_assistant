@@ -3,7 +3,10 @@ package fanout
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -74,6 +77,9 @@ func ReduceResults(results []AwakeningProbeResult) AwakeningReport {
 	}
 
 	for _, r := range sorted {
+		slog.Debug("awakening reducer probe",
+			"probe_id", r.ProbeID, "kind", r.Kind, "target", r.Target,
+			"exit", r.ExitCode, "stdout_preview", previewString(r.Stdout, 120), "gate_denied", r.GateDenied)
 		switch r.Kind {
 		case ProbeKindBinary:
 			report.Binaries = append(report.Binaries, AwakeningReportBinary{
@@ -91,6 +97,8 @@ func ReduceResults(results []AwakeningProbeResult) AwakeningReport {
 				Satisfied: r.ExitCode == 0,
 				Evidence:  evidence,
 			})
+		case ProbeKindInfo:
+			applyInfoProbe(&report, r)
 		}
 		// Notes for diagnostic outcomes — ordered by the outer loop so
 		// they inherit the sorted-ID ordering.
@@ -104,6 +112,77 @@ func ReduceResults(results []AwakeningProbeResult) AwakeningReport {
 		}
 	}
 	return report
+}
+
+// idLineRE parses the first fields of `id` output: uid=NNN(name) gid=NNN(grp).
+var idLineRE = regexp.MustCompile(`uid=(\d+)(?:\(([^)]+)\))?\s+gid=(\d+)`)
+
+// applyInfoProbe folds a single info-kind result into the structured
+// OS/Shell/Identity fields of report. A failed probe (exit != 0) leaves the
+// corresponding field untouched so stale zero values never replace real data
+// that a sibling probe already wrote.
+func applyInfoProbe(report *AwakeningReport, r AwakeningProbeResult) {
+	stdout := strings.TrimSpace(r.Stdout)
+	if r.ExitCode != 0 || stdout == "" {
+		return
+	}
+	switch r.Target {
+	case InfoTargetOSName:
+		// os-release key=value lines. Prefer NAME / VERSION_ID.
+		for _, line := range strings.Split(stdout, "\n") {
+			key, val, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			val = strings.Trim(strings.TrimSpace(val), `"`)
+			switch strings.TrimSpace(key) {
+			case "NAME":
+				if report.OS.Name == "" {
+					report.OS.Name = val
+				}
+			case "VERSION_ID":
+				if report.OS.Version == "" {
+					report.OS.Version = val
+				}
+			}
+		}
+	case InfoTargetOSKernel:
+		report.OS.Kernel = firstLine(stdout)
+	case InfoTargetOSArch:
+		report.OS.Arch = firstLine(stdout)
+	case InfoTargetShellPath:
+		report.Shell.Path = firstLine(stdout)
+	case InfoTargetBusyboxApp:
+		report.Shell.Implementation = firstLine(stdout)
+	case InfoTargetUser:
+		report.Identity.User = firstLine(stdout)
+	case InfoTargetIdentity:
+		m := idLineRE.FindStringSubmatch(firstLine(stdout))
+		if len(m) >= 4 {
+			if uid, err := strconv.Atoi(m[1]); err == nil {
+				report.Identity.UID = uid
+			}
+			if report.Identity.User == "" && m[2] != "" {
+				report.Identity.User = m[2]
+			}
+			if gid, err := strconv.Atoi(m[3]); err == nil {
+				report.Identity.GID = gid
+			}
+		}
+	case InfoTargetHome:
+		report.Identity.Home = firstLine(stdout)
+	case InfoTargetHostname:
+		report.Identity.Hostname = firstLine(stdout)
+	}
+}
+
+// previewString clips s to at most n chars for log previews.
+func previewString(s string, n int) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " | ")
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // firstLine returns the first non-empty line of s, trimmed of trailing

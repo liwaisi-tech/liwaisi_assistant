@@ -26,7 +26,16 @@ import (
 )
 
 // MaxProbes is the fanout hard cap (CON-002).
-const MaxProbes = 16
+//
+// Composed plans total = LLM-emitted probes + mandatoryInfoProbes (8 entries).
+// The LLM prompt bounds its own emission to MaxPlanProbes so the union always
+// fits under MaxProbes.
+const MaxProbes = 24
+
+// MaxPlanProbes caps the LLM-emitted portion of the plan. The prompt enforces
+// this number so the composer-injected info probes (metadata: OS, shell,
+// identity) always have room below the MaxProbes ceiling.
+const MaxPlanProbes = 12
 
 // MaxCommandLen is the per-probe command size ceiling (CON-003).
 const MaxCommandLen = 256
@@ -45,6 +54,27 @@ const ProbeKindBinary = "binary"
 
 // ProbeKindCapability classifies a probe as a derived capability check.
 const ProbeKindCapability = "capability"
+
+// ProbeKindInfo classifies a probe as a metadata probe (OS, shell, identity).
+// Info probes are composer-injected rather than LLM-emitted — the composer
+// always appends a fixed set so the report reliably carries
+// AwakeningReportOS/Shell/Identity even when the LLM plan omits them.
+const ProbeKindInfo = "info"
+
+// Well-known info-probe targets consumed by the reducer. Values are the
+// canonical target string; the reducer switches on these to populate the
+// structured OS / Shell / Identity fields of AwakeningReport.
+const (
+	InfoTargetOSName     = "os.name"
+	InfoTargetOSKernel   = "os.kernel"
+	InfoTargetOSArch     = "os.arch"
+	InfoTargetShellPath  = "shell.path"
+	InfoTargetIdentity   = "identity.id"
+	InfoTargetUser       = "identity.user"
+	InfoTargetHome       = "identity.home"
+	InfoTargetHostname   = "identity.hostname"
+	InfoTargetBusyboxApp = "shell.implementation"
+)
 
 // TimeoutExitCode is the reserved ExitCode value the executor uses to signal
 // "probe timed out" (REQ-004).
@@ -123,14 +153,41 @@ type AwakeningReportToolRegister struct {
 }
 
 // AwakeningReport is the reducer output emitted by the fanout sub-CPN. It
-// carries only the probe-derived slice of the final awakening snapshot; the
-// parent topology merges it with LLM-authored sections (OS, Shell, Identity,
-// ToolsRegister) before persisting.
+// carries the probe-derived slice of the final awakening snapshot. The
+// OS/Shell/Identity fields are populated from composer-injected info probes
+// (ProbeKindInfo) so the parent topology does not have to invent defaults.
+// LLM-authored sections (ToolsRegister) are still merged by the parent.
 type AwakeningReport struct {
 	Binaries      []AwakeningReportBinary       `json:"binaries"`
 	Capabilities  []AwakeningReportCapability   `json:"capabilities"`
+	OS            AwakeningReportOS             `json:"os,omitempty"`
+	Shell         AwakeningReportShell          `json:"shell,omitempty"`
+	Identity      AwakeningReportIdentity       `json:"identity,omitempty"`
 	Notes         []string                      `json:"notes,omitempty"`
 	ToolsRegister []AwakeningReportToolRegister `json:"tools_register"`
+}
+
+// AwakeningReportOS carries the OS section the reducer fills from info probes.
+type AwakeningReportOS struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+	Kernel  string `json:"kernel,omitempty"`
+	Arch    string `json:"arch,omitempty"`
+}
+
+// AwakeningReportShell carries the shell section.
+type AwakeningReportShell struct {
+	Path           string `json:"path,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
+}
+
+// AwakeningReportIdentity carries the running-process identity.
+type AwakeningReportIdentity struct {
+	User     string `json:"user,omitempty"`
+	UID      int    `json:"uid,omitempty"`
+	GID      int    `json:"gid,omitempty"`
+	Home     string `json:"home,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // Deps mirrors cpn/awakens.Deps but only with fields used during fanout.

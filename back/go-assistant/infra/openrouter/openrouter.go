@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -24,7 +25,7 @@ var _ cpn.LLMClient = (*Client)(nil)
 // at session resolve time via internal/app/session_service.go.
 //
 // When a future spec changes the default, edit this one line (CON-003).
-const PRODUCT_DEFAULT_MODEL = "google/gemini-3-flash-preview"
+const PRODUCT_DEFAULT_MODEL = "google/gemini-2.5-flash"
 
 // FALLBACK_MODEL is used when the resolved model returns ErrNotFound (404)
 // from OpenRouter — e.g. a preview slug is retired or a user preference
@@ -66,6 +67,7 @@ var AvailableModels = []string{
 	"google/gemma-4-31b-it",
 	"google/gemma-4-26b-a4b-it",
 	"google/gemini-3.1-flash-lite-preview",
+	"google/gemini-2.5-flash",
 	"google/gemini-2.5-flash-lite",
 	"google/gemini-2.0-flash-001",
 	// Z.ai
@@ -94,6 +96,7 @@ var modelCostTable = map[string][2]float64{
 	"anthropic/claude-sonnet-4-6":         {3.00, 15.00},
 	"anthropic/claude-haiku-4-5-20251001": {0.80, 4.00},
 	// Google
+	"google/gemini-2.5-flash":     {0.30, 2.50},
 	"google/gemini-2.0-flash-001": {0.10, 0.40},
 }
 
@@ -271,7 +274,15 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (llmResp cpn
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			slog.WarnContext(ctx, "openrouter 4xx",
+				"status", resp.StatusCode,
+				"model", resolvedModel,
+				"session_id", req.SessionID,
+				"body", string(bodyBytes),
+			)
+		}
 		mapped := mapHTTPStatusToError(resp.StatusCode)
 		// Fallback: retry once with FALLBACK_MODEL when the resolved model is
 		// unknown to OpenRouter. Skip if we are already on the fallback.
@@ -456,10 +467,7 @@ func (c *Client) resolveModel(model string) string {
 func formatChatMessages(msgs []*cpn.LLMMessage) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
-		msg := map[string]any{
-			"role":    m.Role,
-			"content": m.Content,
-		}
+		msg := map[string]any{"role": m.Role}
 		if m.ToolCall != nil {
 			msg["tool_calls"] = []map[string]any{{
 				"id":   m.ToolCall.ID,
@@ -469,11 +477,20 @@ func formatChatMessages(msgs []*cpn.LLMMessage) []map[string]any {
 					"arguments": string(m.ToolCall.Arguments),
 				},
 			}}
+			// Gemini-via-OpenRouter rejects assistant messages that carry
+			// both tool_calls and content:"". Emit content only when the
+			// model actually produced text alongside the tool call.
+			if m.Content != "" {
+				msg["content"] = m.Content
+			}
+		} else {
+			msg["content"] = m.Content
 		}
 		if m.ToolResult != nil {
 			msg["role"] = "tool"
 			msg["tool_call_id"] = m.ToolResult.ToolCallID
 			msg["content"] = m.ToolResult.Content
+			delete(msg, "tool_calls")
 		}
 		out = append(out, msg)
 	}

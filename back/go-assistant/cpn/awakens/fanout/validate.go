@@ -60,7 +60,7 @@ func validateProbe(idx int, p AwakeningProbeEntry) error {
 	// SEC-002: Kind must be one of the two recognised classifiers so the
 	// reducer routes the result deterministically.
 	switch p.Kind {
-	case ProbeKindBinary, ProbeKindCapability:
+	case ProbeKindBinary, ProbeKindCapability, ProbeKindInfo:
 	default:
 		return fmt.Errorf("%w: probe[%d] id=%q: kind=%q",
 			ErrInvalidProbeKind, idx, p.ID, p.Kind)

@@ -18,8 +18,8 @@ func TestPromptPlan_ContainsExample(t *testing.T) {
 	if !strings.Contains(SystemPromptPlan, "AwakeningProbePlan") && !strings.Contains(SystemPromptPlan, `"probes"`) {
 		t.Error("SystemPromptPlan should reference the probe-plan schema")
 	}
-	if !strings.Contains(SystemPromptPlan, "MaxProbes=16") && !strings.Contains(SystemPromptPlan, "16 probes") {
-		t.Error("SystemPromptPlan should advertise the MaxProbes=16 cap")
+	if !strings.Contains(SystemPromptPlan, "12 probes") {
+		t.Error("SystemPromptPlan should advertise the LLM-plan cap (12 probes)")
 	}
 }
 

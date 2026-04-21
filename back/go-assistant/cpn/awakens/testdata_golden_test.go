@@ -29,7 +29,7 @@ var goldenTranscriptAlpine = []byte(`{
     { "name": "shell-exec", "basis": "sh" },
     { "name": "text-search", "basis": "grep" }
   ],
-  "narrative_md": "Desperté en Alpine 3.21 (aarch64, kernel 6.17). Shell es busybox sh.",
+  "narrative_md": "Woke up on Alpine 3.21 (aarch64, kernel 6.17). Shell: busybox sh.",
   "probe_trace": [
     { "cmd": "uname -a", "exit": 0 },
     { "cmd": "cat /etc/os-release", "exit": 0 },

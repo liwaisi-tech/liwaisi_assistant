@@ -30,6 +30,11 @@ func Compose(sessionID string, plan AwakeningProbePlan, deps Deps) (*cpn.CPN, er
 	if err := ValidatePlan(plan); err != nil {
 		return nil, err
 	}
+	plan = withMandatoryInfoProbes(plan)
+	// Re-validate the augmented plan so cap / field invariants still hold.
+	if err := ValidatePlan(plan); err != nil {
+		return nil, err
+	}
 	timeout := clampTimeout(plan.TimeoutPerProbeMs)
 
 	// Normalise probe IDs up-front. Duplicate IDs are disambiguated by
@@ -150,6 +155,63 @@ func seedFanout(c *cpn.CPN, plan AwakeningProbePlan) {
 			Payload: plan,
 		})
 	}
+}
+
+// mandatoryInfoProbes is the fixed set of metadata probes the composer
+// always adds when the LLM plan omits them. They populate AwakeningReport.OS,
+// .Shell, .Identity so downstream consumers (A2UI card, environment-awareness
+// block injected into later turns) never have to fall back to defaults.
+//
+// All commands are introspection-class (auto-approved by the Host-gate);
+// each one uses a POSIX idiom that is safe on busybox as well as coreutils.
+func mandatoryInfoProbes() []AwakeningProbeEntry {
+	return []AwakeningProbeEntry{
+		{ID: "info-os-name", Kind: ProbeKindInfo, Target: InfoTargetOSName, Command: "cat /etc/os-release"},
+		{ID: "info-os-kernel", Kind: ProbeKindInfo, Target: InfoTargetOSKernel, Command: "uname -r"},
+		{ID: "info-os-arch", Kind: ProbeKindInfo, Target: InfoTargetOSArch, Command: "uname -m"},
+		{ID: "info-shell-path", Kind: ProbeKindInfo, Target: InfoTargetShellPath, Command: "printenv SHELL"},
+		{ID: "info-user", Kind: ProbeKindInfo, Target: InfoTargetUser, Command: "whoami"},
+		{ID: "info-id", Kind: ProbeKindInfo, Target: InfoTargetIdentity, Command: "id"},
+		{ID: "info-home", Kind: ProbeKindInfo, Target: InfoTargetHome, Command: "printenv HOME"},
+		{ID: "info-hostname", Kind: ProbeKindInfo, Target: InfoTargetHostname, Command: "hostname"},
+	}
+}
+
+// withMandatoryInfoProbes appends every entry from mandatoryInfoProbes that is
+// not already covered (by ID or by Target) in plan.Probes. Fresh info probes
+// are deterministically ordered (the fixed list), which preserves the
+// NFR-002 deterministic-output guarantee.
+//
+// The plan cap (MaxProbes) is respected: any mandatory probe that would push
+// the total over MaxProbes is dropped, since structural validity must hold
+// for the call to succeed.
+func withMandatoryInfoProbes(plan AwakeningProbePlan) AwakeningProbePlan {
+	seenID := make(map[string]struct{}, len(plan.Probes))
+	seenTarget := make(map[string]struct{}, len(plan.Probes))
+	for _, p := range plan.Probes {
+		if p.ID != "" {
+			seenID[p.ID] = struct{}{}
+		}
+		if p.Target != "" {
+			seenTarget[p.Target] = struct{}{}
+		}
+	}
+	out := plan
+	out.Probes = make([]AwakeningProbeEntry, 0, len(plan.Probes)+len(mandatoryInfoProbes()))
+	out.Probes = append(out.Probes, plan.Probes...)
+	for _, p := range mandatoryInfoProbes() {
+		if _, ok := seenID[p.ID]; ok {
+			continue
+		}
+		if _, ok := seenTarget[p.Target]; ok {
+			continue
+		}
+		if len(out.Probes) >= MaxProbes {
+			break
+		}
+		out.Probes = append(out.Probes, p)
+	}
+	return out
 }
 
 // clampTimeout applies REQ-004: min(2s, plan.TimeoutPerProbeMs/1000), with a

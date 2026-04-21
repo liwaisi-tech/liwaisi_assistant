@@ -12,10 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"strings"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
@@ -29,12 +29,12 @@ const (
   "properties": {
     "command": {
       "type": "string",
-      "description": "REQUIRED. The executable to run. Always invoke a concrete binary as command=<name> with its flags in args=[...]. Examples: 'ls', 'uname', 'git', 'python3'. For multi-command pipelines use command='/bin/sh' with args=['-c','cmd1 && cmd2']. DO NOT use 'bash' — the runtime is Alpine and only /bin/sh is available. MUST NOT be empty."
+      "description": "REQUIRED. The executable to run. Always invoke a concrete binary as command=<name> with its flags in args=[...]. Examples: 'ls', 'uname', 'git', 'python3'. DO NOT use 'bash' — the runtime is Alpine and only /bin/sh is available. MUST NOT be empty."
     },
     "args": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Arguments passed to the command as a list. Example: args=['-la', '/tmp']. Do not inline args into the command string."
+      "description": "Arguments passed to the command as a list. Example: args=['-la', '/tmp']. Do not inline args into the command string. Issue one bash_exec per command. DO NOT chain commands with shell operators (&&, ||, ;, |, >, <, command substitution) — the host gate treats each compound chain as a novel command and will request HITL approval every time, even after the user clicked 'remember'. For a multi-step plan, emit sequential tool_calls; the runtime batches their approvals."
     },
     "cwd": {
       "type": "string",
@@ -80,9 +80,11 @@ const (
 }`
 )
 
-// buildHostContextPreamble formats a host capability preamble from the CPN's
-// p-host-capabilities place for injection into LLM system prompts (REQ-012).
-// Returns "" when no snapshot is present or the type assertion fails.
+// buildHostContextPreamble formats the canonical "## Environment awareness"
+// block (REQ-007 / PAT-003) from the CPN's p-host-capabilities place for
+// injection into every non-awakening LLM turn's system prompt. Returns "" when
+// no snapshot is present or the type assertion fails.
+//
 // Lives here (cmd/server/) rather than cpn/ to avoid cpn importing cpn/persist
 // (circular dependency — persist already imports cpn).
 func buildHostContextPreamble(c *cpn.CPN) string {
@@ -94,22 +96,7 @@ func buildHostContextPreamble(c *cpn.CPN) string {
 	if !ok {
 		return ""
 	}
-	var sb strings.Builder
-	sb.WriteString("SYSTEM CONTEXT — HOST ENVIRONMENT (read-only facts, do not expose raw to user unless asked):\n")
-	fmt.Fprintf(&sb, "- OS: %s %s (%s)\n", s.Kernel.OS, s.Kernel.Kernel, s.Kernel.Arch)
-	fmt.Fprintf(&sb, "- Hostname: %s\n", s.Identity.Hostname)
-	fmt.Fprintf(&sb, "- User: %s (uid=%d home=%s)\n", s.Identity.User, s.Identity.UID, s.Identity.Home)
-	fmt.Fprintf(&sb, "- CPU: %d cores | RAM: %d MB\n", s.Kernel.CPUCount, s.Kernel.MemMB)
-	var presentBins []string
-	for _, b := range s.Binaries {
-		if b.Present {
-			presentBins = append(presentBins, b.Name+":"+b.Path)
-		}
-	}
-	if len(presentBins) > 0 {
-		fmt.Fprintf(&sb, "- Present binaries: %s\n", strings.Join(presentBins, ", "))
-	}
-	return sb.String()
+	return awakens.EnvironmentAwarenessBlock(s)
 }
 
 // registerSystemTools registers bash_exec, file_read, and file_write into
@@ -194,14 +181,16 @@ func makeBashExecExecutor(adapter cpn.HostAdapter, gate cpn.HostGate) tools.Tool
 			args.TimeoutSeconds = 30
 		}
 
-		// Gate check (REQ-002): bash_exec is NodeKindTool, not NodeKindBash,
-		// so fireBash's built-in gate is not involved. We enforce here.
-		if gate != nil {
-			op := cpn.GateOp{Kind: "exec", Command: args.Command}
-			if err := gate.Check(ctx, op); err != nil {
-				return cpn.Token{}, err
-			}
-		}
+		// Gate enforcement is owned end-to-end by fire_llm.go's pre-check,
+		// which calls HostRuntime.Gate.Check + HITLHandler.HandleHITL before
+		// dispatching to this executor. Re-checking here is NOT defense in
+		// depth: it re-evaluates the policy from scratch, so approve-once
+		// resolutions (and first-run approvals of RiskUnknown commands) get
+		// re-denied with the same ErrRequiresHITL the user just cleared —
+		// the yellow "host gate requires HITL" error documented in
+		// spec-process-bugfix-hitl-remember-and-bash-runtime.md. Trust the
+		// single gate.
+		_ = gate
 
 		req := cpn.ExecRequest{
 			Command:      args.Command,

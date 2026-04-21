@@ -32,7 +32,11 @@ func PeekHostSnapshot(c *CPN) (any, bool) {
 	if !ok || len(tokens) == 0 {
 		return nil, false
 	}
-	return tokens[0].Payload, true
+	// Latest-wins: a bootstrap placeholder may be deposited at session
+	// creation so the terminal check passes; the real snapshot from
+	// awakening (or a fresh cache) is deposited later. Callers expect the
+	// most recent snapshot, so return the tail token.
+	return tokens[len(tokens)-1].Payload, true
 }
 
 // SeedHostSnapshot creates (if needed) the well-known p-host-capabilities
