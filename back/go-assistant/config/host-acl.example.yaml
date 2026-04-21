@@ -1,0 +1,18 @@
+rules:
+  - binary: git
+    binary_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    flags: ["status"]
+    decision: allow
+    reason: "introspection: git status is read-only"
+
+  - binary: rm
+    binary_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    flags: ["-rf", "/"]
+    decision: deny
+    reason: "dangerous: recursive root deletion is forbidden"
+
+  - binary: kubectl
+    binary_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    flags: ["apply"]
+    decision: hitl
+    reason: "mutating: cluster apply requires human approval"
