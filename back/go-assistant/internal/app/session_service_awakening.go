@@ -12,6 +12,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/fanout"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
@@ -113,6 +114,15 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: LLM client not configured")
 	}
 
+	// SC-10 / SEC-004: every probe subprocess must run through bwrap or
+	// firejail. Detect up front so a missing wrapper fails fast with a
+	// stable error_class instead of 16 parallel probe-level failures.
+	sandbox, sbErr := fanout.DetectSandboxFn()
+	if sbErr != nil {
+		emitter.Failed(ctx, "sandbox.detect", "sandbox_missing", sbErr.Error())
+		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", sbErr)
+	}
+
 	// Build and run the awakens CPN.
 	deps := awakens.Deps{
 		Repository: s.hostCapabilityRepo,
@@ -136,6 +146,7 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		deps.HostAdapter = s.hostRuntime.Adapter
 		deps.HostGate = s.hostRuntime.Gate
 	}
+	deps.Sandbox = sandbox
 	_ = userID
 
 	runCtx, cancel := context.WithTimeout(ctx, awakeningDeadline)

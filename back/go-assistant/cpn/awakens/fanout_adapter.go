@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/fanout"
 )
 
 // This file is the typed interface adapter between the awakening topology
@@ -43,6 +44,10 @@ type ComposerDeps struct {
 	HostAdapter cpn.HostAdapter
 	HostGate    cpn.HostGate
 	Clock       func() time.Time
+	// Sandbox carries the detected wrapper argv prefix (SC-10 / SEC-004).
+	// The composer forwards it to fanout.Deps so every probe subprocess is
+	// wrapped.
+	Sandbox fanout.Sandbox
 	// OnProbeFired / OnProbeReduced carry the SC-08 observability hooks
 	// down into the fanout sub-CPN. Both are optional — the composer must
 	// wire them onto its Deps only when present.

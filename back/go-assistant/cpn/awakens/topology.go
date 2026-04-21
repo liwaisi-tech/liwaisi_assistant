@@ -83,6 +83,10 @@ type Deps struct {
 	// gate policy class the old inline shell used.
 	HostAdapter cpn.HostAdapter
 	HostGate    cpn.HostGate
+	// Sandbox is the detected probe-wrapper (SC-10 / REQ-1001/1002). Wired
+	// by the session service via DetectSandbox() before the topology runs.
+	// Plumbed to the composer so every probe subprocess is wrapped.
+	Sandbox fanout.Sandbox
 	// Composer builds the probe-fanout sub-CPN from the LLM's plan. When
 	// nil, t-awaken-probe-compose returns a diagnostic error so the
 	// awakening surfaces a clear configuration failure instead of
@@ -142,7 +146,7 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 		TransitionAwakenLLMBootstrap:     newLLMBootstrapTransition(awakenPrompt),
 		TransitionAwakenProbeCompose:     newProbeComposeTransition(sessionID, deps),
 		TransitionAwakenProbeInstantiate: newProbeInstantiateTransition(),
-		TransitionAwakenReport:           newReportTransition(deps.Emitter),
+		TransitionAwakenReport:           newReportTransition(deps),
 		TransitionAwakenPersist:          newPersistTransition(deps),
 		TransitionAwakenRegisterTools:    newRegisterToolsTransition(deps.Emitter),
 		TransitionAwakenEmitMessage:      newEmitMessageTransition(deps.Emitter),
@@ -256,6 +260,7 @@ func newProbeComposeTransition(sessionID string, deps Deps) *cpn.Transition {
 		cdeps := ComposerDeps{
 			HostAdapter: deps.HostAdapter,
 			HostGate:    deps.HostGate,
+			Sandbox:     deps.Sandbox,
 		}
 		if deps.Clock != nil {
 			clock := deps.Clock
@@ -385,7 +390,8 @@ func extractFanoutReport(child *cpn.CPN) (AwakeningReport, error) {
 // the downstream snapshot / tool-batch / message tokens. The reducer in
 // the fanout sub-CPN always emits a typed AwakeningReport, but coerceReport
 // still accepts json.RawMessage / []byte / string for defensive symmetry.
-func newReportTransition(emitter *Emitter) *cpn.Transition {
+func newReportTransition(deps Deps) *cpn.Transition {
+	emitter := deps.Emitter
 	t := cpn.NewTransition(
 		TransitionAwakenReport,
 		cpn.NodeKindTool,
@@ -399,6 +405,12 @@ func newReportTransition(emitter *Emitter) *cpn.Transition {
 		report, err := coerceReport(consumed[0].Payload)
 		if err != nil {
 			return nil, err
+		}
+		if !deps.Sandbox.IsZero() {
+			report.Host.Sandbox = AwakeningSandbox{
+				Tool:    deps.Sandbox.Tool,
+				Version: deps.Sandbox.Version,
+			}
 		}
 		if emitter != nil {
 			buckets := make([]string, 0, len(report.ToolsRegister))

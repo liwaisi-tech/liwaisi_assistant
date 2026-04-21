@@ -28,6 +28,7 @@ func newAwakeningComposerAdapter() awakens.ComposerFunc {
 			HostAdapter:    deps.HostAdapter,
 			HostGate:       deps.HostGate,
 			Clock:          deps.Clock,
+			Sandbox:        deps.Sandbox,
 			OnProbeFired:   deps.OnProbeFired,
 			OnProbeReduced: deps.OnProbeReduced,
 		})

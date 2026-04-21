@@ -22,12 +22,26 @@ type AwakeningReport struct {
 	OS            AwakeningOS             `json:"os"`
 	Shell         AwakeningShell          `json:"shell"`
 	Identity      AwakeningIdentity       `json:"identity"`
+	Host          AwakeningHost           `json:"host,omitempty"`
 	PresentTools  []AwakeningTool         `json:"present_tools"`
 	AbsentTools   []string                `json:"absent_tools"`
 	Capabilities  []AwakeningCapability   `json:"capabilities"`
 	ToolsRegister []AwakeningToolRegister `json:"tools_to_register"`
 	NarrativeMD   string                  `json:"narrative_md"`
 	ProbeTrace    []AwakeningProbe        `json:"probe_trace"`
+}
+
+// AwakeningHost carries environment-level facts that are not probe outputs.
+// Today it only holds the SC-10 sandbox wrapper; future gap-closures (help-
+// parser, capability ACL) will slot in here rather than bloating OS/Shell.
+type AwakeningHost struct {
+	Sandbox AwakeningSandbox `json:"sandbox,omitempty"`
+}
+
+// AwakeningSandbox is the REQ-1004 record of the probe-sandbox wrapper.
+type AwakeningSandbox struct {
+	Tool    string `json:"tool"`
+	Version string `json:"version,omitempty"`
 }
 
 // AwakeningOS describes the operating system + kernel + arch.

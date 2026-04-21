@@ -63,10 +63,14 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 			}
 		}
 
+		cmd, args := "sh", []string{"-c", entry.Command}
+		if !deps.Sandbox.IsZero() {
+			cmd, args = deps.Sandbox.Wrap(cmd, args)
+		}
 		start := clock()
 		execResult, err := deps.HostAdapter.Exec(ctx, cpn.ExecRequest{
-			Command:      "sh",
-			Args:         []string{"-c", entry.Command},
+			Command:      cmd,
+			Args:         args,
 			Timeout:      timeout,
 			AllowNonZero: true,
 		})

@@ -13,6 +13,7 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/fanout"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
@@ -28,6 +29,15 @@ type fakeAwakeningModeRegistry struct {
 
 func (f *fakeAwakeningModeRegistry) Begin(sid string) { f.begins = append(f.begins, sid) }
 func (f *fakeAwakeningModeRegistry) End(sid string)   { f.ends = append(f.ends, sid) }
+
+// stubSandbox swaps fanout.DetectSandboxFn for the duration of a test so
+// tests don't depend on bwrap/firejail being installed on the builder.
+func stubSandbox(t *testing.T, s fanout.Sandbox, err error) {
+	t.Helper()
+	prev := fanout.DetectSandboxFn
+	fanout.DetectSandboxFn = func() (fanout.Sandbox, error) { return s, err }
+	t.Cleanup(func() { fanout.DetectSandboxFn = prev })
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -237,6 +247,7 @@ func TestRunAwakening_ErrorsWhenLLMAbsent(t *testing.T) {
 func TestRunAwakening_ErrorsWhenFactoryReturnsNil(t *testing.T) {
 	restore := stubHostIDResolver(t, "machine-nil")
 	defer restore()
+	stubSandbox(t, fanout.Sandbox{Tool: fanout.ToolBwrap, Argv: []string{"--ro-bind", "/", "/"}}, nil)
 
 	repo := persist.NewMemoryHostCapabilityRepository()
 	svc := &SessionService{
@@ -303,6 +314,7 @@ func TestAppendAwakeningMessage_ShapeAndCPNRole(t *testing.T) {
 func TestRunAwakening_FallbackChainWired(t *testing.T) {
 	restore := stubHostIDResolver(t, "machine-sc15")
 	defer restore()
+	stubSandbox(t, fanout.Sandbox{Tool: fanout.ToolBwrap, Argv: []string{"--ro-bind", "/", "/"}}, nil)
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -345,5 +357,46 @@ func TestExtractHelpers_NilAndMissing(t *testing.T) {
 	root := emptyRootCPN()
 	if _, ok := extractEmittedMessage(root); ok {
 		t.Error("extractEmittedMessage on topology without -emitted place must be ok=false")
+	}
+}
+
+// SC-10 REQ-1003 / AC-008 — when neither bwrap nor firejail resolves,
+// awakening fails fast with error_class="sandbox_missing" and no probes run.
+func TestRunAwakening_SandboxMissingFailsFast(t *testing.T) {
+	restore := stubHostIDResolver(t, "machine-sb")
+	defer restore()
+	stubSandbox(t, fanout.Sandbox{}, fanout.ErrSandboxMissing)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	repo := persist.NewMemoryHostCapabilityRepository()
+	factoryCalls := 0
+	svc := &SessionService{
+		logger:             logger,
+		hostCapabilityRepo: repo,
+		llm:                &mockLLMClient{},
+		awakensFactory: func(string, awakens.Deps) *cpn.CPN {
+			factoryCalls++
+			return nil
+		},
+	}
+
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-sb", "user-test")
+	if err == nil {
+		t.Fatal("expected error when sandbox is missing")
+	}
+	if !errors.Is(err, fanout.ErrSandboxMissing) {
+		t.Fatalf("expected ErrSandboxMissing; got %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Errorf("factory must NOT be invoked when sandbox missing; got %d calls", factoryCalls)
+	}
+	logs := buf.String()
+	if !strings.Contains(logs, `error_class=sandbox_missing`) {
+		t.Errorf("missing error_class=sandbox_missing in logs; logs=%s", logs)
+	}
+	if !strings.Contains(logs, "brae.awakening.failed") {
+		t.Errorf("missing brae.awakening.failed event; logs=%s", logs)
 	}
 }

@@ -199,6 +199,11 @@ type Deps struct {
 	HostAdapter cpn.HostAdapter
 	HostGate    cpn.HostGate
 	Clock       func() time.Time
+	// Sandbox, when non-zero, is prepended to every probe subprocess argv
+	// per SEC-004 / REQ-1001/1002. Executors treat a zero Sandbox as "no
+	// wrapping" for backwards-compat with tests that drive the executor
+	// directly; production wiring always populates it.
+	Sandbox Sandbox
 	// OnProbeFired is an optional observability callback invoked once per
 	// probe completion (success, timeout, or gate-deny). A nil callback is
 	// a no-op so callers outside the awakening topology (tests, composer

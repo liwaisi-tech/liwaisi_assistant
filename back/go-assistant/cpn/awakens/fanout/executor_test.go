@@ -13,13 +13,15 @@ import (
 // ── Fakes ───────────────────────────────────────────────────────────────────
 
 type fakeAdapter struct {
-	result cpn.ExecResult
-	err    error
-	calls  int
+	result  cpn.ExecResult
+	err     error
+	calls   int
+	lastReq cpn.ExecRequest
 }
 
-func (f *fakeAdapter) Exec(_ context.Context, _ cpn.ExecRequest) (cpn.ExecResult, error) {
+func (f *fakeAdapter) Exec(_ context.Context, req cpn.ExecRequest) (cpn.ExecResult, error) {
 	f.calls++
+	f.lastReq = req
 	return f.result, f.err
 }
 
@@ -183,6 +185,53 @@ func TestMakeProbeExecutor_NilAdapter(t *testing.T) {
 	res := tok.Payload.(AwakeningProbeResult)
 	if !res.GateDenied {
 		t.Fatalf("expected GateDenied synthesis when adapter missing")
+	}
+}
+
+func TestMakeProbeExecutor_SandboxPrefixApplied(t *testing.T) {
+	t.Parallel()
+	adapter := &fakeAdapter{result: cpn.ExecResult{ExitCode: 0}}
+	sb := Sandbox{Tool: ToolBwrap, Argv: argvFor(ToolBwrap)}
+	entry := AwakeningProbeEntry{
+		ID: "x", Kind: ProbeKindBinary, Target: "x", Command: "command -v x",
+	}
+	exec := makeProbeExecutor(entry, Deps{HostAdapter: adapter, Sandbox: sb}, DefaultPerProbeTimeout)
+	if _, err := exec(context.Background(), cpn.Token{}); err != nil {
+		t.Fatalf("executor: %v", err)
+	}
+	if adapter.lastReq.Command != "bwrap" {
+		t.Fatalf("Command = %q; want bwrap", adapter.lastReq.Command)
+	}
+	wantPrefix := []string{"--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-net", "sh", "-c", "command -v x"}
+	if got := adapter.lastReq.Args; !equalSlice(got, wantPrefix) {
+		t.Fatalf("Args = %#v; want %#v", got, wantPrefix)
+	}
+}
+
+func equalSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestMakeProbeExecutor_NoSandboxFallsThroughRaw(t *testing.T) {
+	t.Parallel()
+	adapter := &fakeAdapter{result: cpn.ExecResult{ExitCode: 0}}
+	entry := AwakeningProbeEntry{
+		ID: "x", Kind: ProbeKindBinary, Target: "x", Command: "command -v x",
+	}
+	exec := makeProbeExecutor(entry, Deps{HostAdapter: adapter}, DefaultPerProbeTimeout)
+	if _, err := exec(context.Background(), cpn.Token{}); err != nil {
+		t.Fatalf("executor: %v", err)
+	}
+	if adapter.lastReq.Command != "sh" {
+		t.Fatalf("zero Sandbox must leave command unchanged; got %q", adapter.lastReq.Command)
 	}
 }
 
