@@ -324,6 +324,12 @@ func containsDotDot(s string) bool {
 }
 
 // checkPathJail enforces SEC-002: any path must resolve under AllowedRoot.
+//
+// SEC-FIX-002: symlinks are evaluated before the containment check so a
+// link inside the jail pointing outside cannot exfiltrate/overwrite. For
+// paths that do not exist yet (typical on WriteFile creating a new file)
+// the parent directory is symlink-resolved instead so the write cannot
+// traverse a hostile link that was placed in the parent.
 func (a *OSHostAdapter) checkPathJail(path string) error {
 	if a.AllowedRoot == "" {
 		return cpn.NewHostError(cpn.HostErrCodePathDenied,
@@ -333,14 +339,62 @@ func (a *OSHostAdapter) checkPathJail(path string) error {
 	if err != nil {
 		return cpn.NewHostError(cpn.HostErrCodePathDenied, "invalid path", err)
 	}
-	clean := filepath.Clean(abs)
-	rootClean := filepath.Clean(a.AllowedRoot)
-	rel, err := filepath.Rel(rootClean, clean)
+
+	// Resolve symlinks. When the leaf does not exist, climb until we find
+	// an ancestor that does and resolve that — this covers the "create new
+	// file under a symlink'd parent" case. If we walk all the way to "/"
+	// without finding an existing ancestor, the path is unresolvable and
+	// we deny conservatively.
+	resolved, rerr := evalPathWithMissingLeaf(abs)
+	if rerr != nil {
+		return cpn.NewHostError(cpn.HostErrCodePathDenied,
+			fmt.Sprintf("path %q could not be resolved: %v", path, rerr), rerr)
+	}
+
+	rootClean, err := filepath.EvalSymlinks(a.AllowedRoot)
+	if err != nil {
+		// AllowedRoot MUST exist and resolve. If it does not, deny — the
+		// adapter is mis-configured and the safest behaviour is to refuse.
+		return cpn.NewHostError(cpn.HostErrCodePathDenied,
+			fmt.Sprintf("allowed root %q unresolvable: %v", a.AllowedRoot, err), err)
+	}
+	rootClean = filepath.Clean(rootClean)
+
+	rel, err := filepath.Rel(rootClean, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return cpn.NewHostError(cpn.HostErrCodePathDenied,
 			fmt.Sprintf("path %q is outside allowed root %q", path, a.AllowedRoot), nil)
 	}
 	return nil
+}
+
+// evalPathWithMissingLeaf resolves symlinks on the deepest existing prefix
+// of path and joins the remaining (non-existent) tail back on. This lets
+// WriteFile create new files inside the jail while still rejecting a
+// hostile symlink anywhere on the resolved prefix.
+func evalPathWithMissingLeaf(abs string) (string, error) {
+	abs = filepath.Clean(abs)
+	missing := ""
+	cur := abs
+	for {
+		if _, err := filepath.EvalSymlinks(cur); err == nil {
+			resolved, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return "", err
+			}
+			if missing == "" {
+				return filepath.Clean(resolved), nil
+			}
+			return filepath.Clean(filepath.Join(resolved, missing)), nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			// Reached root without finding an existing ancestor.
+			return "", fmt.Errorf("no existing ancestor for %q", abs)
+		}
+		missing = filepath.Join(filepath.Base(cur), missing)
+		cur = parent
+	}
 }
 
 // cappedBuffer is an io.Writer that grows to at most limit bytes; subsequent
