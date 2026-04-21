@@ -19,11 +19,9 @@ type cannedHostAdapter struct {
 	// unique strings in their script excerpts.
 	responses map[string]cpn.ExecResult
 	def       cpn.ExecResult // default when no key matches
-	calls     int
 }
 
 func (a *cannedHostAdapter) Exec(_ context.Context, req cpn.ExecRequest) (cpn.ExecResult, error) {
-	a.calls++
 	// req.Args is []string{"-c", "<script>"}
 	body := ""
 	if len(req.Args) >= 2 {
