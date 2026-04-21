@@ -89,15 +89,15 @@ type ManageFlowDeps struct {
 // manage-models-flow for one session. Dependencies are captured by closure.
 func manageModelsTopologyFactory(sessionID string, deps ManageFlowDeps) *cpn.CPN {
 	places := map[string]*cpn.Place{
-		"P_MgmtEnter":        cpn.NewPlace("P_MgmtEnter", cpn.ColorString, cpn.SpaceSurface),                // C_UserTurn
-		"P_MgmtIntent":       cpn.NewPlace("P_MgmtIntent", cpn.ColorJSON, cpn.SpaceSurface),                  // C_MgmtIntent
-		"P_SurfaceEmitted":   cpn.NewPlace("P_SurfaceEmitted", cpn.ColorHuman, cpn.SpaceComputation),         // HITL output — C_SurfaceRef + response payload
-		"P_HITLResponse":     cpn.NewPlace("P_HITLResponse", cpn.ColorJSON, cpn.SpaceSurface),                // C_ModelMgmtResponse (normalised to JSON after HITL)
-		"P_RegistryMutation": cpn.NewPlace("P_RegistryMutation", cpn.ColorJSON, cpn.SpaceSurface),            // C_Mutation
-		"P_Confirmed":        cpn.NewPlace("P_Confirmed", cpn.ColorHuman, cpn.SpaceComputation),              // C_Confirmation
-		"P_PersistedOK":      cpn.NewPlace("P_PersistedOK", cpn.ColorJSON, cpn.SpaceSurface),                 // C_Result
-		"P_ReplayEmitted":    cpn.NewPlace("P_ReplayEmitted", cpn.ColorJSON, cpn.SpaceSurface),               // C_SurfaceRef (replay)
-		"P_MgmtExit":         cpn.NewPlace("P_MgmtExit", cpn.ColorArtifact, cpn.SpaceSurface),                // C_AssistantTurn
+		"P_MgmtEnter":        cpn.NewPlace("P_MgmtEnter", cpn.ColorString, cpn.SpaceSurface),         // C_UserTurn
+		"P_MgmtIntent":       cpn.NewPlace("P_MgmtIntent", cpn.ColorJSON, cpn.SpaceSurface),          // C_MgmtIntent
+		"P_SurfaceEmitted":   cpn.NewPlace("P_SurfaceEmitted", cpn.ColorHuman, cpn.SpaceComputation), // HITL output — C_SurfaceRef + response payload
+		"P_HITLResponse":     cpn.NewPlace("P_HITLResponse", cpn.ColorJSON, cpn.SpaceSurface),        // C_ModelMgmtResponse (normalised to JSON after HITL)
+		"P_RegistryMutation": cpn.NewPlace("P_RegistryMutation", cpn.ColorJSON, cpn.SpaceSurface),    // C_Mutation
+		"P_Confirmed":        cpn.NewPlace("P_Confirmed", cpn.ColorHuman, cpn.SpaceComputation),      // C_Confirmation
+		"P_PersistedOK":      cpn.NewPlace("P_PersistedOK", cpn.ColorJSON, cpn.SpaceSurface),         // C_Result
+		"P_ReplayEmitted":    cpn.NewPlace("P_ReplayEmitted", cpn.ColorJSON, cpn.SpaceSurface),       // C_SurfaceRef (replay)
+		"P_MgmtExit":         cpn.NewPlace("P_MgmtExit", cpn.ColorArtifact, cpn.SpaceSurface),        // C_AssistantTurn
 	}
 
 	// ── t-classify-mgmt : LLM (reuses classifier) — IN P_MgmtEnter → OUT P_MgmtIntent ─
@@ -547,13 +547,13 @@ type manageEntryEnvelope struct {
 }
 
 type manageResponseEnvelope struct {
-	ActionName    string                 `json:"action"`
-	Op            string                 `json:"op"`
-	RegistryID    string                 `json:"registry_id"`
-	LicenseStatus string                 `json:"license_status,omitempty"`
-	Note          string                 `json:"note,omitempty"`
-	Fields        map[string]any         `json:"fields,omitempty"`
-	Attempts      int                    `json:"attempts,omitempty"`
+	ActionName    string         `json:"action"`
+	Op            string         `json:"op"`
+	RegistryID    string         `json:"registry_id"`
+	LicenseStatus string         `json:"license_status,omitempty"`
+	Note          string         `json:"note,omitempty"`
+	Fields        map[string]any `json:"fields,omitempty"`
+	Attempts      int            `json:"attempts,omitempty"`
 }
 
 type manageResultEnvelope struct {

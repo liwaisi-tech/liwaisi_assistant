@@ -310,8 +310,8 @@ func TestManageModelsFlow_EmitGuardMatrix(t *testing.T) {
 	}{
 		{`{"manage_kind":"list"}`, true, false},
 		{`{"manage_kind":"register"}`, false, true},
-		{`{"manage_kind":""}`, true, false},       // empty → safe default
-		{`not-json`, true, false},                 // malformed → safe default
+		{`{"manage_kind":""}`, true, false}, // empty → safe default
+		{`not-json`, true, false},           // malformed → safe default
 	}
 	for _, tc := range cases {
 		listOK := c.Transitions["t-emit-list"].Guard([]*cpn.Token{{Payload: tc.envelope}})
@@ -357,13 +357,13 @@ func TestManageModelsFlow_ValidateReaskCap(t *testing.T) {
 
 // fakeRegistry captures calls; methods not used by t-apply are stubbed.
 type fakeRegistry struct {
-	setDefaultCalls  int
-	setReviewCalls   int
-	insertCalls      int
-	deleteCalls      int
-	lastRegistryID   string
-	lastUpdatedBy    string
-	lastReview       cpn.LicenseReview
+	setDefaultCalls int
+	setReviewCalls  int
+	insertCalls     int
+	deleteCalls     int
+	lastRegistryID  string
+	lastUpdatedBy   string
+	lastReview      cpn.LicenseReview
 }
 
 func (f *fakeRegistry) GetInvokable(ctx context.Context, id string) (*cpn.ModelRegistryEntry, error) {

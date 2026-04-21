@@ -137,12 +137,12 @@ type RegisterModelRequest struct {
 	Pricing         cpn.Pricing      `json:"pricing"`
 	SupportedParams []string         `json:"supported_params,omitempty"`
 	DefaultParams   map[string]any   `json:"default_params,omitempty"`
-	LicenseKind     string           `json:"license_kind,omitempty"`     // metadata only — status is fixed to "unreviewed" on insert
-	LicenseSPDXID   *string          `json:"license_spdx_id,omitempty"`  // ditto
-	LicenseName     *string          `json:"license_name,omitempty"`     // ditto
-	LicenseURL      *string          `json:"license_url,omitempty"`      // ditto
-	LicenseSource   string           `json:"license_source,omitempty"`   // "huggingface" | "manual"
-	CommunitySlug   *string          `json:"community_slug,omitempty"`   // ditto
+	LicenseKind     string           `json:"license_kind,omitempty"`    // metadata only — status is fixed to "unreviewed" on insert
+	LicenseSPDXID   *string          `json:"license_spdx_id,omitempty"` // ditto
+	LicenseName     *string          `json:"license_name,omitempty"`    // ditto
+	LicenseURL      *string          `json:"license_url,omitempty"`     // ditto
+	LicenseSource   string           `json:"license_source,omitempty"`  // "huggingface" | "manual"
+	CommunitySlug   *string          `json:"community_slug,omitempty"`  // ditto
 	Routes          []cpn.Route      `json:"routes,omitempty"`
 	SourceMetadata  map[string]any   `json:"source_metadata,omitempty"`
 }
@@ -622,4 +622,3 @@ func isValidLicenseStatus(s string) bool {
 	}
 	return false
 }
-

@@ -1206,8 +1206,8 @@ func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cp
 // All fields are goroutine-unsafe — applyUserModelPreferences is single
 // threaded per session, so no sync is needed.
 type resolveCache struct {
-	invokable      map[string]bool                // candidate → passed REQ-GATE-001
-	roleDefault    map[string]string              // role → registry_id (empty string on not-found)
+	invokable      map[string]bool   // candidate → passed REQ-GATE-001
+	roleDefault    map[string]string // role → registry_id (empty string on not-found)
 	productDefault *cpn.ModelRegistryEntry
 	productErr     error
 	productDone    bool
