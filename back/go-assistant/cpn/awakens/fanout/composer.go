@@ -104,7 +104,7 @@ func Compose(sessionID string, plan AwakeningProbePlan, deps Deps) (*cpn.CPN, er
 		reducerInputs,
 		[]string{PlaceReportID, PlaceEgressID},
 	)
-	reducer.ToolHandler = makeReducer()
+	reducer.ToolHandler = makeReducer(deps)
 	transitions[TransitionReduceID] = reducer
 
 	c := cpn.NewCPN(

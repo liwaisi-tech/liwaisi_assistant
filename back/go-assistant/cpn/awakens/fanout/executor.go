@@ -46,6 +46,9 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 			result.ExitCode = GateDenyExitCode
 			result.GateDenied = true
 			result.Stderr = "host adapter not wired"
+			if deps.OnProbeFired != nil {
+				deps.OnProbeFired(ctx, result.ProbeID, 0, result.ExitCode)
+			}
 			return probeResultToken(result), nil
 		}
 		if deps.HostGate != nil {
@@ -53,6 +56,9 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 				result.ExitCode = GateDenyExitCode
 				result.GateDenied = true
 				result.Stderr = err.Error()
+				if deps.OnProbeFired != nil {
+					deps.OnProbeFired(ctx, result.ProbeID, 0, result.ExitCode)
+				}
 				return probeResultToken(result), nil
 			}
 		}
@@ -74,6 +80,9 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 			if isTimeoutErr(ctx, err) {
 				result.ExitCode = TimeoutExitCode
 				result.Stderr = "timeout"
+				if deps.OnProbeFired != nil {
+					deps.OnProbeFired(ctx, result.ProbeID, elapsed, result.ExitCode)
+				}
 				return probeResultToken(result), nil
 			}
 			// Any other adapter error is surfaced as a negative exit code
@@ -81,6 +90,9 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 			// the reducer's AND-join does not stall.
 			result.ExitCode = TimeoutExitCode
 			result.Stderr = fmt.Sprintf("exec error: %v", err)
+			if deps.OnProbeFired != nil {
+				deps.OnProbeFired(ctx, result.ProbeID, elapsed, result.ExitCode)
+			}
 			return probeResultToken(result), nil
 		}
 		result.ExitCode = execResult.ExitCode
@@ -89,6 +101,9 @@ func makeProbeExecutor(entry AwakeningProbeEntry, deps Deps, timeout time.Durati
 		result.Truncated = execResult.Truncated
 		if execResult.DurationMs > 0 {
 			result.DurationMs = execResult.DurationMs
+		}
+		if deps.OnProbeFired != nil {
+			deps.OnProbeFired(ctx, result.ProbeID, time.Duration(result.DurationMs)*time.Millisecond, result.ExitCode)
 		}
 		return probeResultToken(result), nil
 	}

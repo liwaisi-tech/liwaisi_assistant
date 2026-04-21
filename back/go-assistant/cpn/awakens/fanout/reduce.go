@@ -20,8 +20,8 @@ import (
 // Ordering is fixed: results are sorted by probe ID so the emitted slices
 // are deterministic regardless of token-arrival order. NFR-002 relies on
 // this: re-running the reducer on the same inputs yields identical output.
-func makeReducer() func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
-	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+func makeReducer(deps Deps) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
+	return func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		if len(consumed) == 0 {
 			return nil, fmt.Errorf("%s: no probe results consumed", TransitionReduceID)
 		}
@@ -35,6 +35,17 @@ func makeReducer() func(context.Context, []cpn.Token) (map[string]cpn.Token, err
 			results = append(results, r)
 		}
 		report := ReduceResults(results)
+		if deps.OnProbeReduced != nil {
+			success, fail := 0, 0
+			for _, r := range results {
+				if r.ExitCode == 0 {
+					success++
+				} else {
+					fail++
+				}
+			}
+			deps.OnProbeReduced(ctx, success, fail)
+		}
 		reportToken := cpn.Token{
 			Color:   cpn.ColorArtifact,
 			Space:   cpn.SpaceComputation,

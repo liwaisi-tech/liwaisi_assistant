@@ -19,6 +19,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -198,6 +199,14 @@ type Deps struct {
 	HostAdapter cpn.HostAdapter
 	HostGate    cpn.HostGate
 	Clock       func() time.Time
+	// OnProbeFired is an optional observability callback invoked once per
+	// probe completion (success, timeout, or gate-deny). A nil callback is
+	// a no-op so callers outside the awakening topology (tests, composer
+	// fuzzers) don't have to wire observability.
+	OnProbeFired func(ctx context.Context, slug string, duration time.Duration, exitCode int)
+	// OnProbeReduced is invoked once by the AND-join reducer with the
+	// counts of success / fail probes.
+	OnProbeReduced func(ctx context.Context, success, fail int)
 }
 
 // ── Sentinel errors ─────────────────────────────────────────────────────────

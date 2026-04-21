@@ -25,9 +25,11 @@ func newAwakeningComposerAdapter() awakens.ComposerFunc {
 			return nil, fmt.Errorf("awakening composer: %w", err)
 		}
 		return fanout.Compose(sessionID, plan, fanout.Deps{
-			HostAdapter: deps.HostAdapter,
-			HostGate:    deps.HostGate,
-			Clock:       deps.Clock,
+			HostAdapter:    deps.HostAdapter,
+			HostGate:       deps.HostGate,
+			Clock:          deps.Clock,
+			OnProbeFired:   deps.OnProbeFired,
+			OnProbeReduced: deps.OnProbeReduced,
 		})
 	}
 }

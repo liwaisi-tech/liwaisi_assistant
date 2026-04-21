@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,11 +81,24 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		return zero, awakens.A2UIMessage{}, "", errAwakeningNotConfigured
 	}
 
+	emitter := awakens.NewEmitter(s.logger)
+	emitter.Started(ctx, sessionID, awakeningPinnedModel)
+	startedAt := time.Now()
+	defer func() {
+		emitter.CheckSLO(ctx, "total", time.Since(startedAt))
+	}()
+
 	hostID := s.resolveHostID(ctx)
 
 	// 24h cache hit skips shell probes but still emits the first-turn card.
 	if snap, fresh, err := awakens.LookupCachedSnapshot(ctx, s.hostCapabilityRepo, hostID, awakens.DefaultCacheTTL, awakens.SystemClock); err == nil && fresh {
 		envelope := firstTurnMessageFromSnapshot(snap)
+		age := time.Since(snap.CapturedAt)
+		if age < 0 {
+			age = 0
+		}
+		emitter.CacheHit(ctx, age)
+		emitter.Emitted(ctx, len(envelope.Components))
 		s.logger.Info("awakening: served from 24h cache",
 			slog.String("session_id", sessionID),
 			slog.String("host_id", hostID),
@@ -116,6 +130,7 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		// nil, the awakening prompt builder embeds the 32-entry excerpt
 		// + few-shot anchors per spec REQ-002 / AC-003.
 		Lexicon: s.lexicon,
+		Emitter: emitter,
 	}
 	if s.hostRuntime != nil {
 		deps.HostAdapter = s.hostRuntime.Adapter
@@ -163,17 +178,22 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 	}
 
 	if err := root.Run(runCtx); err != nil {
+		emitter.Failed(ctx, "cpn.run", classifyAwakeningError(err), err.Error())
 		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", err)
 	}
 
 	// Extract the emitted A2UI envelope and snapshot from the terminal places.
 	envelope, ok := extractEmittedMessage(root)
 	if !ok {
-		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: CPN completed but emitted no A2UI envelope")
+		err := errors.New("awakening: CPN completed but emitted no A2UI envelope")
+		emitter.Failed(ctx, "extract.envelope", "empty", err.Error())
+		return zero, awakens.A2UIMessage{}, "", err
 	}
 	snap, ok := extractAwakeningSnapshot(root)
 	if !ok {
-		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: CPN completed but deposited no snapshot")
+		err := errors.New("awakening: CPN completed but deposited no snapshot")
+		emitter.Failed(ctx, "extract.snapshot", "empty", err.Error())
+		return zero, awakens.A2UIMessage{}, "", err
 	}
 	s.logger.Info("awakening: complete",
 		slog.String("session_id", sessionID),
@@ -181,6 +201,31 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		slog.String("source", awakens.SourceAwakening),
 	)
 	return snap, envelope, awakens.SourceAwakening, nil
+}
+
+// classifyAwakeningError coarse-buckets run-time failures into the
+// error_class values the observability spine (REQ-801) reports. Kept
+// deterministic by string-matching on sentinel text — the downstream
+// consumer is alerting, not a parser.
+func classifyAwakeningError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case strings.Contains(msg, "invalid awakening report"):
+		return "invalid_report"
+	case strings.Contains(msg, "composer"):
+		return "composer"
+	case strings.Contains(msg, "llm"):
+		return "llm"
+	default:
+		return "unknown"
+	}
 }
 
 // errAwakeningNotConfigured signals that the awakening path cannot run

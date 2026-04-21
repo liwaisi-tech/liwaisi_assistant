@@ -127,7 +127,7 @@ func TestReduceResults_DeterministicOrdering(t *testing.T) {
 
 func TestReduce_ToolHandler(t *testing.T) {
 	t.Parallel()
-	handler := makeReducer()
+	handler := makeReducer(Deps{})
 
 	consumed := []cpn.Token{
 		{Color: cpn.ColorArtifact, Space: cpn.SpaceComputation,
@@ -156,7 +156,7 @@ func TestReduce_ToolHandler(t *testing.T) {
 
 func TestReduce_ToolHandler_ErrorsOnEmpty(t *testing.T) {
 	t.Parallel()
-	handler := makeReducer()
+	handler := makeReducer(Deps{})
 	if _, err := handler(context.Background(), nil); err == nil {
 		t.Fatalf("expected error on empty consumed")
 	}
@@ -164,7 +164,7 @@ func TestReduce_ToolHandler_ErrorsOnEmpty(t *testing.T) {
 
 func TestReduce_ToolHandler_ErrorsOnWrongPayload(t *testing.T) {
 	t.Parallel()
-	handler := makeReducer()
+	handler := makeReducer(Deps{})
 	_, err := handler(context.Background(), []cpn.Token{{Payload: "not a result"}})
 	if err == nil {
 		t.Fatalf("expected type-mismatch error")

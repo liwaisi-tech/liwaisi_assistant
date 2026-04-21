@@ -43,4 +43,9 @@ type ComposerDeps struct {
 	HostAdapter cpn.HostAdapter
 	HostGate    cpn.HostGate
 	Clock       func() time.Time
+	// OnProbeFired / OnProbeReduced carry the SC-08 observability hooks
+	// down into the fanout sub-CPN. Both are optional — the composer must
+	// wire them onto its Deps only when present.
+	OnProbeFired   func(ctx context.Context, slug string, duration time.Duration, exitCode int)
+	OnProbeReduced func(ctx context.Context, success, fail int)
 }

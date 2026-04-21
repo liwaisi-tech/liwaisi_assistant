@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,6 +95,9 @@ type Deps struct {
 	// hashtag anchors. When nil, the legacy SystemPromptPlan constant is
 	// used — backwards-compat for callers that pre-date the extension.
 	Lexicon cpn.Lexicon
+	// Emitter is the SC-08 observability spine. A nil emitter degrades to
+	// a no-op so callers without telemetry wiring behave unchanged.
+	Emitter *Emitter
 }
 
 // TopologyFactory constructs the `brae-awakens` CPN. The factory is designed
@@ -138,10 +142,10 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 		TransitionAwakenLLMBootstrap:     newLLMBootstrapTransition(awakenPrompt),
 		TransitionAwakenProbeCompose:     newProbeComposeTransition(sessionID, deps),
 		TransitionAwakenProbeInstantiate: newProbeInstantiateTransition(),
-		TransitionAwakenReport:           newReportTransition(),
+		TransitionAwakenReport:           newReportTransition(deps.Emitter),
 		TransitionAwakenPersist:          newPersistTransition(deps),
-		TransitionAwakenRegisterTools:    newRegisterToolsTransition(),
-		TransitionAwakenEmitMessage:      newEmitMessageTransition(),
+		TransitionAwakenRegisterTools:    newRegisterToolsTransition(deps.Emitter),
+		TransitionAwakenEmitMessage:      newEmitMessageTransition(deps.Emitter),
 	}
 
 	c := cpn.NewCPN(
@@ -257,12 +261,25 @@ func newProbeComposeTransition(sessionID string, deps Deps) *cpn.Transition {
 			clock := deps.Clock
 			cdeps.Clock = func() time.Time { return clock() }
 		}
+		if deps.Emitter != nil {
+			em := deps.Emitter
+			cdeps.OnProbeFired = func(ctx context.Context, slug string, duration time.Duration, exitCode int) {
+				em.ProbeFired(ctx, slug, duration, exitCode)
+			}
+			cdeps.OnProbeReduced = func(ctx context.Context, success, fail int) {
+				em.ProbeReduced(ctx, success, fail)
+			}
+		}
 		child, err := deps.Composer(ctx, sessionID, consumed[0].Payload, cdeps)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", TransitionAwakenProbeCompose, err)
 		}
 		if child == nil {
 			return nil, fmt.Errorf("%s: composer returned nil *cpn.CPN", TransitionAwakenProbeCompose)
+		}
+		if deps.Emitter != nil {
+			slugs := extractProbeSlugs(child)
+			deps.Emitter.ProbeComposed(ctx, slugs)
 		}
 		return map[string]cpn.Token{
 			PlaceAwakenSubnetSpec: {
@@ -273,6 +290,25 @@ func newProbeComposeTransition(sessionID string, deps Deps) *cpn.Transition {
 		}, nil
 	}
 	return t
+}
+
+// extractProbeSlugs returns the sorted per-probe transition IDs stripped of
+// the fanout prefix so the observability payload matches the probe-IDs the
+// LLM emitted in its plan. Best-effort: returns nil when the child has no
+// recognisable probe transitions.
+func extractProbeSlugs(child *cpn.CPN) []string {
+	if child == nil {
+		return nil
+	}
+	const probePrefix = "t-probe-"
+	slugs := make([]string, 0, len(child.Transitions))
+	for id := range child.Transitions {
+		if strings.HasPrefix(id, probePrefix) {
+			slugs = append(slugs, strings.TrimPrefix(id, probePrefix))
+		}
+	}
+	sort.Strings(slugs)
+	return slugs
 }
 
 // newProbeInstantiateTransition spawns the composed sub-CPN in-process and
@@ -349,20 +385,34 @@ func extractFanoutReport(child *cpn.CPN) (AwakeningReport, error) {
 // the downstream snapshot / tool-batch / message tokens. The reducer in
 // the fanout sub-CPN always emits a typed AwakeningReport, but coerceReport
 // still accepts json.RawMessage / []byte / string for defensive symmetry.
-func newReportTransition() *cpn.Transition {
+func newReportTransition(emitter *Emitter) *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenReport,
 		cpn.NodeKindTool,
 		[]string{PlaceAwakeningReport},
 		[]string{PlaceAwakeningSnapshot, PlaceAwakeningToolBatch, PlaceAwakeningMessage},
 	)
-	t.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+	t.ToolHandler = func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		if len(consumed) == 0 {
 			return nil, fmt.Errorf("%s: no input token", TransitionAwakenReport)
 		}
 		report, err := coerceReport(consumed[0].Payload)
 		if err != nil {
 			return nil, err
+		}
+		if emitter != nil {
+			buckets := make([]string, 0, len(report.ToolsRegister))
+			seen := make(map[string]struct{}, len(report.ToolsRegister))
+			for _, tr := range report.ToolsRegister {
+				b := canonicaliseToolbox(tr.Toolbox)
+				if _, ok := seen[b]; ok {
+					continue
+				}
+				seen[b] = struct{}{}
+				buckets = append(buckets, b)
+			}
+			sort.Strings(buckets)
+			emitter.ReportProjected(ctx, len(report.ToolsRegister), buckets)
 		}
 		return map[string]cpn.Token{
 			PlaceAwakeningSnapshot: {
@@ -429,7 +479,7 @@ func newPersistTransition(deps Deps) *cpn.Transition {
 
 // newRegisterToolsTransition wraps RegisterBatch — bound to
 // MaxToolsToRegister registrations and idempotent.
-func newRegisterToolsTransition() *cpn.Transition {
+func newRegisterToolsTransition(emitter *Emitter) *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenRegisterTools,
 		cpn.NodeKindTool,
@@ -444,6 +494,9 @@ func newRegisterToolsTransition() *cpn.Transition {
 		donePlace := PlaceAwakeningToolBatch + "-done"
 		registry := toolRegistryFromContext(ctx)
 		if registry == nil {
+			if emitter != nil {
+				emitter.Registered(ctx, 0, 0)
+			}
 			return map[string]cpn.Token{
 				donePlace: {
 					Color:   cpn.ColorEvent,
@@ -458,6 +511,13 @@ func newRegisterToolsTransition() *cpn.Transition {
 		}
 		if registered == nil {
 			registered = []string{}
+		}
+		if emitter != nil {
+			duplicates := len(report.ToolsRegister) - len(registered)
+			if duplicates < 0 {
+				duplicates = 0
+			}
+			emitter.Registered(ctx, len(registered), duplicates)
 		}
 		return map[string]cpn.Token{
 			donePlace: {
@@ -474,19 +534,22 @@ func newRegisterToolsTransition() *cpn.Transition {
 // plumbing (emit-first-assistant-message) consumes the resulting Event
 // token and persists it as the session's first `messages` row with
 // cpn_role = "awakening".
-func newEmitMessageTransition() *cpn.Transition {
+func newEmitMessageTransition(emitter *Emitter) *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenEmitMessage,
 		cpn.NodeKindTool,
 		[]string{PlaceAwakeningMessage},
 		[]string{PlaceAwakeningMessage + "-emitted"},
 	)
-	t.ToolHandler = func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+	t.ToolHandler = func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		report, err := coerceReport(consumed[0].Payload)
 		if err != nil {
 			return nil, err
 		}
 		envelope := BuildFirstTurnMessage(report)
+		if emitter != nil {
+			emitter.Emitted(ctx, len(envelope.Components))
+		}
 		return map[string]cpn.Token{
 			PlaceAwakeningMessage + "-emitted": {
 				Color:   cpn.ColorEvent,
