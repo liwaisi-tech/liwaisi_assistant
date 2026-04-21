@@ -136,35 +136,7 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		deps.HostAdapter = s.hostRuntime.Adapter
 		deps.HostGate = s.hostRuntime.Gate
 	}
-	root := s.awakensFactory(sessionID, deps)
-	if root == nil {
-		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: factory returned nil topology")
-	}
-	root.LLMClient = s.llm
-	root.Cost = s.cost
-	root.HostRuntime = s.hostRuntime
-	if s.toolRegistry != nil {
-		s.toolRegistry.InjectIntoCPN(root)
-		root.ToolRegistry = s.toolRegistry
-	}
-	// Pin awakening LLM transitions to a hard-coded stable model, ignoring
-	// the user-preference cascade. Rationale: first-boot awakening is
-	// infrastructure — if the user's PreferredModel points at a preview
-	// slug (e.g. gemini-3-*-preview) whose tool-call+JSON path is unstable,
-	// the session never boots. Awakening uses gemini-2.5-flash (GA, known
-	// to tolerate the tool-call re-call payload) regardless of preferences.
-	// Downstream CPNs (classify/direct/plan/execute) still honour user
-	// preferences via applyUserModelPreferences.
 	_ = userID
-	for _, tr := range root.Transitions {
-		if tr == nil || tr.Kind != cpn.NodeKindLLM {
-			continue
-		}
-		if tr.LLMConfig == nil {
-			tr.LLMConfig = &cpn.LLMConfig{}
-		}
-		tr.LLMConfig.Model = awakeningPinnedModel
-	}
 
 	runCtx, cancel := context.WithTimeout(ctx, awakeningDeadline)
 	defer cancel()
@@ -177,9 +149,41 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		defer s.awakeningMode.End(sessionID)
 	}
 
-	if err := root.Run(runCtx); err != nil {
-		emitter.Failed(ctx, "cpn.run", classifyAwakeningError(err), err.Error())
-		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", err)
+	// SC-15: the primary awakening slug is awakeningPinnedModel; on 5xx /
+	// 429 / timeout the chain advances through the configured fallbacks,
+	// sharing the 30s awakeningDeadline across all attempts. Auth errors
+	// fail fast.
+	var root *cpn.CPN
+	chain := awakens.DefaultFallbackChain()
+	runErr := chain.Run(runCtx, emitter, func(attemptCtx context.Context, model string) error {
+		root = s.awakensFactory(sessionID, deps)
+		if root == nil {
+			return errors.New("awakening: factory returned nil topology")
+		}
+		root.LLMClient = s.llm
+		root.Cost = s.cost
+		root.HostRuntime = s.hostRuntime
+		if s.toolRegistry != nil {
+			s.toolRegistry.InjectIntoCPN(root)
+			root.ToolRegistry = s.toolRegistry
+		}
+		for _, tr := range root.Transitions {
+			if tr == nil || tr.Kind != cpn.NodeKindLLM {
+				continue
+			}
+			if tr.LLMConfig == nil {
+				tr.LLMConfig = &cpn.LLMConfig{}
+			}
+			tr.LLMConfig.Model = model
+		}
+		return root.Run(attemptCtx)
+	})
+	if runErr != nil {
+		emitter.Failed(ctx, "cpn.run", classifyAwakeningError(runErr), runErr.Error())
+		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", runErr)
+	}
+	if root == nil {
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: factory returned nil topology")
 	}
 
 	// Extract the emitted A2UI envelope and snapshot from the terminal places.

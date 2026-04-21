@@ -296,6 +296,41 @@ func TestAppendAwakeningMessage_ShapeAndCPNRole(t *testing.T) {
 	}
 }
 
+// SC-15 — runAwakening wires its LLM transitions through the fallback chain.
+// When the factory returns nil, that is a NON-eligible error so the chain
+// terminates after a single attempt — confirming the chain is engaged and
+// the primary model is evaluated first.
+func TestRunAwakening_FallbackChainWired(t *testing.T) {
+	restore := stubHostIDResolver(t, "machine-sc15")
+	defer restore()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	repo := persist.NewMemoryHostCapabilityRepository()
+	calls := 0
+	svc := &SessionService{
+		logger:             logger,
+		hostCapabilityRepo: repo,
+		llm:                &mockLLMClient{},
+		awakensFactory: func(_ string, _ awakens.Deps) *cpn.CPN {
+			calls++
+			return nil
+		},
+	}
+
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-sc15", "user-test")
+	if err == nil {
+		t.Fatal("expected error when factory returns nil")
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 factory call (non-eligible error short-circuits chain); got %d", calls)
+	}
+	if strings.Contains(buf.String(), "brae.awakening.llm.fallback_used") {
+		t.Fatalf("non-eligible error must not emit fallback_used; logs=%s", buf.String())
+	}
+}
+
 // extractEmittedMessage + extractAwakeningSnapshot are internal seams
 // between runAwakening and the CPN's terminal places. They must tolerate
 // nil CPNs and missing places gracefully.
