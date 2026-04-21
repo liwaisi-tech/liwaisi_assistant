@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -90,7 +91,7 @@ func (f *fakeRegistry) ListInvokable(_ context.Context) ([]*cpn.ModelRegistryEnt
 	sort.Slice(out, func(i, j int) bool { return out[i].RegistryID < out[j].RegistryID })
 	return out, nil
 }
-func (f *fakeRegistry) ListAll(_ context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, error) {
+func (f *fakeRegistry) ListAll(_ context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, int, error) {
 	out := make([]*cpn.ModelRegistryEntry, 0, len(f.entries))
 	for _, e := range f.entries {
 		if filter.Vendor != "" && e.Vendor != filter.Vendor {
@@ -116,7 +117,20 @@ func (f *fakeRegistry) ListAll(_ context.Context, filter cpn.ModelListFilter) ([
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RegistryID < out[j].RegistryID })
-	return out, nil
+	total := len(out)
+	if filter.Page > 0 {
+		size := filter.PageSize
+		if size <= 0 {
+			size = 20
+		}
+		start := (filter.Page - 1) * size
+		if start >= len(out) {
+			return nil, total, nil
+		}
+		end := min(start+size, len(out))
+		out = out[start:end]
+	}
+	return out, total, nil
 }
 func (f *fakeRegistry) Insert(_ context.Context, e *cpn.ModelRegistryEntry) error {
 	if f.insertErr != nil {
@@ -310,6 +324,34 @@ func TestAdminListModels_Filter(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &body)
 	if len(body.Items) != 1 || body.Items[0].Vendor != "google" {
 		t.Fatalf("expected 1 google item, got %+v", body.Items)
+	}
+}
+
+// TestAdminListModels_Pagination — AC-003. Total MUST reflect the
+// filter-wide count, not the page length.
+func TestAdminListModels_Pagination(t *testing.T) {
+	reg := newFakeRegistry()
+	for i := range 25 {
+		reg.put(activeEntry(fmt.Sprintf("v/model-%02d", i), "v", fmt.Sprintf("Model %02d", i)))
+	}
+	h := newAdminModelsHandlers(reg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/models?size=10&page=1", nil)
+	rr := httptest.NewRecorder()
+	h.HandleAdminListModels(rr, req)
+
+	var body AdminModelListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Total != 25 {
+		t.Fatalf("total = %d, want 25", body.Total)
+	}
+	if len(body.Items) != 10 {
+		t.Fatalf("items = %d, want 10 (page 1, size 10)", len(body.Items))
+	}
+	if body.Page != 1 || body.Size != 10 {
+		t.Fatalf("page/size = %d/%d, want 1/10", body.Page, body.Size)
 	}
 }
 

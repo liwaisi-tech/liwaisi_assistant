@@ -230,7 +230,7 @@ func (r *ModelRegistryRepository) ListInvokable(ctx context.Context) ([]*cpn.Mod
 // ListAll returns every row matching the filter.
 //
 //nolint:gocritic // ModelListFilter is a deliberate value type in the port interface
-func (r *ModelRegistryRepository) ListAll(ctx context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, error) {
+func (r *ModelRegistryRepository) ListAll(ctx context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, int, error) {
 	var (
 		wheres []string
 		args   []any
@@ -283,14 +283,27 @@ func (r *ModelRegistryRepository) ListAll(ctx context.Context, filter cpn.ModelL
 		pageClause = fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
 	}
 
+	// Total matches filter before pagination is applied (REQ-FIX-003). The
+	// admin UI uses this value to render page counts; returning len(entries)
+	// would lie whenever Page/PageSize trims the result set.
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*)`+modelFromJoin+whereClause, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres model registry list all count: %w", err)
+	}
+
 	query := `SELECT ` + modelSelectColumns + modelFromJoin + whereClause +
 		` ORDER BY ` + order + pageClause
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("postgres model registry list all: %w", err)
+		return nil, 0, fmt.Errorf("postgres model registry list all: %w", err)
 	}
 	defer rows.Close()
-	return collectRows(rows)
+	entries, err := collectRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return entries, total, nil
 }
 
 // allowedOrderColumns is the whitelist of columns the admin UI may sort by.

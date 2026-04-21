@@ -461,7 +461,7 @@ func manageSurfaceBuilder(kind string, deps ManageFlowDeps) func([]cpn.Token) (a
 			// registry at session-resolve time.
 			rows := []cpn.ModelCardListData{}
 			if deps.Registry != nil {
-				if entries, err := deps.Registry.ListAll(context.Background(), cpn.ModelListFilter{}); err == nil {
+				if entries, _, err := deps.Registry.ListAll(context.Background(), cpn.ModelListFilter{}); err == nil {
 					for _, e := range entries {
 						rows = append(rows, cpn.ModelCardListData{
 							ID:       e.RegistryID,

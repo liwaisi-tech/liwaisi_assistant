@@ -223,7 +223,7 @@ func (h *Handlers) HandleAdminListModels(w http.ResponseWriter, r *http.Request)
 		filter.OrderBy = ob
 	}
 
-	entries, err := h.ModelRegistry.ListAll(r.Context(), filter)
+	entries, total, err := h.ModelRegistry.ListAll(r.Context(), filter)
 	if err != nil {
 		h.Logger.Error("admin list models", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -237,7 +237,7 @@ func (h *Handlers) HandleAdminListModels(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, http.StatusOK, AdminModelListResponse{
 		Items: items,
-		Total: len(items),
+		Total: total,
 		Page:  filter.Page,
 		Size:  filter.PageSize,
 	})

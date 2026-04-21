@@ -378,8 +378,8 @@ func (f *fakeRegistry) GetProductDefault(ctx context.Context) (*cpn.ModelRegistr
 func (f *fakeRegistry) ListInvokable(ctx context.Context) ([]*cpn.ModelRegistryEntry, error) {
 	return nil, nil
 }
-func (f *fakeRegistry) ListAll(ctx context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, error) {
-	return nil, nil
+func (f *fakeRegistry) ListAll(ctx context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, int, error) {
+	return nil, 0, nil
 }
 func (f *fakeRegistry) Insert(ctx context.Context, entry *cpn.ModelRegistryEntry) error {
 	f.insertCalls++

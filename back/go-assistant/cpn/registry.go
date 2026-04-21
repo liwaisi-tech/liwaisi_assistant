@@ -79,8 +79,11 @@ type ModelRegistry interface {
 	// GET /api/v1/models for the public model picker.
 	ListInvokable(ctx context.Context) ([]*ModelRegistryEntry, error)
 
-	// ListAll returns every row matching the filter. Used by the admin UI.
-	ListAll(ctx context.Context, filter ModelListFilter) ([]*ModelRegistryEntry, error)
+	// ListAll returns every row matching the filter along with the total
+	// number of rows matching the filter (ignoring Page/PageSize). The total
+	// is used by the admin UI to render pagination — len(entries) is a page,
+	// not the full count (REQ-FIX-003 / AC-003).
+	ListAll(ctx context.Context, filter ModelListFilter) (entries []*ModelRegistryEntry, total int, err error)
 
 	// Insert registers a new model. Initial license_status = 'unreviewed' and
 	// lifecycle_state = 'registered' per REQ-LIC-003 — the caller cannot
