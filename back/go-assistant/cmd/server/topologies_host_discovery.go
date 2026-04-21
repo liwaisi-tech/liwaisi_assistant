@@ -4,10 +4,13 @@ package main
 //
 // Spec: spec/spec-architecture-host-discovery-capability-registry.md
 //
-// This topology probes the Linux host for identity, kernel facts and a
-// curated list of binaries, derives high-level capabilities from the probe
+// This topology probes the Linux host for identity, kernel facts and the
+// set of executable binaries reachable from $PATH (see
+// DefaultHostProbeResolver), derives high-level capabilities from the probe
 // results, and persists the aggregated snapshot through
-// HostCapabilityRepository.
+// HostCapabilityRepository. brae is Linux-first: the probe set is not a
+// compiled-in allow-list — callers can inject a custom HostProbeResolver
+// (tests do) but the default is a runtime $PATH scan.
 //
 // Shape (spec §3):
 //
@@ -31,6 +34,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -47,46 +52,133 @@ import (
 // HostDiscoveryFlowName is the FlowRegistry name for this topology.
 const HostDiscoveryFlowName = "host-discovery"
 
-// hostProbeRegistry lists the binaries checked by t-probe-<bin> (REQ-002).
-// Order is stable so tests and fixtures can rely on it.
-var hostProbeRegistry = []hostProbeDef{
-	{Name: "bash"},
-	{Name: "sh"},
-	{Name: "gcc"},
-	{Name: "cc"},
-	{Name: "g++"},
-	{Name: "clang"},
-	{Name: "go", VersionFlag: "version"},
-	{Name: "python3"},
-	{Name: "node"},
-	{Name: "npm"},
-	{Name: "curl"},
-	{Name: "wget"},
-	{Name: "git"},
-	{Name: "make"},
-	{Name: "tar"},
-	{Name: "unzip"},
-	{Name: "ssh", VersionFlag: "-V"},
-	{Name: "jq"},
-	{Name: "sqlite3"},
-	{Name: "docker"},
-	{Name: "podman"},
-	{Name: "bwrap"},
-	{Name: "firejail"},
-}
-
-// hostProbeDef describes one entry in the probe registry.
+// hostProbeDef describes one probe entry: the binary basename and the
+// command-line flag that coaxes out a version banner (defaults to --version).
 type hostProbeDef struct {
 	Name        string
 	VersionFlag string // defaults to "--version"
 }
 
+// hostProbeVersionFlagOverrides records non-standard version flags for
+// well-known binaries. Everything else gets the default `--version`.
+//
+// brae is Linux-first and deliberately does NOT ship a closed allow-list of
+// binaries: the discovery pass is driven by a runtime $PATH scan (see
+// DefaultHostProbeResolver). This map only exists to rescue the handful of
+// tools whose `--version` flag is absent or misbehaves.
+var hostProbeVersionFlagOverrides = map[string]string{
+	"go":  "version",
+	"ssh": "-V",
+}
+
+// defaultHostProbeCap caps how many binaries a single host-discovery run will
+// probe. A naïve $PATH scan on a developer machine can easily turn up several
+// thousand entries (language-manager shims, vendored toolchains, etc.); that
+// would explode into thousands of parallel bash transitions for no real
+// benefit. 256 is comfortably above the set of tools any realistic brae
+// session needs while keeping the fan-out bounded. Follow-up PR will move
+// this to config + add a worker pool (see roadmap spec §T9).
+const defaultHostProbeCap = 256
+
+// HostProbeResolver returns the deterministic, sorted list of binaries to
+// probe. Tests inject a fixed resolver so assertions don't depend on the
+// host's actual $PATH contents.
+type HostProbeResolver func() []hostProbeDef
+
+// DefaultHostProbeResolver scans $PATH (and falls back to a sane system
+// default when PATH is empty), merges curated version-flag overrides, caps
+// the result, and returns a deterministic sorted slice.
+//
+// It does NOT invoke any binary — it only stats directory entries and checks
+// the executable bit. The actual --version invocations happen later inside
+// the CPN, wrapped by HostAdapter + HostGate.
+func DefaultHostProbeResolver() []hostProbeDef {
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		// POSIX default; matches `getconf PATH` on most distros.
+		pathEnv = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+	return scanPathForExecutables(pathEnv, hostProbeVersionFlagOverrides, defaultHostProbeCap)
+}
+
+// scanPathForExecutables walks each directory in pathEnv (first-wins dedup
+// by basename, mirroring shell `command -v` semantics), collects executable
+// regular files whose name looks like a command, applies version-flag
+// overrides, sorts by name, and caps the result.
+func scanPathForExecutables(pathEnv string, overrides map[string]string, cap int) []hostProbeDef {
+	seen := make(map[string]struct{})
+	out := make([]hostProbeDef, 0, 64)
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			if !looksLikeCommandName(name) {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			mode := info.Mode()
+			if mode.IsDir() {
+				continue
+			}
+			if mode&0o111 == 0 {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, hostProbeDef{
+				Name:        name,
+				VersionFlag: overrides[name],
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if cap > 0 && len(out) > cap {
+		out = out[:cap]
+	}
+	return out
+}
+
+// looksLikeCommandName filters out directory entries whose names contain
+// characters no one types at a shell prompt. The goal is to drop noise
+// (files like `.keep`, `README`, entries with shell metacharacters) before
+// we generate a transition per entry. Conservative: only dash, underscore,
+// dot, plus, and alphanumerics are allowed.
+func looksLikeCommandName(s string) bool {
+	if s == "" || s[0] == '.' {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r == '-', r == '_', r == '.', r == '+':
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // HostDiscoveryDeps captures the collaborators the topology needs at
-// construction time. Repository is the only hard dependency; AdminEmails is
-// reserved for future authorisation guards.
+// construction time. Repository is the only hard dependency; ProbeResolver
+// is optional and defaults to DefaultHostProbeResolver so callers don't have
+// to think about it.
 type HostDiscoveryDeps struct {
-	Repository persist.HostCapabilityRepository
-	Source     string // e.g. "bootstrap" | "session" | "manual"
+	Repository    persist.HostCapabilityRepository
+	Source        string // e.g. "bootstrap" | "session" | "manual"
+	ProbeResolver HostProbeResolver
 }
 
 // hostDiscoveryProbeTimeout is the per-probe timeout mandated by GUD-001.
@@ -121,6 +213,12 @@ func PlaceHostProbeRaw(binaryName string) string {
 // p-snapshot so the topology stays deadlock-free in tests that don't want to
 // stub a repository.
 func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn.CPN {
+	resolver := deps.ProbeResolver
+	if resolver == nil {
+		resolver = DefaultHostProbeResolver
+	}
+	probes := resolver()
+
 	places := map[string]*cpn.Place{
 		PlaceHostTrigger:      cpn.NewPlace(PlaceHostTrigger, cpn.ColorString, cpn.SpaceComputation),
 		PlaceHostIdentityRaw:  cpn.NewPlace(PlaceHostIdentityRaw, cpn.ColorShellResult, cpn.SpaceComputation),
@@ -131,7 +229,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 		PlaceHostCapabilities: cpn.NewPlace(PlaceHostCapabilities, cpn.ColorHostFact, cpn.SpaceComputation),
 		PlaceHostSnapshot:     cpn.NewPlace(PlaceHostSnapshot, cpn.ColorHostFact, cpn.SpaceComputation),
 	}
-	for _, probe := range hostProbeRegistry {
+	for _, probe := range probes {
 		id := PlaceHostProbeRaw(probe.Name)
 		places[id] = cpn.NewPlace(id, cpn.ColorShellResult, cpn.SpaceComputation)
 	}
@@ -160,7 +258,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 	}
 	transitions["t-uname"] = tUname
 
-	for _, probe := range hostProbeRegistry {
+	for _, probe := range probes {
 		probe := probe // capture
 		id := "t-probe-" + probe.Name
 		out := PlaceHostProbeRaw(probe.Name)
@@ -179,7 +277,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 
 	transitions["t-parse-identity"] = newParseIdentityTransition()
 	transitions["t-parse-kernel"] = newParseKernelTransition()
-	transitions["t-parse-binaries"] = newParseBinariesTransition()
+	transitions["t-parse-binaries"] = newParseBinariesTransition(probes)
 	transitions["t-derive"] = newDeriveTransition(deps)
 	transitions["t-persist"] = newPersistTransition(deps)
 
@@ -197,27 +295,24 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 	// Seed the trigger place with one token per bash transition so they can
 	// all fire concurrently in the first batch (REQ-004). SeedFunc is also
 	// re-invoked by Reset() so the net is reusable.
-	c.SeedFunc = seedHostDiscoveryTrigger
-	seedHostDiscoveryTrigger(c)
+	triggerCount := 2 + len(probes) // t-who + t-uname + one per probe.
+	seed := func(c *cpn.CPN) {
+		trigger, ok := c.Places[PlaceHostTrigger]
+		if !ok {
+			return
+		}
+		for i := 0; i < triggerCount; i++ {
+			_ = trigger.Deposit(&cpn.Token{
+				Color:   cpn.ColorString,
+				Space:   cpn.SpaceComputation,
+				Payload: "go",
+			})
+		}
+	}
+	c.SeedFunc = seed
+	seed(c)
 
 	return c
-}
-
-// seedHostDiscoveryTrigger deposits one trigger token per bash transition.
-func seedHostDiscoveryTrigger(c *cpn.CPN) {
-	trigger, ok := c.Places[PlaceHostTrigger]
-	if !ok {
-		return
-	}
-	// Count bash transitions: t-who + t-uname + len(hostProbeRegistry).
-	n := 2 + len(hostProbeRegistry)
-	for i := 0; i < n; i++ {
-		_ = trigger.Deposit(&cpn.Token{
-			Color:   cpn.ColorString,
-			Space:   cpn.SpaceComputation,
-			Payload: "go",
-		})
-	}
 }
 
 // hostDiscoveryTopologyFactoryForSession is the TopologyFactory shim for
@@ -282,8 +377,9 @@ func probeScript(def hostProbeDef) string {
 		flag = "--version"
 	}
 	// `command -v` returns non-zero when missing; we print the empty path
-	// then skip the version invocation. The probe registry is a closed
-	// allow-list, so we inline the binary name without quoting.
+	// then skip the version invocation. Binary names are pre-filtered by
+	// looksLikeCommandName, so inlining without quoting is safe (no shell
+	// metacharacters can reach this script body).
 	return fmt.Sprintf(
 		"p=$(command -v %s 2>/dev/null || true); printf 'path||%%s\\n' \"${p}\"; "+
 			"if [ -n \"${p}\" ]; then printf 'version||%%s\\n' \"$(%s %s 2>&1 | head -n 1)\"; fi",
@@ -317,11 +413,11 @@ func newParseKernelTransition() *cpn.Transition {
 	return t
 }
 
-func newParseBinariesTransition() *cpn.Transition {
+func newParseBinariesTransition(probes []hostProbeDef) *cpn.Transition {
 	// One input place per probe; one output place carrying the aggregated
 	// []BinaryProbe slice.
-	inputs := make([]string, 0, len(hostProbeRegistry))
-	for _, p := range hostProbeRegistry {
+	inputs := make([]string, 0, len(probes))
+	for _, p := range probes {
 		inputs = append(inputs, PlaceHostProbeRaw(p.Name))
 	}
 	// Sort inputs for deterministic consume order.
@@ -586,11 +682,12 @@ func parseBinaryProbeFromShell(name string, tok cpn.Token) persist.BinaryProbe {
 // string. Exported for unit tests.
 //
 // Examples:
-//   gcc  : "gcc (Ubuntu 13.2.0-4ubuntu3) 13.2.0" → "13.2.0"
-//   go   : "go version go1.22.3 linux/amd64"     → "1.22.3"
-//   node : "v20.11.1"                             → "20.11.1"
-//   py3  : "Python 3.11.6"                        → "3.11.6"
-//   ssh  : "OpenSSH_9.6p1 Ubuntu-3"               → "9.6p1"
+//
+//	gcc  : "gcc (Ubuntu 13.2.0-4ubuntu3) 13.2.0" → "13.2.0"
+//	go   : "go version go1.22.3 linux/amd64"     → "1.22.3"
+//	node : "v20.11.1"                             → "20.11.1"
+//	py3  : "Python 3.11.6"                        → "3.11.6"
+//	ssh  : "OpenSSH_9.6p1 Ubuntu-3"               → "9.6p1"
 //
 // Unknown tools fall through to a generic "grab the first X.Y.Z token".
 var versionNumberRe = regexp.MustCompile(`[0-9]+(?:\.[0-9]+){1,3}(?:[A-Za-z0-9]+)?`)

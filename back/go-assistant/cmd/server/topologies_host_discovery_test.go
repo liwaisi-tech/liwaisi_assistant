@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +94,18 @@ func TestHostDiscoveryTopology_EndToEnd(t *testing.T) {
 	c := hostDiscoveryTopologyFactory("test-session", HostDiscoveryDeps{
 		Repository: repo,
 		Source:     persist.HostSnapshotSourceBootstrap,
+		// Pin the probe set so the test doesn't depend on whatever lives in
+		// the host's $PATH during CI. The binaries listed here match the
+		// adapter's canned responses below.
+		ProbeResolver: func() []hostProbeDef {
+			return []hostProbeDef{
+				{Name: "bash"},
+				{Name: "gcc"},
+				{Name: "git"},
+				{Name: "python3"},
+				{Name: "tar"},
+			}
+		},
 	})
 	c.HostRuntime = &cpn.HostRuntime{
 		Adapter: adapter,
@@ -188,6 +202,97 @@ func TestHostDiscoveryTopology_SecretRedaction(t *testing.T) {
 	}
 	if got.Env["FOO_BAR"] != "keep" {
 		t.Errorf("benign key FOO_BAR lost; env=%+v", got.Env)
+	}
+}
+
+// TestScanPathForExecutables verifies $PATH scanning semantics: first-hit
+// wins dedup, executable-bit filtering, directory rejection, name filtering,
+// deterministic sort, override application, and the cap.
+func TestScanPathForExecutables(t *testing.T) {
+	tmp := t.TempDir()
+	dirA := filepath.Join(tmp, "a")
+	dirB := filepath.Join(tmp, "b")
+	for _, d := range []string{dirA, dirB} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	// dirA: git (exec), README (not exec), subdir/ (directory), bad-name with
+	// invalid char, .hidden (leading dot rejected).
+	mustWrite(t, filepath.Join(dirA, "git"), 0o755)
+	mustWrite(t, filepath.Join(dirA, "README"), 0o644)
+	if err := os.Mkdir(filepath.Join(dirA, "subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	mustWrite(t, filepath.Join(dirA, "bad$name"), 0o755)
+	mustWrite(t, filepath.Join(dirA, ".hidden"), 0o755)
+	// dirB: git (should lose to dirA — first-hit-wins), go, ssh.
+	mustWrite(t, filepath.Join(dirB, "git"), 0o755)
+	mustWrite(t, filepath.Join(dirB, "go"), 0o755)
+	mustWrite(t, filepath.Join(dirB, "ssh"), 0o755)
+
+	overrides := map[string]string{"go": "version", "ssh": "-V"}
+	got := scanPathForExecutables(dirA+string(os.PathListSeparator)+dirB, overrides, 0)
+
+	want := []hostProbeDef{
+		{Name: "git"},
+		{Name: "go", VersionFlag: "version"},
+		{Name: "ssh", VersionFlag: "-V"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want=%d (got=%+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("probe[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+
+	// Cap truncates.
+	capped := scanPathForExecutables(dirA+string(os.PathListSeparator)+dirB, overrides, 2)
+	if len(capped) != 2 {
+		t.Errorf("cap=2 len=%d", len(capped))
+	}
+}
+
+func mustWrite(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), mode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestLooksLikeCommandName pins the filter so we don't accidentally broaden
+// or narrow it.
+func TestLooksLikeCommandName(t *testing.T) {
+	accept := []string{"git", "g++", "python3", "docker-compose", "node_exporter", "my.tool", "A"}
+	reject := []string{"", ".hidden", "bad name", "bad|name", "bad$name", "bad/name"}
+	for _, s := range accept {
+		if !looksLikeCommandName(s) {
+			t.Errorf("expected accept: %q", s)
+		}
+	}
+	for _, s := range reject {
+		if looksLikeCommandName(s) {
+			t.Errorf("expected reject: %q", s)
+		}
+	}
+}
+
+// TestDefaultHostProbeResolver_IsDeterministic ensures two consecutive calls
+// return identical slices (same order, same content). PATH contents don't
+// change between adjacent calls, so determinism must hold.
+func TestDefaultHostProbeResolver_IsDeterministic(t *testing.T) {
+	a := DefaultHostProbeResolver()
+	b := DefaultHostProbeResolver()
+	if len(a) != len(b) {
+		t.Fatalf("len differs: %d vs %d", len(a), len(b))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Errorf("[%d] %+v vs %+v", i, a[i], b[i])
+		}
 	}
 }
 
