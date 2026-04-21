@@ -275,7 +275,7 @@ func makeFileWriteExecutor(adapter cpn.HostAdapter) tools.ToolExecutor {
 			args.Mode = 0o644
 		}
 
-		if err := adapter.WriteFile(ctx, args.Path, []byte(args.Content), fs.FileMode(args.Mode)); err != nil {
+		if err := adapter.WriteFile(ctx, args.Path, []byte(args.Content), fs.FileMode(args.Mode)); err != nil { //nolint:gosec // G115: Mode is a POSIX permission bitmask (<=0o777) that fits in uint32
 			if isPathDenied(err) {
 				return cpn.Token{}, fmt.Errorf("error: path %s is outside the allowed root. Use paths under $HOME/.local/brae/", args.Path)
 			}

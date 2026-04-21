@@ -67,11 +67,11 @@ type Decision struct {
 // HostApprovalPrompt is the payload delivered to the frontend as a
 // "host.approval" HITL question. Mirrors the spec §3 REQ-040 contract.
 type HostApprovalPrompt struct {
-	Schema       string   `json:"schema"`        // Always "host.approval".
-	Operation    string   `json:"operation"`     // "exec" | "spawn_pty" | "write_file" | "kill".
-	Command      string   `json:"command"`       // Full command line (or write_file path).
-	RiskBand     RiskBand `json:"risk_band"`     // "safe" | "caution" | "dangerous" | "forbidden" | "unknown".
-	Rationale    string   `json:"rationale"`     // Why the gate paused (e.g. "first-run unknown binary").
+	Schema       string   `json:"schema"`    // Always "host.approval".
+	Operation    string   `json:"operation"` // "exec" | "spawn_pty" | "write_file" | "kill".
+	Command      string   `json:"command"`   // Full command line (or write_file path).
+	RiskBand     RiskBand `json:"risk_band"` // "safe" | "caution" | "dangerous" | "forbidden" | "unknown".
+	Rationale    string   `json:"rationale"` // Why the gate paused (e.g. "first-run unknown binary").
 	Alternatives []string `json:"alternatives,omitempty"`
 }
 

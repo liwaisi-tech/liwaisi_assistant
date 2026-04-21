@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -419,13 +418,6 @@ func TestEvaluate_FirstRunRevokedRequiresHITL(t *testing.T) {
 	if dec.Verdict != VerdictRequireHITL {
 		t.Fatalf("revoked verdict = %s", dec.Verdict)
 	}
-}
-
-// failingFirstRun returns error from Record to drive the err branch.
-type failingFirstRun struct{ memoryFirstRun }
-
-func (f *failingFirstRun) Record(ctx context.Context, hostID, path, sha string) (*persist.FirstRunLedgerEntry, error) {
-	return nil, errors.New("boom")
 }
 
 func TestFirstRunLookup_BinaryNotFound(t *testing.T) {

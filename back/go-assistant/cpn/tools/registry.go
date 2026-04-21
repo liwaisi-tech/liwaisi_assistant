@@ -696,10 +696,18 @@ func (r *Registry) ResolveByName(_ context.Context, nameOrQualified string) (*To
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		return matchedAnchors[i] < matchedAnchors[j]
+	type pair struct {
+		entry  *ToolEntry
+		anchor string
+	}
+	pairs := make([]pair, len(matches))
+	for i := range matches {
+		pairs[i] = pair{entry: matches[i], anchor: matchedAnchors[i]}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].anchor < pairs[j].anchor
 	})
-	return matches[0], nil
+	return pairs[0].entry, nil
 }
 
 // VerifyBinary re-hashes the BinaryPath against BinarySHA256 and returns

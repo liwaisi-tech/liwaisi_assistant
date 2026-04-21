@@ -9,14 +9,10 @@ import (
 )
 
 // osReadFileHostID is a seam so tests can stub out /etc/machine-id.
-var osReadFileHostID = func(path string) ([]byte, error) {
-	return os.ReadFile(path) //nolint:gosec // /etc/machine-id is a well-known path
-}
+var osReadFileHostID = os.ReadFile
 
 // osHostname is a seam for tests.
-var osHostname = func() (string, error) {
-	return os.Hostname()
-}
+var osHostname = os.Hostname
 
 // fallbackMachineIDHash mirrors the deterministic FNV-derived identifier
 // used by the topology's own fallback so the bootstrap key and the

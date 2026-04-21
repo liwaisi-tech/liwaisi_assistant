@@ -14,13 +14,13 @@ import (
 // BRAEExecutor handles A2A JSON-RPC requests by delegating to the session service.
 // It bridges A2A protocol semantics to the CPN application layer.
 type BRAEExecutor struct {
-	service A2ASessionPort
+	service SessionPort
 	mapper  *Mapper
 	logger  *slog.Logger
 }
 
 // NewBRAEExecutor creates a new A2A executor wired to the given session service.
-func NewBRAEExecutor(service A2ASessionPort, mapper *Mapper, logger *slog.Logger) *BRAEExecutor {
+func NewBRAEExecutor(service SessionPort, mapper *Mapper, logger *slog.Logger) *BRAEExecutor {
 	return &BRAEExecutor{
 		service: service,
 		mapper:  mapper,

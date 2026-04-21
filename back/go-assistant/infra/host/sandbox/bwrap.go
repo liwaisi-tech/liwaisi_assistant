@@ -54,13 +54,13 @@ type Wrapper struct {
 }
 
 // New returns a Wrapper with sensible defaults.
-func New(cap Capability) *Wrapper {
-	if cap == nil {
-		cap = NewDefaultCapability()
+func New(capability Capability) *Wrapper {
+	if capability == nil {
+		capability = NewDefaultCapability()
 	}
 	home, _ := os.UserHomeDir()
 	return &Wrapper{
-		Cap:      cap,
+		Cap:      capability,
 		JailRoot: filepath.Join(home, ".local", "brae", "work"),
 	}
 }
@@ -110,8 +110,9 @@ func (w *Wrapper) wrapBwrap(req cpn.ExecRequest, profile cpn.SandboxProfile) cpn
 	}
 	// Preserve env forwarding: bwrap inherits parent env by default; we
 	// merely ensure PATH propagates even in --unshare-all mode.
-	argv := append(base, "--")
-	argv = append(argv, req.Command)
+	argv := make([]string, 0, len(base)+2+len(req.Args))
+	argv = append(argv, base...)
+	argv = append(argv, "--", req.Command)
 	argv = append(argv, req.Args...)
 
 	out := req
@@ -134,8 +135,7 @@ func (w *Wrapper) wrapFirejail(req cpn.ExecRequest, profile cpn.SandboxProfile) 
 	case cpn.SandboxNetworkOff:
 		args = append(args, "--read-only=/", "--net=none")
 	}
-	args = append(args, "--")
-	args = append(args, req.Command)
+	args = append(args, "--", req.Command)
 	args = append(args, req.Args...)
 
 	out := req

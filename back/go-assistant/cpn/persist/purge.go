@@ -126,4 +126,3 @@ func (p *PurgeService) Loop(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
-

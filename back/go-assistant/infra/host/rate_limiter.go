@@ -98,7 +98,7 @@ func (l *TokenBucketRateLimiter) Allow(sessionID string) bool {
 	}
 
 	if b.tokens >= 1 {
-		b.tokens -= 1
+		b.tokens--
 		return true
 	}
 	return false

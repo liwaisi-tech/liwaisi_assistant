@@ -21,15 +21,15 @@ const (
 // HostPolicy is the YAML-loadable policy document per spec §4. Every
 // pattern in *_patterns is compiled on load.
 type HostPolicy struct {
-	Version          int             `yaml:"version"`
-	Defaults         PolicyDefaults  `yaml:"defaults"`
-	ForbiddenPat     []string        `yaml:"forbidden_patterns"`
-	SafePat          []string        `yaml:"safe_patterns"`
-	CautionPat       []string        `yaml:"caution_patterns"`
-	DangerousPat     []string        `yaml:"dangerous_patterns"`
-	HITLPat          []string        `yaml:"hitl_patterns"`
-	PathJail         PolicyPathJail  `yaml:"path_jail"`
-	SandboxMappings  map[string]SandboxMapping `yaml:"sandbox_mappings"`
+	Version         int                       `yaml:"version"`
+	Defaults        PolicyDefaults            `yaml:"defaults"`
+	ForbiddenPat    []string                  `yaml:"forbidden_patterns"`
+	SafePat         []string                  `yaml:"safe_patterns"`
+	CautionPat      []string                  `yaml:"caution_patterns"`
+	DangerousPat    []string                  `yaml:"dangerous_patterns"`
+	HITLPat         []string                  `yaml:"hitl_patterns"`
+	PathJail        PolicyPathJail            `yaml:"path_jail"`
+	SandboxMappings map[string]SandboxMapping `yaml:"sandbox_mappings"`
 
 	// ── Compiled state (populated by finalize). Not YAML-serialised. ──
 

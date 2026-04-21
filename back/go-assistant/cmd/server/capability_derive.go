@@ -25,8 +25,9 @@ const minGoVersion = "1.22"
 // compatibility with future rules (e.g. distro-specific capabilities) — the
 // v1 rule set ignores them but the signature is stable.
 //
-//nolint:gocognit // the rule table is intentionally flat so each capability
 // reads like the spec row it implements.
+//
+//nolint:gocognit // the rule table is intentionally flat so each capability
 func DeriveCapabilities(_ persist.HostIdentity, _ persist.HostKernel, binaries []persist.BinaryProbe) []persist.Capability {
 	// Index by name for O(1) lookup. Probes that never ran (missing entries
 	// from the probe registry) are treated as "not present".
@@ -166,9 +167,9 @@ func splitMajorMinor(v string) (major, minor int, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	min, err := strconv.Atoi(minStr)
+	minVer, err := strconv.Atoi(minStr)
 	if err != nil {
 		return 0, 0, false
 	}
-	return maj, min, true
+	return maj, minVer, true
 }

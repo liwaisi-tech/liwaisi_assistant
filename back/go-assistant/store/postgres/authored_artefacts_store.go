@@ -88,7 +88,7 @@ func (s *AuthoredArtefactStore) PreWrite(ctx context.Context, intent persist.Wri
 		 )`,
 		id, path, string(classification), setID, intent.ForgeRunID, intent.HostID,
 		intent.FlowHash, intent.AuthoringCPNID, intent.TransitionID, intent.SessionID,
-		int32(mode),
+		int32(mode), //nolint:gosec // G115: POSIX file mode fits in int32; column type is bigint in schema
 	)
 	if err != nil {
 		return "", fmt.Errorf("postgres artefact pre-write: %w", err)
@@ -184,7 +184,7 @@ func (s *AuthoredArtefactStore) Rollback(ctx context.Context, setID, quarantineP
 	if err != nil {
 		return fmt.Errorf("postgres rollback begin: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck // deferred rollback of already-committed tx is a no-op; error is unactionable
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE authored_artefacts
@@ -235,7 +235,7 @@ func (s *AuthoredArtefactStore) Restore(ctx context.Context, setID, actor string
 	if err != nil {
 		return fmt.Errorf("postgres restore begin: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck // deferred rollback of already-committed tx is a no-op; error is unactionable
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE authored_artefacts
@@ -269,7 +269,7 @@ func (s *AuthoredArtefactStore) PurgeExpired(ctx context.Context, cutoff time.Ti
 	if err != nil {
 		return nil, fmt.Errorf("postgres purge begin: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck // deferred rollback of already-committed tx is a no-op; error is unactionable
 
 	rows, err := tx.Query(ctx,
 		`SELECT `+artefactSelectColumns+` FROM authored_artefacts
@@ -380,7 +380,6 @@ func (s *AuthoredArtefactStore) ListByHost(ctx context.Context, hostID string, f
 	if filter.Offset > 0 {
 		q += fmt.Sprintf(" OFFSET $%d", idx)
 		args = append(args, filter.Offset)
-		idx++
 	}
 
 	rows, err := s.pool.Query(ctx, q, args...)

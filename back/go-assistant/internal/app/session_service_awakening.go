@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -331,22 +330,4 @@ func (s *SessionService) seedAwakeningOnRoot(root *cpn.CPN, snap persist.HostCap
 		return
 	}
 	cpn.SeedHostSnapshot(root, snap)
-}
-
-// envelopeToJSON is a tiny helper used by tests to assert structural
-// equality of emitted A2UI payloads. It round-trips through encoding/json
-// so key ordering is canonical.
-func envelopeToJSON(e awakens.A2UIMessage) ([]byte, error) { return json.Marshal(e) }
-
-// isInteractiveChannel reports whether the channel participates in
-// conversational turn-taking. Today every defined ChannelType is
-// interactive; the helper is a seam for future non-interactive channels
-// (batch, webhook) that should skip awakening.
-func isInteractiveChannel(ch cpn.ChannelType) bool {
-	switch ch {
-	case cpn.ChannelWeb, cpn.ChannelWhatsApp, cpn.ChannelTelegram:
-		return true
-	default:
-		return true
-	}
 }

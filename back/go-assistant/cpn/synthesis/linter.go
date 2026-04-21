@@ -16,12 +16,12 @@ import (
 type LintResult struct {
 	PassedFlag       bool
 	UnsafePrimitives []string
-	SizeViolations  []string
-	SpaceViolations []string
-	UnresolvedArcs  []string
-	DisallowedKinds []string
-	MissingTerminal bool
-	Other           []string
+	SizeViolations   []string
+	SpaceViolations  []string
+	UnresolvedArcs   []string
+	DisallowedKinds  []string
+	MissingTerminal  bool
+	Other            []string
 }
 
 // Passed satisfies cpn.LintResultPort.
@@ -95,20 +95,20 @@ func (r LintResult) Err() error {
 //     (CON-003 → ErrSpaceIsolationViolated).
 //
 // Pure function — safe for concurrent use and fuzz tests.
-func Lint(topo *persist.CPNTopology, safe cpn.SafeRegistryPort, cap cpn.SizeCap) LintResult {
+func Lint(topo *persist.CPNTopology, safe cpn.SafeRegistryPort, sizeCap cpn.SizeCap) LintResult {
 	res := LintResult{}
 	if topo == nil {
 		res.Other = append(res.Other, "topology is nil")
 		return res
 	}
-	cap = cap.Resolved()
+	sizeCap = sizeCap.Resolved()
 
 	// ── Size caps (CON-001) ───────────────────────────────────────────
-	if n := len(topo.Places); n > cap.MaxPlaces {
-		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("places=%d > max=%d", n, cap.MaxPlaces))
+	if n := len(topo.Places); n > sizeCap.MaxPlaces {
+		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("places=%d > max=%d", n, sizeCap.MaxPlaces))
 	}
-	if n := len(topo.Transitions); n > cap.MaxTransitions {
-		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("transitions=%d > max=%d", n, cap.MaxTransitions))
+	if n := len(topo.Transitions); n > sizeCap.MaxTransitions {
+		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("transitions=%d > max=%d", n, sizeCap.MaxTransitions))
 	}
 	arcs := 0
 	for _, tr := range topo.Transitions {
@@ -117,8 +117,8 @@ func Lint(topo *persist.CPNTopology, safe cpn.SafeRegistryPort, cap cpn.SizeCap)
 			arcs++
 		}
 	}
-	if arcs > cap.MaxArcs {
-		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("arcs=%d > max=%d", arcs, cap.MaxArcs))
+	if arcs > sizeCap.MaxArcs {
+		res.SizeViolations = append(res.SizeViolations, fmt.Sprintf("arcs=%d > max=%d", arcs, sizeCap.MaxArcs))
 	}
 
 	// Pre-index places for arc + space checks.

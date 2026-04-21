@@ -38,7 +38,7 @@ func (h *Handlers) HandleAdminListSkills(w http.ResponseWriter, r *http.Request)
 		deprecatedFilter = "false"
 	}
 
-	var filtered []app.Skill
+	filtered := make([]app.Skill, 0, len(m.Skills))
 	for _, sk := range m.Skills {
 		if kindFilter != "" && string(sk.Kind) != kindFilter {
 			continue
@@ -55,7 +55,7 @@ func (h *Handlers) HandleAdminListSkills(w http.ResponseWriter, r *http.Request)
 			if sk.Deprecated {
 				continue
 			}
-		// "all" passes everything through
+			// "all" passes everything through
 		}
 		filtered = append(filtered, sk)
 	}

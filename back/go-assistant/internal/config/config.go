@@ -43,7 +43,7 @@ type Def struct {
 // model_reasoning, model_long_context, model_summarize, model_thinking) were
 // removed per spec-architecture-model-selection-centralization.md
 // (REQ-CFG-002). The concrete model for every LLM transition is now computed
-// from PRODUCT_DEFAULT_MODEL and the user's preferences; no operator-level
+// from ProductDefaultModel and the user's preferences; no operator-level
 // override remains.
 var PlatformConfigs = []Def{
 	// LLM

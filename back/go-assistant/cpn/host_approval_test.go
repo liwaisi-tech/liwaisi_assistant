@@ -106,4 +106,3 @@ func TestBuildToolApprovalA2UI_EmptyArgsYieldsObjectStub(t *testing.T) {
 		t.Fatalf("envelope failed to parse: %v", err)
 	}
 }
-

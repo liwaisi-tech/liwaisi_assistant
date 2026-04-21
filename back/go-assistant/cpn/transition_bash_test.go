@@ -11,13 +11,13 @@ import (
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 type mockHostAdapter struct {
-	execResult cpn_execResult
+	execResult cpnExecResult
 	execErr    error
 	calls      int
 }
 
 // local struct alias — avoids import cycle.
-type cpn_execResult = ExecResult
+type cpnExecResult = ExecResult
 
 func (m *mockHostAdapter) Exec(_ context.Context, _ ExecRequest) (ExecResult, error) {
 	m.calls++
@@ -280,7 +280,6 @@ type mockSessionMgr struct {
 	chunks chan []byte
 	status chan PTYStatus
 	sessID string
-	opened int
 }
 
 func (m *mockSessionMgr) Open(_ context.Context, _ PTYRequest) (string, error) {

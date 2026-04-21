@@ -246,12 +246,12 @@ func parseTopologyResponse(raw string) (json.RawMessage, error) {
 
 func extractTopologyBlock(raw string) string {
 	const open = "<topology>"
-	const close = "</topology>"
+	const closeTag = "</topology>"
 	i := strings.Index(raw, open)
 	if i < 0 {
 		return firstJSONObject(raw)
 	}
-	j := strings.Index(raw[i+len(open):], close)
+	j := strings.Index(raw[i+len(open):], closeTag)
 	if j < 0 {
 		return firstJSONObject(raw[i+len(open):])
 	}

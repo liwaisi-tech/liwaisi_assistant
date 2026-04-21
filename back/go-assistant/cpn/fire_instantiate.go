@@ -43,8 +43,8 @@ func fireInstantiate(ctx context.Context, t *Transition, c *CPN, consumed []Toke
 	}
 
 	// Re-validate with current safe registry (AC-007).
-	cap := DefaultSizeCap()
-	lintRes := lintTopology(record.TopologyJSON, c.SafeRegistry, cap)
+	sizeCap := DefaultSizeCap()
+	lintRes := lintTopology(record.TopologyJSON, c.SafeRegistry, sizeCap)
 	if !lintRes.Passed() {
 		return nil, 0, fmt.Errorf("%w: %v", ErrDeprecatedDependency, lintRes.Err())
 	}

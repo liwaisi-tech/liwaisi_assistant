@@ -50,9 +50,9 @@ type SkillManifestService struct {
 	hostID       string
 	builtinNames []string
 
-	mu          sync.Mutex
-	cached      *Manifest
-	cachedAt    time.Time
+	mu       sync.Mutex
+	cached   *Manifest
+	cachedAt time.Time
 }
 
 // NewSkillManifestService creates the service. builtinNames is the ordered list
@@ -103,7 +103,7 @@ func (s *SkillManifestService) Build(ctx context.Context) (Manifest, error) {
 }
 
 func (s *SkillManifestService) build(ctx context.Context) (Manifest, error) {
-	var skills []Skill
+	skills := make([]Skill, 0, len(s.builtinNames))
 
 	// 1. Built-in topologies — always first for prompt-cache stability.
 	for _, name := range s.builtinNames {

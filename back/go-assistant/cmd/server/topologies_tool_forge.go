@@ -105,8 +105,8 @@ func BuildToolForgeTopology(sessionID string, deps ToolForgeDeps) *cpn.CPN {
 	tDesignSpec := cpn.NewTransition("t-design-spec", cpn.NodeKindLLM,
 		[]string{PlaceForgeRequest, PlaceForgeCompilerChoice}, []string{PlaceForgeSpec})
 	tDesignSpec.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   2048,
-		RequireJSON: true,
+		MaxTokens:    2048,
+		RequireJSON:  true,
 		StreamOutput: false,
 	}
 	tDesignSpec.SystemPrompt = `You are a software architect. Given a forge request and a compiler choice,
@@ -119,8 +119,8 @@ Output ONLY valid JSON.`
 	tEmitSource := cpn.NewTransition("t-emit-source", cpn.NodeKindLLM,
 		[]string{PlaceForgeSpec}, []string{PlaceForgeSource})
 	tEmitSource.LLMConfig = &cpn.LLMConfig{
-		MaxTokens:   4096,
-		RequireJSON: true,
+		MaxTokens:    4096,
+		RequireJSON:  true,
 		StreamOutput: false,
 	}
 	tEmitSource.SystemPrompt = `You are a systems programmer. Given a tool spec, write the complete source file.
@@ -154,9 +154,9 @@ echo "{\"path\":\"$PATH_VAL\",\"written\":true}"
 	tCompile := cpn.NewTransition("t-compile", cpn.NodeKindBash,
 		[]string{PlaceForgeSourceWritten}, []string{PlaceForgeCompiledBinary})
 	tCompile.BashConfig = &cpn.BashConfig{
-		Command: "sh",
-		Args:    []string{"-c", buildCompileScript()},
-		Timeout: compileTimeout,
+		Command:          "sh",
+		Args:             []string{"-c", buildCompileScript()},
+		Timeout:          compileTimeout,
 		AllowNonZeroExit: false,
 	}
 	transitions["t-compile"] = tCompile
@@ -165,9 +165,9 @@ echo "{\"path\":\"$PATH_VAL\",\"written\":true}"
 	tSmokeTest := cpn.NewTransition("t-smoke-test", cpn.NodeKindBash,
 		[]string{PlaceForgeCompiledBinary}, []string{PlaceForgeSmokeOK})
 	tSmokeTest.BashConfig = &cpn.BashConfig{
-		Command: "sh",
-		Args:    []string{"-c", smokeTestScript()},
-		Timeout: smokeTimeout,
+		Command:          "sh",
+		Args:             []string{"-c", smokeTestScript()},
+		Timeout:          smokeTimeout,
 		AllowNonZeroExit: true,
 	}
 	transitions["t-smoke-test"] = tSmokeTest

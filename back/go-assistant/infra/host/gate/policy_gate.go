@@ -301,8 +301,7 @@ func (g *PolicyHostGate) Evaluate(ctx context.Context, op cpn.GateOp) Decision {
 	// ── 1. Forbidden short-circuit ───────────────────────────────────
 	band, _ := policy.Classify(target)
 	dec.RiskBand = band
-	switch band {
-	case RiskForbidden:
+	if band == RiskForbidden {
 		dec.Verdict = VerdictDeny
 		dec.Reason = "command matches forbidden_patterns"
 		return dec

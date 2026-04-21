@@ -19,18 +19,18 @@ type ModelRoleResponse struct {
 //
 // Field layout (REQ-OBS-002, spec-architecture-model-selection-centralization.md):
 //   - Default          — top-level "default" key that the frontend reads to
-//                        seed the onboarding wizard. When a ModelRegistry is
-//                        wired this equals the product-default row's registry_id;
-//                        otherwise it falls back to openrouter.PRODUCT_DEFAULT_MODEL.
+//     seed the onboarding wizard. When a ModelRegistry is
+//     wired this equals the product-default row's registry_id;
+//     otherwise it falls back to openrouter.ProductDefaultModel.
 //   - DefaultModel     — legacy top-level alias of Default, retained so existing
-//                        frontends that already parse `default_model` keep working.
+//     frontends that already parse `default_model` keep working.
 //   - AvailableModels  — backwards-compatible flat slice of registry_ids (invokable
-//                        only), for the existing Settings/onboarding picker.
+//     only), for the existing Settings/onboarding picker.
 //   - Roles            — per-role default, surfaced for the per-role override table.
 //   - Registry         — when the registry is wired, the full entry list so the
-//                        frontend can render capability badges + pricing without
-//                        round-trips to /admin/models. Never nil; empty slice
-//                        when the feature is disabled.
+//     frontend can render capability badges + pricing without
+//     round-trips to /admin/models. Never nil; empty slice
+//     when the feature is disabled.
 type ModelsResponse struct {
 	Default         string                       `json:"default"`
 	DefaultModel    string                       `json:"default_model"`
@@ -129,8 +129,8 @@ func (h *Handlers) writeLegacyModelsResponse(w http.ResponseWriter) {
 		})
 	}
 	writeJSON(w, http.StatusOK, ModelsResponse{
-		Default:         openrouter.PRODUCT_DEFAULT_MODEL,
-		DefaultModel:    openrouter.PRODUCT_DEFAULT_MODEL,
+		Default:         openrouter.ProductDefaultModel,
+		DefaultModel:    openrouter.ProductDefaultModel,
 		AvailableModels: openrouter.AvailableModels,
 		Roles:           roles,
 		Registry:        []ModelRegistryEntryResponse{},

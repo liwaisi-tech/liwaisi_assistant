@@ -228,8 +228,6 @@ func (r *ModelRegistryRepository) ListInvokable(ctx context.Context) ([]*cpn.Mod
 }
 
 // ListAll returns every row matching the filter.
-//
-//nolint:gocritic // ModelListFilter is a deliberate value type in the port interface
 func (r *ModelRegistryRepository) ListAll(ctx context.Context, filter cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, int, error) {
 	var (
 		wheres []string

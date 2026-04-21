@@ -126,6 +126,7 @@ func (m *InMemoryBashSessionManager) openWithEmitConfig(
 	}
 
 	sessCtx, cancel := context.WithCancel(context.Background())
+	//nolint:gosec // G204: command/args are caller-authorised via the host gate and policy layer before reaching this adapter
 	cmd := exec.CommandContext(sessCtx, req.Command, req.Args...)
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
@@ -498,6 +499,7 @@ func (m *InMemoryBashSessionManager) waitLoop(sess *bashSession) {
 // deps beyond creack/pty (google/uuid is available but indirect).
 func newSessionID() (string, error) {
 	var b [16]byte
+	//nolint:gosec // G115: UnixMilli cannot be negative for any realistic clock; bits are truncated to a session id anyway
 	ms := uint64(time.Now().UnixMilli())
 	b[0] = byte(ms >> 40)
 	b[1] = byte(ms >> 32)

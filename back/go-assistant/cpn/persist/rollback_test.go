@@ -17,9 +17,9 @@ type fakeFS struct {
 	mu       sync.Mutex
 	files    map[string][]byte // full absolute path → content (for leaves)
 	dirs     map[string]struct{}
-	failOn   string            // path prefix that Move should fail on
-	failKind string            // "src" or "dst" — which side triggers the fail
-	moves    []string          // audit trail for assertions
+	failOn   string   // path prefix that Move should fail on
+	failKind string   // "src" or "dst" — which side triggers the fail
+	moves    []string // audit trail for assertions
 }
 
 func newFakeFS() *fakeFS {
@@ -153,11 +153,11 @@ func TestRollbackService_HappyPath(t *testing.T) {
 	}
 
 	svc := &RollbackService{
-		Ledger:     ledger,
-		FS:         fs,
+		Ledger:      ledger,
+		FS:          fs,
 		AllowedRoot: root,
-		Tools:      NoopToolDeprecator{},
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Tools:       NoopToolDeprecator{},
+		Logger:      slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
 	if err := svc.Rollback(ctx, "s1", "alice"); err != nil {
@@ -203,11 +203,11 @@ func TestRollbackService_ReversesOnFailure(t *testing.T) {
 	fs.failKind = "dst"
 
 	svc := &RollbackService{
-		Ledger:     ledger,
-		FS:         fs,
+		Ledger:      ledger,
+		FS:          fs,
 		AllowedRoot: root,
-		Tools:      NoopToolDeprecator{},
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Tools:       NoopToolDeprecator{},
+		Logger:      slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
 	err := svc.Rollback(ctx, "s1", "alice")
@@ -245,11 +245,11 @@ func TestRollbackService_DeprecatesRegisteredTools(t *testing.T) {
 		registered: map[string]string{binPath: "brae/my-tool@1.0.0"},
 	}
 	svc := &RollbackService{
-		Ledger:     ledger,
-		FS:         fs,
+		Ledger:      ledger,
+		FS:          fs,
 		AllowedRoot: root,
-		Tools:      tools,
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Tools:       tools,
+		Logger:      slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
 	if err := svc.Rollback(ctx, "s1", "alice"); err != nil {
@@ -272,11 +272,11 @@ func TestRollbackService_RestoreHappyPath(t *testing.T) {
 	_ = ledger.PostWrite(ctx, id, "h", 1, "t")
 
 	svc := &RollbackService{
-		Ledger:     ledger,
-		FS:         fs,
+		Ledger:      ledger,
+		FS:          fs,
 		AllowedRoot: root,
-		Tools:      NoopToolDeprecator{},
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Tools:       NoopToolDeprecator{},
+		Logger:      slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 	if err := svc.Rollback(ctx, "s1", "alice"); err != nil {
 		t.Fatalf("Rollback: %v", err)

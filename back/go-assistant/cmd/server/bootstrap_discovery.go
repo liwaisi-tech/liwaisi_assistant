@@ -204,8 +204,8 @@ func (a *hostDiscoveryRunnerAdapter) Rediscover(ctx context.Context) (persist.Ho
 // Small OS-seam helpers so tests can stub. Mirrors
 // internal/app/host_bootstrap.go.
 var (
-	readOSFile        = osReadFile
-	osHostnameForCmd  = osHostname
+	readOSFile            = osReadFile
+	osHostnameForCmd      = osHostname
 	trimBytesForMachineID = func(data []byte) string {
 		out := make([]byte, 0, len(data))
 		for _, b := range data {

@@ -129,7 +129,7 @@ func (h *Handlers) HandleFirstRunRevoke(w http.ResponseWriter, r *http.Request) 
 	if hostID == "" {
 		// Gate exposes its HostID; callers may omit to revoke on the
 		// local host.
-		hostID, _ = hostHostID()
+		hostID = hostHostID()
 	}
 	if err := h.FirstRun.Revoke(r.Context(), hostID, sha); err != nil {
 		h.Logger.Error("revoke first-run", "sha", sha, "error", err)
@@ -187,10 +187,10 @@ func mapFirstRun(entries []*persist.FirstRunLedgerEntry) []map[string]any {
 }
 
 // hostHostID returns the local hostname or "localhost" as a fallback.
-func hostHostID() (string, error) {
+func hostHostID() string {
 	h, err := os.Hostname()
 	if err != nil || h == "" {
-		return "localhost", nil
+		return "localhost"
 	}
-	return h, nil
+	return h
 }

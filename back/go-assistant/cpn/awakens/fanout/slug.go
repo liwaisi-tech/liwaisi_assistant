@@ -1,7 +1,7 @@
 package fanout
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 	"unicode"
@@ -12,14 +12,14 @@ import (
 // produces identical output — and collision-resistant enough for the
 // MaxProbes=16 fanout width: when an ID would otherwise collapse to the
 // empty string (e.g. a command consisting entirely of punctuation) we fall
-// back to an 8-char SHA-1 prefix of the raw input.
+// back to an 8-char SHA-256 prefix of the raw input.
 //
 // Rules:
 //   - Lowercase the input.
 //   - Map Unicode letters/digits to themselves; everything else to '-'.
 //   - Collapse repeat dashes.
 //   - Trim leading/trailing dashes.
-//   - If the result is empty, emit "probe-" + sha1[:8].
+//   - If the result is empty, emit "probe-" + sha256[:8].
 //   - Cap output at 48 runes to keep transition IDs readable.
 func slugify(input string) string {
 	lowered := strings.ToLower(input)
@@ -50,7 +50,7 @@ func slugify(input string) string {
 		slug = strings.TrimRight(slug, "-")
 	}
 	if slug == "" {
-		sum := sha1.Sum([]byte(input))
+		sum := sha256.Sum256([]byte(input))
 		return "probe-" + hex.EncodeToString(sum[:4])
 	}
 	return slug

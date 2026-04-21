@@ -16,9 +16,9 @@ import (
 // spinning up a database.
 type MemoryArtefactLedger struct {
 	mu        sync.RWMutex
-	artefacts map[string]*Artefact     // keyed by artefact ID
-	bySet     map[string][]string      // set_id → [artefact_id...]
-	byForge   map[string][]string      // forge_run_id → [artefact_id...]
+	artefacts map[string]*Artefact // keyed by artefact ID
+	bySet     map[string][]string  // set_id → [artefact_id...]
+	byForge   map[string][]string  // forge_run_id → [artefact_id...]
 	events    map[string][]ArtefactEvent
 	now       func() time.Time
 }
@@ -225,7 +225,7 @@ func (m *MemoryArtefactLedger) Restore(_ context.Context, setID, actor string) e
 func (m *MemoryArtefactLedger) PurgeExpired(_ context.Context, cutoff time.Time, actor string) ([]Artefact, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var out []Artefact
+	out := make([]Artefact, 0, len(m.artefacts))
 	setsPurged := make(map[string]struct{})
 	ts := m.now()
 	for _, art := range m.artefacts {
@@ -258,7 +258,7 @@ func (m *MemoryArtefactLedger) PurgeExpired(_ context.Context, cutoff time.Time,
 func (m *MemoryArtefactLedger) ListByHost(_ context.Context, hostID string, filter ArtefactFilter) ([]Artefact, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var out []Artefact
+	out := make([]Artefact, 0, len(m.artefacts))
 	for _, art := range m.artefacts {
 		if hostID != "" && art.HostID != hostID {
 			continue

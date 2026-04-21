@@ -168,11 +168,11 @@ func main() {
 	}
 	// REQ-MIG-003: record the single product default at startup. The legacy
 	// "default_model" config key and its DEFAULT_MODEL env variable were
-	// removed; PRODUCT_DEFAULT_MODEL is the only default, unconditionally.
-	logger.Info("using product default model", "model", openrouter.PRODUCT_DEFAULT_MODEL)
+	// removed; ProductDefaultModel is the only default, unconditionally.
+	logger.Info("using product default model", "model", openrouter.ProductDefaultModel)
 
 	// ── Driven adapters ─────────────────────────────────────────────────
-	llmClient := openrouter.NewClient(apiKey, openrouter.PRODUCT_DEFAULT_MODEL)
+	llmClient := openrouter.NewClient(apiKey, openrouter.ProductDefaultModel)
 	// Per-call audit recorder (writes one row per LLM invocation to llm_calls).
 	// Only enabled when persistence is configured.
 	var callRecorder openrouter.CallRecorder
@@ -185,7 +185,7 @@ func main() {
 
 	// Inject the product-default model from the infra layer at the composition
 	// root so the app layer never imports infra/openrouter directly.
-	serviceOpts = append(serviceOpts, app.WithDefaultModel(openrouter.PRODUCT_DEFAULT_MODEL))
+	serviceOpts = append(serviceOpts, app.WithDefaultModel(openrouter.ProductDefaultModel))
 
 	if store != nil {
 		serviceOpts = append(serviceOpts,
@@ -201,13 +201,13 @@ func main() {
 	// ── Hot-reload: swap LLM client when config changes ─────────────────
 	// REQ-CFG-002: default_model is no longer a platform config key; only
 	// the API key triggers a client swap. Model selection is resolved
-	// per-session from user preferences with PRODUCT_DEFAULT_MODEL as the
+	// per-session from user preferences with ProductDefaultModel as the
 	// floor (see internal/app/session_service.go::applyUserModelPreferences).
 	if configProvider != nil {
 		configProvider.OnChange(func(key, _ string) {
 			if key == "openrouter_api_key" {
 				newAPIKey := configProvider.Get("openrouter_api_key")
-				newClient := openrouter.NewClient(newAPIKey, openrouter.PRODUCT_DEFAULT_MODEL)
+				newClient := openrouter.NewClient(newAPIKey, openrouter.ProductDefaultModel)
 				newClient.CallRecorder = callRecorder
 				holder.Swap(newClient)
 				logger.Info("LLM client hot-reloaded", "trigger_key", key)
@@ -315,7 +315,6 @@ func main() {
 	var hostCapRepo persist.HostCapabilityRepository
 	if store != nil {
 		hostCapRepo = store.HostCapability()
-		setHostCapabilityRepo(hostCapRepo)
 		serviceOpts = append(serviceOpts,
 			app.WithHostCapabilityRepo(hostCapRepo),
 			app.WithHostDiscoveryFactory(func(sid string) *cpn.CPN {

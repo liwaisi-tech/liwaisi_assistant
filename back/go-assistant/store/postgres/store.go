@@ -25,15 +25,15 @@ type Store struct {
 	rdb     *goredis.Client
 	batcher *EventBatcher
 
-	sessions      persist.SessionRepository
-	events        persist.EventRepository
-	ledger        persist.LedgerRepository
-	llmCalls      persist.LLMCallRepository
-	flows         persist.FlowRepository
-	intelligence  persist.IntelligenceRepository
-	hitl          persist.HITLRepository
-	users         persist.UserRepository
-	personalities persist.PersonalityRepository
+	sessions       persist.SessionRepository
+	events         persist.EventRepository
+	ledger         persist.LedgerRepository
+	llmCalls       persist.LLMCallRepository
+	flows          persist.FlowRepository
+	intelligence   persist.IntelligenceRepository
+	hitl           persist.HITLRepository
+	users          persist.UserRepository
+	personalities  persist.PersonalityRepository
 	waitlist       persist.WaitlistRepository
 	modelRegistry  *ModelRegistryRepository
 	hostCapability *HostCapabilityRepository
@@ -70,18 +70,18 @@ func NewStore(ctx context.Context, pgCfg PoolConfig, redisCfg RedisConfig, migra
 	batcher := NewEventBatcher(pgEventRepo, 100, 500*time.Millisecond)
 
 	s := &Store{
-		pool:          pool,
-		rdb:           rdb,
-		batcher:       batcher,
-		sessions:      storeredis.NewSessionRepository(rdb, pgSessionRepo),
-		events:        pgEventRepo,
-		ledger:        NewLedgerRepository(pool),
-		llmCalls:      NewLLMCallRepository(pool),
-		flows:         NewFlowRepository(pool),
-		intelligence:  NewIntelligenceRepository(pool),
-		hitl:          storeredis.NewHITLRepository(rdb),
-		users:         NewUserRepository(pool),
-		personalities: NewPersonalityStore(pool),
+		pool:           pool,
+		rdb:            rdb,
+		batcher:        batcher,
+		sessions:       storeredis.NewSessionRepository(rdb, pgSessionRepo),
+		events:         pgEventRepo,
+		ledger:         NewLedgerRepository(pool),
+		llmCalls:       NewLLMCallRepository(pool),
+		flows:          NewFlowRepository(pool),
+		intelligence:   NewIntelligenceRepository(pool),
+		hitl:           storeredis.NewHITLRepository(rdb),
+		users:          NewUserRepository(pool),
+		personalities:  NewPersonalityStore(pool),
 		waitlist:       NewWaitlistRepository(pool),
 		modelRegistry:  NewModelRegistryRepository(pool),
 		hostCapability: NewHostCapabilityRepository(pool),

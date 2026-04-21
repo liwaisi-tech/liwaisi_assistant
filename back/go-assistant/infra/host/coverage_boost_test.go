@@ -155,13 +155,13 @@ func TestCheckPathJail_InvalidAbs(t *testing.T) {
 
 func TestContainsDotDot(t *testing.T) {
 	cases := map[string]bool{
-		"..":        true,
-		"../etc":    true,
-		"foo/..":    true,
-		"foo/../x":  true,
-		"foo/bar":   false,
-		"...":       false,
-		"foo..bar":  false,
+		"..":       true,
+		"../etc":   true,
+		"foo/..":   true,
+		"foo/../x": true,
+		"foo/bar":  false,
+		"...":      false,
+		"foo..bar": false,
 	}
 	for in, want := range cases {
 		if got := containsDotDot(in); got != want {

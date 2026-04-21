@@ -354,9 +354,9 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		// §Step-1 token-color gate), so we interpose a ColorString
 		// hop so the preamble text reaches the LLM as a user message.
 		"p-planner-input": cpn.NewPlace("p-planner-input", cpn.ColorString, cpn.SpaceSurface),
-		"p-plan":       cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
-		"p-reviewed":   cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
-		"p-output":     cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
+		"p-plan":          cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
+		"p-reviewed":      cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
+		"p-output":        cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
 	}
 	// REQ-001: seed p-round with {n:0, reset:false} so the initial marking
 	// has the counter available. Also covers REQ-051 (rehydrated
@@ -610,10 +610,10 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 	tAsk.LLMConfig = &cpn.LLMConfig{
 		// REQ-CFG-003/004: Role drives per-role override lookup in
 		// applyUserModelPreferences. Model is written by the resolver.
-		Role:                "structured",
-		MaxTokens:           envInt("MAX_TOKENS_ASK", 1024),
-		Temperature:         0.3,
-		RequireJSON:         true,
+		Role:        "structured",
+		MaxTokens:   envInt("MAX_TOKENS_ASK", 1024),
+		Temperature: 0.3,
+		RequireJSON: true,
 		// REQ-PAR-004: verify JSON-ness of the response and retry once with
 		// a tighter directive if the model emits prose or reasoning tokens.
 		ResponseFmtRequired: true,
@@ -1111,11 +1111,11 @@ func firstQuestionnaireFromTokens(consumed []cpn.Token) (questionnaireSpec, erro
 // surface what the model actually emitted without dumping a huge payload
 // into the error string. 512 is the cap mandated by REQ-PAR-002.
 func rawPayloadPrefix(s string) string {
-	const max = 512
-	if len(s) <= max {
+	const maxLen = 512
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max]
+	return s[:maxLen]
 }
 
 // sessionIDFromTokens best-effort extracts the session id from the first

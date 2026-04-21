@@ -165,8 +165,8 @@ type ArtefactFilter struct {
 	// Classification matches any of the listed values.
 	ClassificationIn []ArtefactClassification
 	// State, when non-empty, keeps only rows in that lifecycle state.
-	State ArtefactState
-	Limit int // zero means "no limit".
+	State  ArtefactState
+	Limit  int // zero means "no limit".
 	Offset int
 }
 

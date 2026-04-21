@@ -70,11 +70,11 @@ func SetTopologyDigest(fn TopologyDigestFunc) { topologyDigestHook = fn }
 
 // ── internal-use wrappers (nil-safe) ──────────────────────────────────────
 
-func lintTopology(topo json.RawMessage, safe SafeRegistryPort, cap SizeCap) LintResultPort {
+func lintTopology(topo json.RawMessage, safe SafeRegistryPort, sizeCap SizeCap) LintResultPort {
 	if lintTopologyHook == nil {
 		return passThroughLint{}
 	}
-	return lintTopologyHook(topo, safe, cap)
+	return lintTopologyHook(topo, safe, sizeCap)
 }
 
 func canonicaliseTopology(topo json.RawMessage) ([]byte, error) {

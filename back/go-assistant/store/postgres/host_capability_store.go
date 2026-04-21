@@ -58,13 +58,6 @@ func (r *HostCapabilityRepository) SetCacheTTL(d time.Duration) {
 	r.cache = make(map[string]hostCapCacheEntry)
 }
 
-// setClock overrides the clock (test helper).
-func (r *HostCapabilityRepository) setClock(fn func() time.Time) {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-	r.now = fn
-}
-
 // Save inserts a new row. The adapter ignores s.ID (the DB generates a UUID
 // via gen_random_uuid()) and stamps CapturedAt = NOW() if unset.
 func (r *HostCapabilityRepository) Save(ctx context.Context, s persist.HostCapabilitySnapshot) error {
@@ -208,10 +201,10 @@ func (r *HostCapabilityRepository) AppendProbeResult(ctx context.Context, hostID
 // scanHostSnapshot reads a single row into HostCapabilitySnapshot.
 func scanHostSnapshot(row pgx.Row) (persist.HostCapabilitySnapshot, error) {
 	var (
-		s                                                       persist.HostCapabilitySnapshot
+		s                                                        persist.HostCapabilitySnapshot
 		identityJSON, kernelJSON, binariesJSON, capabilitiesJSON []byte
-		rawProbes                                               []byte
-		capturedAt                                              time.Time
+		rawProbes                                                []byte
+		capturedAt                                               time.Time
 	)
 	err := row.Scan(
 		&s.ID, &s.HostID, &capturedAt, &s.Source,

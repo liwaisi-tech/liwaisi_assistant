@@ -115,6 +115,7 @@ func (a *OSHostAdapter) Exec(ctx context.Context, req cpn.ExecRequest) (cpn.Exec
 		defer cancel()
 	}
 
+	//nolint:gosec // G204: command/args are caller-authorised via the host gate and policy layer before reaching this adapter
 	cmd := exec.CommandContext(runCtx, req.Command, req.Args...)
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd

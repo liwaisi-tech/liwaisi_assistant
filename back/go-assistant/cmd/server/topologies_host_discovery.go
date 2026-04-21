@@ -105,7 +105,7 @@ func DefaultHostProbeResolver() []hostProbeDef {
 // by basename, mirroring shell `command -v` semantics), collects executable
 // regular files whose name looks like a command, applies version-flag
 // overrides, sorts by name, and caps the result.
-func scanPathForExecutables(pathEnv string, overrides map[string]string, cap int) []hostProbeDef {
+func scanPathForExecutables(pathEnv string, overrides map[string]string, maxCount int) []hostProbeDef {
 	seen := make(map[string]struct{})
 	out := make([]hostProbeDef, 0, 64)
 	for _, dir := range filepath.SplitList(pathEnv) {
@@ -143,8 +143,8 @@ func scanPathForExecutables(pathEnv string, overrides map[string]string, cap int
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	if cap > 0 && len(out) > cap {
-		out = out[:cap]
+	if maxCount > 0 && len(out) > maxCount {
+		out = out[:maxCount]
 	}
 	return out
 }
@@ -313,25 +313,6 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 	seed(c)
 
 	return c
-}
-
-// hostDiscoveryTopologyFactoryForSession is the TopologyFactory shim for
-// the SessionService option. Globals from main.go supply the repository.
-func hostDiscoveryTopologyFactoryForSession(sessionID string) *cpn.CPN {
-	return hostDiscoveryTopologyFactory(sessionID, HostDiscoveryDeps{
-		Repository: globalHostCapabilityRepo,
-		Source:     persist.HostSnapshotSourceSession,
-	})
-}
-
-// globalHostCapabilityRepo is populated by main.go when persistence is
-// enabled. Keeping it package-level matches the pattern used by the
-// manage-models fragment (see topologies_model_registry.go::adminEmailsFromEnv).
-var globalHostCapabilityRepo persist.HostCapabilityRepository
-
-// setHostCapabilityRepo is called by main.go.
-func setHostCapabilityRepo(r persist.HostCapabilityRepository) {
-	globalHostCapabilityRepo = r
 }
 
 // ── Scripts ──────────────────────────────────────────────────────────────────
@@ -690,7 +671,7 @@ func parseBinaryProbeFromShell(name string, tok cpn.Token) persist.BinaryProbe {
 //	ssh  : "OpenSSH_9.6p1 Ubuntu-3"               → "9.6p1"
 //
 // Unknown tools fall through to a generic "grab the first X.Y.Z token".
-var versionNumberRe = regexp.MustCompile(`[0-9]+(?:\.[0-9]+){1,3}(?:[A-Za-z0-9]+)?`)
+var versionNumberRe = regexp.MustCompile(`\d+(?:\.\d+){1,3}(?:[A-Za-z0-9]+)?`)
 
 func ParseBinaryVersion(name, banner string) string {
 	banner = strings.TrimSpace(banner)

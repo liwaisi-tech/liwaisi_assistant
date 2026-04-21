@@ -93,9 +93,9 @@ func TestBuildModelCardList(t *testing.T) {
 
 func TestBuildRegisterModelForm(t *testing.T) {
 	cases := []struct {
-		name      string
-		locale    string
-		wantTitle string
+		name       string
+		locale     string
+		wantTitle  string
 		wantSubmit string
 	}{
 		{"en", "en", "Register a new model", "Register"},
@@ -302,4 +302,3 @@ func TestLocaleFromConsumed(t *testing.T) {
 		})
 	}
 }
-

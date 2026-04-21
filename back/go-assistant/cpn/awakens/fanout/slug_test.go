@@ -42,7 +42,7 @@ func TestSlugify_Determinism(t *testing.T) {
 func TestSlugify_EmptyFallback(t *testing.T) {
 	t.Parallel()
 	// A string that maps entirely to dashes must produce a stable
-	// non-empty slug via the SHA1 fallback.
+	// non-empty slug via the SHA-256 fallback.
 	got := slugify("!@#$")
 	if len(got) == 0 {
 		t.Fatalf("expected non-empty slug fallback, got empty")

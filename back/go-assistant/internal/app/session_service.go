@@ -274,7 +274,8 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	// asynchronously below after the session row exists.
 	s.seedHostCapabilitiesFromCache(ctx, root)
 
-	runAwakeningAsync := s.awakensFactory != nil && isInteractiveChannel(channel)
+	_ = channel // channel is consumed by the topology; every current ChannelType is interactive
+	runAwakeningAsync := s.awakensFactory != nil
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -1172,14 +1173,14 @@ func (s *SessionService) resolveRegionalVariant(ctx context.Context, userID stri
 //  1. UserRecord.ModelOverrides[LLMConfig.Role] when Role is non-empty and
 //     the override is non-empty.
 //  2. UserRecord.PreferredModel when non-empty.
-//  3. openrouter.PRODUCT_DEFAULT_MODEL.
+//  3. openrouter.ProductDefaultModel.
 //
 // This function is the ONLY legitimate mutator of LLMConfig.Model — all
 // topology authors leave it empty and express intent through Role. No ENV
 // lookup occurs here (REQ-CFG-002).
 //
 // Error handling is best-effort: if the user cannot be fetched, every LLM
-// transition is stamped with PRODUCT_DEFAULT_MODEL so the session still
+// transition is stamped with ProductDefaultModel so the session still
 // runs with a well-defined model. Callers MUST NOT attempt to re-resolve
 // the model elsewhere (GUD-001).
 func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cpn.CPN, userID string) {
@@ -1227,7 +1228,7 @@ func newResolveCache() *resolveCache {
 //  1. UserRecord.ModelOverrides[role]          (per-role override)
 //  2. UserRecord.PreferredModel                (global user preference)
 //  3. ModelRegistry role default (when role != "" and registry is wired)
-//  4. ModelRegistry product default / openrouter.PRODUCT_DEFAULT_MODEL
+//  4. ModelRegistry product default / openrouter.ProductDefaultModel
 //
 // When the registry is wired, steps 1-3 each get validated with GetInvokable
 // and fall through on ErrModelNotInvokable / ErrModelNotFound. A WARN log is
@@ -1294,13 +1295,6 @@ func (s *SessionService) resolveModelWithGateCached(ctx context.Context, rec *pe
 		return dm
 	}
 	return cache.productDefault.RegistryID
-}
-
-// validateInvokable returns true when the candidate passes REQ-GATE-001.
-// A false return means the caller should try the next level of the cascade;
-// a WARN has already been logged.
-func (s *SessionService) validateInvokable(ctx context.Context, candidate, source, role string) bool {
-	return s.validateInvokableCached(ctx, candidate, source, role, newResolveCache())
 }
 
 // validateInvokableCached is the memoised variant. The cache is shared

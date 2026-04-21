@@ -10,14 +10,14 @@ import (
 // the binary's bytes so a move/rename of the same file does not force a
 // re-approval.
 type FirstRunLedgerEntry struct {
-	ID               string
-	HostID           string
-	BinaryPath       string
-	BinarySHA256     string
-	FirstSeen        time.Time
-	FirstApprovedBy  string
-	FirstApprovedAt  *time.Time
-	Revoked          bool
+	ID              string
+	HostID          string
+	BinaryPath      string
+	BinarySHA256    string
+	FirstSeen       time.Time
+	FirstApprovedBy string
+	FirstApprovedAt *time.Time
+	Revoked         bool
 }
 
 // FirstRunRepository is the port for the first-run ledger. Implementations
@@ -46,16 +46,16 @@ type FirstRunRepository interface {
 
 // GateDecisionRecord is one audit row per gate decision (REQ-003).
 type GateDecisionRecord struct {
-	ID              string
-	SessionID       string
-	OpKind          string
-	CommandHash     string
-	Path            string
-	Sandbox         string
-	Decision        string
-	Reason          string
-	RiskBand        string
-	DecidedAt       time.Time
+	ID             string
+	SessionID      string
+	OpKind         string
+	CommandHash    string
+	Path           string
+	Sandbox        string
+	Decision       string
+	Reason         string
+	RiskBand       string
+	DecidedAt      time.Time
 	HITLResponseID *string
 }
 

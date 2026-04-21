@@ -86,7 +86,9 @@ type NoopToolDeprecator struct{}
 func (NoopToolDeprecator) Deprecate(context.Context, string, string) error { return nil }
 
 // LookupByBinaryPath always returns (qn="", found=false).
-func (NoopToolDeprecator) LookupByBinaryPath(context.Context, string) (string, bool) { return "", false }
+func (NoopToolDeprecator) LookupByBinaryPath(context.Context, string) (string, bool) {
+	return "", false
+}
 
 // ── RollbackService ────────────────────────────────────────────────────────
 
@@ -97,11 +99,11 @@ func (NoopToolDeprecator) LookupByBinaryPath(context.Context, string) (string, b
 // $HOME/.local/brae/quarantine/<set_id>/ on success, or reverse every move
 // on the first error.
 type RollbackService struct {
-	Ledger     AuthoredArtefactLedger
-	FS         FSMover
+	Ledger      AuthoredArtefactLedger
+	FS          FSMover
 	AllowedRoot string // typically $HOME/.local/brae
-	Tools      ToolDeprecator
-	Logger     *slog.Logger
+	Tools       ToolDeprecator
+	Logger      *slog.Logger
 }
 
 // NewRollbackService constructs a rollback service with sane defaults.
@@ -117,11 +119,11 @@ func NewRollbackService(ledger AuthoredArtefactLedger, allowedRoot string, tools
 		logger = slog.Default()
 	}
 	return &RollbackService{
-		Ledger:     ledger,
-		FS:         OSFSMover{},
+		Ledger:      ledger,
+		FS:          OSFSMover{},
 		AllowedRoot: allowedRoot,
-		Tools:      tools,
-		Logger:     logger,
+		Tools:       tools,
+		Logger:      logger,
 	}
 }
 
@@ -169,7 +171,7 @@ func (s *RollbackService) Rollback(ctx context.Context, setID, actor string) err
 		from string
 		to   string
 	}
-	var moves []move
+	moves := make([]move, 0, len(artefacts))
 
 	reverse := func() {
 		for i := len(moves) - 1; i >= 0; i-- {
@@ -256,7 +258,7 @@ func (s *RollbackService) Restore(ctx context.Context, setID, actor string) erro
 		from string
 		to   string
 	}
-	var moves []move
+	moves := make([]move, 0, len(artefacts))
 
 	reverse := func() {
 		for i := len(moves) - 1; i >= 0; i-- {

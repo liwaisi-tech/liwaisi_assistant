@@ -18,7 +18,7 @@ func TestWithWriteIntent_StoresAndRetrieves(t *testing.T) {
 }
 
 func TestWithWriteIntent_NilContext(t *testing.T) {
-	var ctx context.Context //nolint:staticcheck // SA1012: intentional — covers nil-context guard.
+	var ctx context.Context
 	if got := WithWriteIntent(ctx, "x"); got != nil {
 		t.Fatalf("nil ctx must return nil, got %v", got)
 	}

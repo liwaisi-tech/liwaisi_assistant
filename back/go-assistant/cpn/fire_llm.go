@@ -245,7 +245,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 			copy(retryMessages, messages)
 			if len(retryMessages) > 0 && retryMessages[0].Role == "system" {
 				sys := *retryMessages[0]
-				sys.Content = sys.Content + "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
+				sys.Content += "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
 				retryMessages[0] = &sys
 			}
 			retryReq.Messages = retryMessages
@@ -882,7 +882,7 @@ func buildToolApprovalA2UI(toolName string, args json.RawMessage) string {
 
 	// Preserve the raw arg bytes verbatim so the Details panel can display
 	// them byte-identical to the executed invocation (SEC-002).
-	invocationArgs := json.RawMessage(args)
+	invocationArgs := args
 	if len(invocationArgs) == 0 {
 		invocationArgs = json.RawMessage("{}")
 	}

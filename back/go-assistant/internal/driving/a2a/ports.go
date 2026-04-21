@@ -13,8 +13,8 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 )
 
-// A2ASessionPort is the application-service boundary used by BRAEExecutor.
-type A2ASessionPort interface {
+// SessionPort is the application-service boundary used by BRAEExecutor.
+type SessionPort interface {
 	CreateSession(ctx context.Context, userID string, channel cpn.ChannelType) (*app.SessionInfo, error)
 	GetSession(sessionID string) (*app.SessionInfo, error)
 	DeleteSession(sessionID string) error

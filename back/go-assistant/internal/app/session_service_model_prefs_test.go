@@ -46,11 +46,11 @@ func buildTestCPN() *cpn.CPN {
 func modelOf(c *cpn.CPN, id string) string { return c.Transitions[id].LLMConfig.Model }
 
 // TestApplyUserModelPreferences exercises REQ-CFG-005: three-level precedence
-// cascade (per-role override → global preference → PRODUCT_DEFAULT_MODEL),
+// cascade (per-role override → global preference → ProductDefaultModel),
 // and asserts REQ-CFG-003 (Model is written by the resolver, never by the
 // authored topology).
 func TestApplyUserModelPreferences(t *testing.T) {
-	def := openrouter.PRODUCT_DEFAULT_MODEL
+	def := openrouter.ProductDefaultModel
 
 	t.Run("nil persist stamps product default everywhere", func(t *testing.T) {
 		s := &SessionService{}
@@ -162,7 +162,7 @@ func TestApplyUserModelPreferences(t *testing.T) {
 
 // TestResolveModelForUser exercises the pure precedence helper directly.
 func TestResolveModelForUser(t *testing.T) {
-	def := openrouter.PRODUCT_DEFAULT_MODEL
+	def := openrouter.ProductDefaultModel
 	tests := []struct {
 		name string
 		rec  *persist.UserRecord

@@ -28,19 +28,19 @@ type HITLRouter interface {
 // HostApprovalResponse carries the user's verdict on a host.approval
 // HITL prompt. Actions come from a fixed set (spec §3 REQ-042).
 type HostApprovalResponse struct {
-	Action           string `json:"action"`     // approve-once | approve-and-remember | deny | deny-and-blacklist
-	AllowPattern     string `json:"allow_pattern,omitempty"`
-	DenyPattern      string `json:"deny_pattern,omitempty"`
-	RespondedAt      time.Time
-	HITLResponseID   string
+	Action         string `json:"action"` // approve-once | approve-and-remember | deny | deny-and-blacklist
+	AllowPattern   string `json:"allow_pattern,omitempty"`
+	DenyPattern    string `json:"deny_pattern,omitempty"`
+	RespondedAt    time.Time
+	HITLResponseID string
 }
 
 // Host-approval action literals.
 const (
-	ActionApproveOnce         = "approve-once"
-	ActionApproveAndRemember  = "approve-and-remember"
-	ActionDeny                = "deny"
-	ActionDenyAndBlacklist    = "deny-and-blacklist"
+	ActionApproveOnce        = "approve-once"
+	ActionApproveAndRemember = "approve-and-remember"
+	ActionDeny               = "deny"
+	ActionDenyAndBlacklist   = "deny-and-blacklist"
 )
 
 // HandleRequiresHITL is the one-stop helper called by adapter layers

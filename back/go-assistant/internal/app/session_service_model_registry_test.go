@@ -189,8 +189,8 @@ func TestResolveModelWithGate_ProductDefaultUnreachable(t *testing.T) {
 	s := &SessionService{logger: logger, modelRegistry: reg}
 
 	got := s.resolveModelWithGate(context.Background(), &persist.UserRecord{PreferredModel: "nope"}, "")
-	if got != openrouter.PRODUCT_DEFAULT_MODEL {
-		t.Fatalf("resolved %q, want compile-time fallback %q", got, openrouter.PRODUCT_DEFAULT_MODEL)
+	if got != openrouter.ProductDefaultModel {
+		t.Fatalf("resolved %q, want compile-time fallback %q", got, openrouter.ProductDefaultModel)
 	}
 
 	// The unreachability should have been logged as ERROR.
