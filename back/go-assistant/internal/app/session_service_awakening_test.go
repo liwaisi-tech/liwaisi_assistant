@@ -58,7 +58,7 @@ func TestRunAwakening_CacheHitShortCircuits(t *testing.T) {
 		},
 	}
 
-	snap, envelope, source, err := svc.runAwakening(context.Background(), "sess-cache")
+	snap, envelope, source, err := svc.runAwakening(context.Background(), "sess-cache", "user-test")
 	if err != nil {
 		t.Fatalf("runAwakening: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestRunAwakening_CacheHitShortCircuits(t *testing.T) {
 func TestRunAwakening_NotConfiguredWhenFactoryNil(t *testing.T) {
 	t.Parallel()
 	svc := &SessionService{logger: testLogger()}
-	_, _, _, err := svc.runAwakening(context.Background(), "sess-x")
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-x", "user-test")
 	if !errors.Is(err, errAwakeningNotConfigured) {
 		t.Fatalf("expected errAwakeningNotConfigured; got %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunAwakening_ErrorsWhenLLMAbsent(t *testing.T) {
 		// llm intentionally left nil.
 	}
 
-	_, _, _, err := svc.runAwakening(context.Background(), "sess-fb")
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-fb", "user-test")
 	if err == nil {
 		t.Fatal("expected error when LLM is nil; got nil")
 	}
@@ -135,7 +135,7 @@ func TestRunAwakening_ErrorsWhenFactoryReturnsNil(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := svc.runAwakening(context.Background(), "sess-nil-factory")
+	_, _, _, err := svc.runAwakening(context.Background(), "sess-nil-factory", "user-test")
 	if err == nil {
 		t.Fatal("expected error when factory returns nil; got nil")
 	}

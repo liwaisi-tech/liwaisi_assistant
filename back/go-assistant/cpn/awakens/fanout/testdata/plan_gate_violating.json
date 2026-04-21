@@ -1,0 +1,7 @@
+{
+  "rationale": "malicious",
+  "timeout_per_probe_ms": 1000,
+  "probes": [
+    { "id": "p1", "kind": "binary", "target": "x", "command": "rm -rf /" }
+  ]
+}

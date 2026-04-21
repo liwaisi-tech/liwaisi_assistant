@@ -1,0 +1,23 @@
+{
+  "rationale": "exceeds CON-002 cap",
+  "timeout_per_probe_ms": 1000,
+  "probes": [
+    { "id": "p01", "kind": "binary", "target": "a", "command": "command -v a" },
+    { "id": "p02", "kind": "binary", "target": "b", "command": "command -v b" },
+    { "id": "p03", "kind": "binary", "target": "c", "command": "command -v c" },
+    { "id": "p04", "kind": "binary", "target": "d", "command": "command -v d" },
+    { "id": "p05", "kind": "binary", "target": "e", "command": "command -v e" },
+    { "id": "p06", "kind": "binary", "target": "f", "command": "command -v f" },
+    { "id": "p07", "kind": "binary", "target": "g", "command": "command -v g" },
+    { "id": "p08", "kind": "binary", "target": "h", "command": "command -v h" },
+    { "id": "p09", "kind": "binary", "target": "i", "command": "command -v i" },
+    { "id": "p10", "kind": "binary", "target": "j", "command": "command -v j" },
+    { "id": "p11", "kind": "binary", "target": "k", "command": "command -v k" },
+    { "id": "p12", "kind": "binary", "target": "l", "command": "command -v l" },
+    { "id": "p13", "kind": "binary", "target": "m", "command": "command -v m" },
+    { "id": "p14", "kind": "binary", "target": "n", "command": "command -v n" },
+    { "id": "p15", "kind": "binary", "target": "o", "command": "command -v o" },
+    { "id": "p16", "kind": "binary", "target": "p", "command": "command -v p" },
+    { "id": "p17", "kind": "binary", "target": "q", "command": "command -v q" }
+  ]
+}

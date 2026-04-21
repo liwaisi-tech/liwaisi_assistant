@@ -22,7 +22,7 @@ import (
 // fallbackDefaultModel is the compile-time safety net used only when the
 // model registry is unreachable AND WithDefaultModel was never called. Keep
 // it in the domain package so the app layer never imports infra/openrouter.
-const fallbackDefaultModel = "google/gemini-3-flash-preview"
+const fallbackDefaultModel = "google/gemini-2.5-flash"
 
 // rehydrateTimeout bounds the time a single-flight rehydration can block the
 // service on a persistence round-trip. Keeps ghost-session lookups bounded so
@@ -113,6 +113,12 @@ type SessionService struct {
 	// host-gate can silently deny non-introspection commands (CON-003,
 	// SEC-004, AC-005). Nil disables the silent-deny path.
 	awakeningMode AwakeningModeMarker
+
+	// awakeningComposer builds the probe-fanout sub-CPN from the LLM plan.
+	// When nil the probe-compose transition surfaces a clear error rather
+	// than silently stalling. See spec-architecture-brae-awakening-probe-
+	// fanout.md §4.3–§4.4.
+	awakeningComposer awakens.ComposerFunc
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -1886,6 +1892,22 @@ func findSourcePlace(c *cpn.CPN) *cpn.Place {
 // defaultHostSnapshotTTL is the REQ-021 24h freshness window.
 const defaultHostSnapshotTTL = 24 * time.Hour
 
+// placeholderHostSnapshot returns a minimal HostCapabilitySnapshot that
+// keeps p-host-capabilities non-empty on sessions where awakening has not
+// yet deposited a real snapshot. It is marked with source="placeholder" so
+// operators can tell it apart in downstream reads; PeekHostSnapshot's
+// latest-wins semantics ensures that the real snapshot supersedes this one
+// as soon as awakening deposits it.
+func placeholderHostSnapshot(hostID string) persist.HostCapabilitySnapshot {
+	return persist.HostCapabilitySnapshot{
+		HostID:     hostID,
+		CapturedAt: time.Now().UTC(),
+		Source:     "placeholder",
+		Identity:   persist.HostIdentity{MachineID: hostID, Env: map[string]string{}},
+		Kernel:     persist.HostKernel{OSRelease: map[string]string{}},
+	}
+}
+
 // ensureHostCapabilitiesSeed seeds root's p-host-capabilities place with the
 // latest snapshot from the repository. If the snapshot is missing or older
 // than hostSnapshotTTL (default 24h), it first runs host-discovery-cpn
@@ -1917,13 +1939,22 @@ func (s *SessionService) ensureHostCapabilitiesSeed(ctx context.Context, root *c
 	// composite probes are not in the introspection safe band and would
 	// block on a 30s HITL timeout on every user message. Safer to proceed
 	// without a seed and let downstream consumers Peek defensively.
+	//
+	// However, chat topologies declare p-host-capabilities as a terminal
+	// place (context sink). IsComplete() requires every terminal to hold
+	// a token, so an empty p-host-capabilities deadlocks every user turn
+	// until awakening deposits a real snapshot. Seed a minimal placeholder
+	// so the terminal check passes; PeekHostSnapshot returns latest-wins,
+	// so the real snapshot (awakening or next-run cache hit) takes over
+	// transparently.
 	if s.awakensFactory != nil {
 		if err != nil && !errorsIsHostSnapshotNotFound(err) {
-			s.logger.Warn("host capability lookup failed; proceeding without seed",
+			s.logger.Warn("host capability lookup failed; proceeding with placeholder seed",
 				slog.String("host_id", hostID),
 				slog.Any("error", err),
 			)
 		}
+		cpn.SeedHostSnapshot(root, placeholderHostSnapshot(hostID))
 		return
 	}
 

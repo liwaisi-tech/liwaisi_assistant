@@ -20,6 +20,14 @@ import (
 // session creation fails — there is no fallback.
 const awakeningDeadline = 30 * time.Second
 
+// awakeningPinnedModel is the model every awakening LLM transition uses,
+// regardless of the user's PreferredModel. Kept in sync with a GA Google
+// slug that OpenRouter is known to accept with tools + tool-call re-calls.
+// Do NOT route awakening through preview slugs — a broken awakening means
+// the session never boots, and users cannot even log in to change the
+// preference that broke it.
+const awakeningPinnedModel = "google/gemini-2.5-flash"
+
 // AwakeningModeMarker is the minimal interface SessionService expects from
 // an awakening-mode registry. Scoped per-session: Begin while the flow is
 // running, End when it completes. Kept as an interface so infra/host/gate
@@ -47,6 +55,14 @@ func WithAwakeningMode(m AwakeningModeMarker) SessionServiceOption {
 	return func(s *SessionService) { s.awakeningMode = m }
 }
 
+// WithAwakeningComposer wires the probe-fanout composer invoked by the
+// awakening topology's t-awaken-probe-compose transition. Production code
+// passes a closure wrapping fanout.Compose; tests may pass any function
+// conforming to awakens.ComposerFunc.
+func WithAwakeningComposer(c awakens.ComposerFunc) SessionServiceOption {
+	return func(s *SessionService) { s.awakeningComposer = c }
+}
+
 // runAwakening performs the brae-awakens first-turn boot flow for a fresh
 // interactive session. It returns the projected snapshot + the first-turn
 // A2UI envelope + the chosen source tag.
@@ -59,7 +75,7 @@ func WithAwakeningMode(m AwakeningModeMarker) SessionServiceOption {
 // errAwakeningNotConfigured so CreateSession can skip the flow cleanly.
 // Any other error — LLM unreachable, topology deadlock, missing terminal
 // emission — is propagated to the caller; there is no fallback path.
-func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
+func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID string) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
 	var zero persist.HostCapabilitySnapshot
 	if s.awakensFactory == nil || s.hostCapabilityRepo == nil {
 		return zero, awakens.A2UIMessage{}, "", errAwakeningNotConfigured
@@ -90,6 +106,17 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 		HostID:     hostID,
 		Source:     awakens.SourceAwakening,
 		Clock:      awakens.SystemClock,
+		// Composer wires the probe-fanout composer (fanout.Compose). It is
+		// set to nil here until cpn/awakens/fanout/composer.go lands; the
+		// probe-compose transition surfaces a clear diagnostic when it is
+		// invoked without a composer so the awakening path fails loudly
+		// rather than stalling. The Composer Engineer will adapt
+		// fanout.Compose into a ComposerFunc closure here.
+		Composer: s.awakeningComposer,
+	}
+	if s.hostRuntime != nil {
+		deps.HostAdapter = s.hostRuntime.Adapter
+		deps.HostGate = s.hostRuntime.Gate
 	}
 	root := s.awakensFactory(sessionID, deps)
 	if root == nil {
@@ -101,6 +128,24 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID string) (pe
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
 		root.ToolRegistry = s.toolRegistry
+	}
+	// Pin awakening LLM transitions to a hard-coded stable model, ignoring
+	// the user-preference cascade. Rationale: first-boot awakening is
+	// infrastructure — if the user's PreferredModel points at a preview
+	// slug (e.g. gemini-3-*-preview) whose tool-call+JSON path is unstable,
+	// the session never boots. Awakening uses gemini-2.5-flash (GA, known
+	// to tolerate the tool-call re-call payload) regardless of preferences.
+	// Downstream CPNs (classify/direct/plan/execute) still honour user
+	// preferences via applyUserModelPreferences.
+	_ = userID
+	for _, tr := range root.Transitions {
+		if tr == nil || tr.Kind != cpn.NodeKindLLM {
+			continue
+		}
+		if tr.LLMConfig == nil {
+			tr.LLMConfig = &cpn.LLMConfig{}
+		}
+		tr.LLMConfig.Model = awakeningPinnedModel
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, awakeningDeadline)
@@ -213,7 +258,7 @@ func (s *SessionService) runAwakeningAsync(session *cpn.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), awakeningDeadline+15*time.Second)
 	defer cancel()
 
-	snap, envelope, source, err := s.runAwakening(ctx, session.ID)
+	snap, envelope, source, err := s.runAwakening(ctx, session.ID, session.UserID)
 	if err != nil {
 		if !errors.Is(err, errAwakeningNotConfigured) {
 			s.logger.Warn("awakening async flow errored",

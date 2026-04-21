@@ -344,6 +344,9 @@ func main() {
 		if awakeningModeReg != nil {
 			serviceOpts = append(serviceOpts, app.WithAwakeningMode(awakeningModeReg))
 		}
+		// Wire the probe-fanout composer — fanout.Compose adapted into the
+		// ComposerFunc signature the topology depends on.
+		serviceOpts = append(serviceOpts, app.WithAwakeningComposer(newAwakeningComposerAdapter()))
 		logger.Info("brae-awakens topology enabled")
 	}
 
