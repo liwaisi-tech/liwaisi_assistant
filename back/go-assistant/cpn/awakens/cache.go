@@ -65,12 +65,45 @@ type HostCapabilityCacheFlusher interface {
 	FlushHost(ctx context.Context, hostID string) error
 }
 
+// FlushOption configures optional side-effects of FlushAwakeningCache such
+// as invalidating a co-located personality prefix-cache (SC-07 REQ-704).
+type FlushOption func(*flushOptions)
+
+type flushOptions struct {
+	personalityCache PersonalityCache
+	digests          []string
+}
+
+// WithPersonalityCache invalidates the supplied digests from the personality
+// prefix-cache when FlushAwakeningCache runs (SC-07 REQ-704). Passing zero
+// digests is a no-op — callers supply the pre-flush digest(s) they want
+// evicted. Safe to call with a nil cache (ignored).
+func WithPersonalityCache(c PersonalityCache, digests ...string) FlushOption {
+	return func(o *flushOptions) {
+		o.personalityCache = c
+		o.digests = append(o.digests, digests...)
+	}
+}
+
 // FlushAwakeningCache invalidates any cached snapshot for hostID so the next
 // awakening run MUST re-bootstrap (REQ-305c manual admin flush). When repo
 // does not implement HostCapabilityCacheFlusher the call is a successful
 // no-op — in-process caches are the only thing a flush can target; persisted
 // rows remain as the audit trail.
-func FlushAwakeningCache(ctx context.Context, repo persist.HostCapabilityRepository, hostID string) error {
+//
+// Optional FlushOptions additionally invalidate the personality prefix-cache
+// (SC-07 REQ-704) so a stale "## Environment awareness" block does not
+// zombie on after the snapshot it was built from has been discarded.
+func FlushAwakeningCache(ctx context.Context, repo persist.HostCapabilityRepository, hostID string, opts ...FlushOption) error {
+	var cfg flushOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.personalityCache != nil {
+		for _, d := range cfg.digests {
+			cfg.personalityCache.Invalidate(d)
+		}
+	}
 	if repo == nil || hostID == "" {
 		return nil
 	}
