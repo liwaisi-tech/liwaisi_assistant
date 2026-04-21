@@ -1,11 +1,13 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { A2UIProviderWrapper } from './a2ui/A2UIProviderWrapper.tsx';
+import { ToolExecutionList } from './ToolExecutionList.tsx';
 import type { A2UIPayload, A2UIAction } from './a2ui/types.ts';
 import { A2UI_MARKER } from './a2ui/constants.ts';
-import type { HITLAction } from '../../types/chat';
+import type { HITLAction, ToolExecution } from '../../types/chat';
 
 interface MessageBubbleProps {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
   cpnId?: string;
@@ -21,8 +23,37 @@ interface MessageBubbleProps {
   // submission (REQ-102..105).
   resolvedPayload?: string;
   resolvedAt?: Date;
+  /**
+   * Transport metadata bag surfaced from SSE payloads. Today the only
+   * consumer is `metadata.responding_model`, rendered as a RoundBadge
+   * below assistant bubbles (REQ-GAP-IND-004). Absent → no badge; the
+   * badge is also suppressed for user messages and HITL surfaces
+   * (REQ-GAP-IND-005).
+   */
+  metadata?: {
+    responding_model?: string;
+  };
+  toolExecutions?: ToolExecution[];
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
+  // Catch-all for non-HITL A2UI actions (e.g. the `model:*` action family
+  // emitted by the in-chat model-admin surface). Called only when the
+  // HITL branches don't match; the messageId lets the handler update the
+  // same surface in place.
+  onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
   onOpenMonitor?: () => void;
+}
+
+/**
+ * formatRespondingModel strips the vendor prefix from a registry id so the
+ * badge reads "claude-opus-4-6 · openrouter" instead of the full
+ * "anthropic/claude-opus-4-6 · openrouter". Returns the raw string back if
+ * no slash is present so we never swallow the adapter hint.
+ * REQ-GAP-IND-004.
+ */
+function formatRespondingModel(raw: string): string {
+  const slash = raw.indexOf('/');
+  if (slash === -1) return raw;
+  return raw.slice(slash + 1);
 }
 
 /**
@@ -53,9 +84,10 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
 }
 
 export const MessageBubble = memo(function MessageBubble({
-  role, content, cpnId, cpnRole, timestamp, isStreaming,
+  id, role, content, cpnId, cpnRole, timestamp, isStreaming,
   hitlTransitionId, hitlResolved, resolvedPayload, resolvedAt,
-  onHITLAction, onOpenMonitor,
+  metadata, toolExecutions,
+  onHITLAction, onA2UIAction, onOpenMonitor,
 }: MessageBubbleProps) {
   const { t } = useTranslation('chat');
   const isUser = role === 'user';
@@ -72,9 +104,47 @@ export const MessageBubble = memo(function MessageBubble({
     return parsePayload(content, isStreaming ?? false);
   }, [isUser, content, isStreaming]);
 
+  // Responding-model badge (REQ-GAP-IND-004/005):
+  //   • only for assistant messages
+  //   • suppressed while streaming (value is final-chunk-only) so the badge
+  //     does not flicker in during token-by-token rendering
+  //   • suppressed on HITL surfaces — the user is reading an affordance,
+  //     not an LLM answer
+  //   • suppressed when the bubble carries a $$a2ui: payload whose
+  //     componentCatalog entries cover interactive management surfaces
+  //   • absent metadata → no badge (backward-compat for rehydrated rows)
+  const respondingModelLabel = useMemo<string | null>(() => {
+    if (isUser) return null;
+    if (isStreaming) return null;
+    if (hitlTransitionId || hitlResolved) return null;
+    const raw = metadata?.responding_model?.trim();
+    if (!raw) return null;
+    return formatRespondingModel(raw);
+  }, [isUser, isStreaming, hitlTransitionId, hitlResolved, metadata?.responding_model]);
+
   // Route A2UI actions — HITL actions dispatch to the resolver
   const handleA2UIAction = useCallback(
     (action: A2UIAction) => {
+      // GAP-6 host.approval: the extended action keyword (approve-once,
+      // approve-and-remember, deny, deny-and-blacklist) is carried in the
+      // payload; the wire-level HITLAction MUST narrow to approve|reject so
+      // the existing /hitl/:transitionId endpoint accepts it. We stash the
+      // extended form as the `content` field so the backend can dispatch
+      // on the full four-way choice without a new endpoint. The reducer's
+      // resolvedPayload key is `{"action":"approve-once", ...}` so
+      // A2UIMessageRenderer.extractHostApprovalAction finds it on
+      // rehydration.
+      if (action.type === 'hitl:host-approval') {
+        const extended = (action.payload as { action?: string } | null)?.action;
+        if (!extended || !hitlTransitionId) return;
+        const hitlAction: HITLAction =
+          extended === 'approve-once' || extended === 'approve-and-remember'
+            ? 'approve'
+            : 'reject';
+        const content = JSON.stringify({ action: extended });
+        onHITLAction?.(hitlTransitionId, hitlAction, content);
+        return;
+      }
       if (action.type === 'hitl:revise') {
         setReviseTransitionId(action.componentId ?? hitlTransitionId ?? null);
         setReviseMode(true);
@@ -88,9 +158,14 @@ export const MessageBubble = memo(function MessageBubble({
       if (action.type.startsWith('hitl:') && action.componentId) {
         const hitlAction = action.type.replace('hitl:', '') as HITLAction;
         onHITLAction?.(action.componentId, hitlAction);
+        return;
       }
+      // Fallback for non-HITL A2UI actions (e.g. `model:*`). If no handler
+      // claims the action, it is silently dropped — consistent with the
+      // existing HITL branch's no-op when hitlTransitionId is missing.
+      onA2UIAction?.(action, id);
     },
-    [onHITLAction, hitlTransitionId],
+    [onHITLAction, hitlTransitionId, onA2UIAction, id],
   );
 
   const handleReviseSubmit = useCallback(() => {
@@ -138,6 +213,11 @@ export const MessageBubble = memo(function MessageBubble({
               </button>
             )}
           </div>
+        )}
+
+        {/* Tool execution affordances (REQ-020–022) */}
+        {!isUser && toolExecutions && toolExecutions.length > 0 && (
+          <ToolExecutionList executions={toolExecutions} />
         )}
 
         {/* Content — user: plain text, assistant: A2UI native */}
@@ -203,8 +283,12 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {/* HITL resolved badge */}
-        {hitlResolved && (
+        {/* HITL resolved badge — only for review-card actions. 'submit'
+            (questionnaire answers) is already narrated by the locked
+            questionnaire surface itself ("Respondido a las HH:MM" plus
+            the answers), so a second badge here would contradict it —
+            the reject fallback color/copy made a submit read as cancelled. */}
+        {hitlResolved && hitlResolved !== 'submit' && (
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
             <span className="text-[11px] font-medium" style={{
               color: hitlResolved === 'approve' ? '#34d399' : hitlResolved === 'revise' ? 'var(--accent)' : '#f87171',
@@ -214,6 +298,33 @@ export const MessageBubble = memo(function MessageBubble({
                 : hitlResolved === 'revise'
                   ? t('messageBubble.youRequestedChanges', 'You requested changes')
                   : t('messageBubble.youCancelled')}
+            </span>
+          </div>
+        )}
+
+        {/* Responding-model RoundBadge — REQ-GAP-IND-004.
+            Strips the vendor prefix for scannability (e.g. "claude-opus-4-6
+            · openrouter") while preserving the full registry id on hover.
+            Rendered bottom-right of the bubble content area with caption
+            styling, using only existing design tokens (GUD-IND-001). */}
+        {respondingModelLabel && (
+          <div className="mt-2 flex justify-end">
+            <span
+              data-testid="responding-model-badge"
+              title={t('models.badge.responding_model', {
+                defaultValue: 'Responding: {{model}}',
+                model: metadata?.responding_model,
+              })}
+              className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-widest px-2 py-0.5 rounded-full"
+              style={{
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-dim)',
+                background: 'var(--bg-input)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              <span aria-hidden="true" style={{ color: 'var(--accent)' }}>{'\u25C9'}</span>
+              <span>{respondingModelLabel}</span>
             </span>
           </div>
         )}

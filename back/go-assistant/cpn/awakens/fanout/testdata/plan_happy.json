@@ -1,0 +1,18 @@
+{
+  "rationale": "Alpine/busybox container — verify core busybox applets plus language runtimes.",
+  "timeout_per_probe_ms": 2000,
+  "probes": [
+    { "id": "cmd-sh",      "kind": "binary", "target": "sh",      "command": "command -v sh" },
+    { "id": "cmd-bash",    "kind": "binary", "target": "bash",    "command": "command -v bash" },
+    { "id": "cmd-busybox", "kind": "binary", "target": "busybox", "command": "command -v busybox" },
+    { "id": "cmd-ls",      "kind": "binary", "target": "ls",      "command": "command -v ls" },
+    { "id": "cmd-cat",     "kind": "binary", "target": "cat",     "command": "command -v cat" },
+    { "id": "cmd-awk",     "kind": "binary", "target": "awk",     "command": "command -v awk" },
+    { "id": "cmd-sed",     "kind": "binary", "target": "sed",     "command": "command -v sed" },
+    { "id": "cmd-grep",    "kind": "binary", "target": "grep",    "command": "command -v grep" },
+    { "id": "cmd-git",     "kind": "binary", "target": "git",     "command": "command -v git" },
+    { "id": "cmd-curl",    "kind": "binary", "target": "curl",    "command": "command -v curl" },
+    { "id": "cmd-python3", "kind": "binary", "target": "python3", "command": "command -v python3" },
+    { "id": "cmd-tar",     "kind": "binary", "target": "tar",     "command": "command -v tar" }
+  ]
+}

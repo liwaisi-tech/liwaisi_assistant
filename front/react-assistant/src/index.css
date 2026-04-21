@@ -83,29 +83,19 @@ summary:focus-visible {
   font-size: 0.875rem;
 }
 
-/* -- Thinking dots -- */
-@keyframes thinking-bounce {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  30% {
-    transform: translateY(-4px);
-    opacity: 1;
-  }
+/* -- Activity bubble pulse glyph (spec REQ-029) -- */
+@keyframes activity-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.25); }
 }
 
-.thinking-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: var(--accent);
-  animation: thinking-bounce 1.4s ease-in-out infinite;
+.activity-pulse {
+  animation: activity-pulse 700ms ease-in-out infinite;
 }
 
-.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-pulse { animation: none; }
+}
 
 /* -- SSE connection dot pulse -- */
 @keyframes dot-pulse {

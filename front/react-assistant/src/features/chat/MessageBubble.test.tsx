@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { I18nTestWrapper } from '../../test/i18n-test-utils';
 import { MessageBubble } from './MessageBubble';
@@ -30,6 +31,7 @@ function buildHITLContent(prompt: string, transitionId: string): string {
 
 describe('MessageBubble', () => {
   const baseProps = {
+    id: 'msg-test-1',
     timestamp: new Date('2025-01-15T10:30:00Z'),
   };
 
@@ -130,6 +132,26 @@ describe('MessageBubble', () => {
     expect(screen.getByText('You approved this')).toBeInTheDocument();
   });
 
+  // Regression: 'submit' (questionnaire answers) must NOT render the
+  // HITL resolved badge. The locked questionnaire narrates itself via
+  // "Responded at HH:MM"; the legacy badge would fall through to the
+  // reject copy ("You cancelled this"), contradicting the locked view.
+  it('should NOT show the resolved badge for submit (questionnaire answers)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Questionnaire surface"
+        hitlTransitionId="t-clarify"
+        hitlResolved="submit"
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByText('You cancelled this')).not.toBeInTheDocument();
+    expect(screen.queryByText('You approved this')).not.toBeInTheDocument();
+    expect(screen.queryByText('You requested changes')).not.toBeInTheDocument();
+  });
+
   // ── parsePayload contract (REQ-011 / REQ-012 / AC-008..010 / CON-003) ─────
 
   it('should route to A2UI renderer when content has leading whitespace before the marker (AC-008 / REQ-011)', async () => {
@@ -181,5 +203,164 @@ describe('MessageBubble', () => {
     await waitFor(() => {
       expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
     });
+  });
+
+  // ── Responding-model badge (REQ-GAP-IND-004/005 / AC-IND-001..003) ────────
+
+  it('renders the responding-model badge when metadata.responding_model is set on an assistant message', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Here is your answer."
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    const badge = screen.getByTestId('responding-model-badge');
+    // Vendor prefix stripped for scannability.
+    expect(badge).toHaveTextContent('claude-opus-4-6 · openrouter');
+    // Full registry id still available via the tooltip.
+    expect(badge).toHaveAttribute('title', expect.stringContaining('anthropic/claude-opus-4-6 · openrouter'));
+  });
+
+  it('does NOT render the badge for user messages regardless of metadata', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="user"
+        content="what time is it?"
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge when metadata is absent (backward-compat rehydration)', () => {
+    render(
+      <MessageBubble {...baseProps} role="assistant" content="Legacy row." />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge on HITL surfaces (hitlTransitionId set)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="Pending review."
+        hitlTransitionId="t-review"
+        metadata={{ responding_model: 'google/gemma-4-31b-it · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render the badge while streaming (final value arrives on Done=true)', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="partial"
+        isStreaming
+        metadata={{ responding_model: 'anthropic/claude-opus-4-6 · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.queryByTestId('responding-model-badge')).not.toBeInTheDocument();
+  });
+
+  // ── HOST·HITL extended-action encoding (AC-FE-003) ───────────────────────
+  // Regression lock for MessageBubble.tsx:137-145. The four host-approval
+  // buttons MUST each produce a single onHITLAction call with:
+  //   • the correct narrowed HITLAction ('approve' | 'reject')
+  //   • a JSON-stringified payload whose `action` field is the extended
+  //     four-way keyword — this envelope is what the backend dispatches on
+  //     and what the reducer rehydrates from. Spec §4.1.
+  describe('HOST·HITL extended-action encoding (AC-FE-003)', () => {
+    function buildHostApprovalContent(): string {
+      return (
+        '$$a2ui:' +
+        JSON.stringify({
+          schema: 'host.approval',
+          hostApproval: {
+            command: 'ls -la',
+            risk: 'caution',
+            rememberAvailable: true,
+          },
+          components: [],
+        })
+      );
+    }
+
+    async function clickAndAssert(
+      accessibleName: RegExp,
+      expected: [string, string, string],
+    ) {
+      const onHITLAction = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <MessageBubble
+          {...baseProps}
+          role="assistant"
+          content={buildHostApprovalContent()}
+          hitlTransitionId="t-host-1"
+          onHITLAction={onHITLAction}
+        />,
+        { wrapper },
+      );
+      const btn = await screen.findByRole('button', { name: accessibleName });
+      await user.click(btn);
+      expect(onHITLAction).toHaveBeenCalledTimes(1);
+      expect(onHITLAction).toHaveBeenCalledWith(...expected);
+    }
+
+    it('"Aprobar solo esta vez" → (id, approve, {"action":"approve-once"})', async () => {
+      await clickAndAssert(/^Aprobar solo esta vez$/, [
+        't-host-1',
+        'approve',
+        '{"action":"approve-once"}',
+      ]);
+    });
+
+    it('"Aprobar y recordar" → (id, approve, {"action":"approve-and-remember"})', async () => {
+      await clickAndAssert(/^Aprobar y recordar\b/, [
+        't-host-1',
+        'approve',
+        '{"action":"approve-and-remember"}',
+      ]);
+    });
+
+    it('"Rechazar" → (id, reject, {"action":"deny"})', async () => {
+      await clickAndAssert(/^Rechazar$/, [
+        't-host-1',
+        'reject',
+        '{"action":"deny"}',
+      ]);
+    });
+
+    it('"Rechazar y bloquear para siempre" → (id, reject, {"action":"deny-and-blacklist"})', async () => {
+      await clickAndAssert(/^Rechazar y bloquear para siempre\b/, [
+        't-host-1',
+        'reject',
+        '{"action":"deny-and-blacklist"}',
+      ]);
+    });
+  });
+
+  it('falls back to the raw string when responding_model has no vendor prefix', () => {
+    render(
+      <MessageBubble
+        {...baseProps}
+        role="assistant"
+        content="ok"
+        metadata={{ responding_model: 'gemma-4-31b-it · openrouter' }}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('responding-model-badge')).toHaveTextContent('gemma-4-31b-it · openrouter');
   });
 });

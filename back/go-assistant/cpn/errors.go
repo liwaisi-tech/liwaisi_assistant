@@ -142,3 +142,46 @@ var ErrInvalidHierarchy = errors.New("invalid principle hierarchy")
 
 // ErrEticaCannotBeLast is returned when etica principle is placed as lowest priority.
 var ErrEticaCannotBeLast = errors.New("etica principle cannot be lowest priority")
+
+// ── GAP-4 Synthesis + Instantiate Errors ───────────────────────────────────
+
+// ErrUnsafePrimitive is returned when an agent-authored topology
+// references a guard/executor/factory name not registered in SafeRegistry.
+var ErrUnsafePrimitive = errors.New("topology references unsafe primitive")
+
+// ErrTopologyTooLarge is returned when a synthesised topology exceeds the
+// configured size cap (REQ-020, CON-001).
+var ErrTopologyTooLarge = errors.New("topology exceeds size cap")
+
+// ErrUnresolvedArc is returned when a transition arc references a place
+// that does not exist in the topology.
+var ErrUnresolvedArc = errors.New("topology arc references unknown place")
+
+// ErrNoTerminal is returned when a topology has no terminal place
+// (CON-002).
+var ErrNoTerminal = errors.New("topology has no terminal place")
+
+// ErrDisallowedKind is returned when a synthesised topology declares a
+// NodeKind that is forbidden for agent-authored flows (e.g.
+// register_tool per SEC-002).
+var ErrDisallowedKind = errors.New("topology declares disallowed NodeKind")
+
+// ErrTopologyParseFailed is returned when the synthesiser LLM response
+// cannot be parsed as a CPNTopology document.
+var ErrTopologyParseFailed = errors.New("topology parse failed")
+
+// ErrTopologyRejected is returned when an admin has rejected a flow
+// via the admin API and instantiation is attempted afterwards.
+var ErrTopologyRejected = errors.New("topology rejected by admin")
+
+// ErrDeprecatedDependency is returned when a topology references a tool
+// (or primitive) that has since been deprecated.
+var ErrDeprecatedDependency = errors.New("topology references deprecated dependency")
+
+// ErrSpaceIsolationViolated is returned when a topology has an arc from
+// a surface place into a computation place (except via HITL) — CON-003.
+var ErrSpaceIsolationViolated = errors.New("topology violates space isolation")
+
+// errNoMaterialiser is the internal sentinel used when a NodeKindInstantiate
+// transition fires without a materialiser wired (dev-mode bootstrap bug).
+var errNoMaterialiser = errors.New("topology materialiser not wired")

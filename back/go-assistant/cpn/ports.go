@@ -162,7 +162,7 @@ type LLMConfig struct {
 	// Populated at session resolve time by
 	// internal/app/session_service.go::applyUserModelPreferences based on
 	// (in precedence order) the user's per-role ModelOverride, the user's
-	// global PreferredModel, or openrouter.PRODUCT_DEFAULT_MODEL.
+	// global PreferredModel, or openrouter.ProductDefaultModel.
 	//
 	// Authored LLMConfig literals in topology factories MUST leave this
 	// empty — the authoring layer expresses intent via Role, and the

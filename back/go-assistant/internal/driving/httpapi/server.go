@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 )
@@ -52,7 +51,7 @@ type Server struct {
 }
 
 // NewServer creates an HTTP server with all routes and middleware wired.
-func NewServer(cfg ServerConfig, appService *app.SessionService, logger *slog.Logger, billingFetcher BillingFetcher, opts ...ServerOption) *Server {
+func NewServer(cfg ServerConfig, appService SessionPort, logger *slog.Logger, billingFetcher BillingFetcher, opts ...ServerOption) *Server {
 	broker := NewSSEBroker(logger)
 
 	handlers := &Handlers{
@@ -158,7 +157,7 @@ func WithPersonalityRepo(repo persist.PersonalityRepository) ServerOption {
 }
 
 // WithToolRegistry injects the tool registry for tools endpoints.
-func WithToolRegistry(registry *tools.Registry) ServerOption {
+func WithToolRegistry(registry ToolRegistryPort) ServerOption {
 	return func(h *Handlers) {
 		h.ToolRegistry = registry
 	}
@@ -197,4 +196,79 @@ func WithAuditRepo(repo AuditLogger) ServerOption {
 	return func(h *Handlers) {
 		h.AuditRepo = repo
 	}
+}
+
+// WithModelRegistry injects the DB-backed model registry used by the
+// public /api/v1/models endpoint and the admin CRUD endpoints.
+func WithModelRegistry(reg cpn.ModelRegistry) ServerOption {
+	return func(h *Handlers) {
+		h.ModelRegistry = reg
+	}
+}
+
+// WithHostPolicy injects the GAP-6 HostPolicy holder used by the
+// /api/v1/admin/host/policy endpoints.
+func WithHostPolicy(r HostPolicyReader) ServerOption {
+	return func(h *Handlers) {
+		h.HostPolicy = r
+	}
+}
+
+// WithGateDecisions injects the audit log store used by
+// /api/v1/admin/host/gate-decisions.
+func WithGateDecisions(repo persist.GateDecisionRepository) ServerOption {
+	return func(h *Handlers) {
+		h.GateDecisions = repo
+	}
+}
+
+// WithFirstRun injects the first-run ledger store used by
+// /api/v1/admin/host/first-run-ledger.
+func WithFirstRun(repo persist.FirstRunRepository) ServerOption {
+	return func(h *Handlers) {
+		h.FirstRun = repo
+	}
+}
+
+// WithHostCapabilityAccessor injects the GAP-2 host snapshot read port.
+func WithHostCapabilityAccessor(acc HostCapabilityAccessor) ServerOption {
+	return func(h *Handlers) { h.HostCapability = acc }
+}
+
+// WithHostDiscoveryRunner injects the GAP-2 on-demand rediscovery runner.
+func WithHostDiscoveryRunner(r HostDiscoveryRunner) ServerOption {
+	return func(h *Handlers) { h.HostDiscoveryRunner = r }
+}
+
+// WithHostIDResolver injects the GAP-2 machine-id resolver.
+func WithHostIDResolver(r HostIDResolver) ServerOption {
+	return func(h *Handlers) { h.HostIDResolver = r }
+}
+
+// WithArtefactLedger injects the GAP-10 AuthoredArtefactLedger used by the
+// /api/v1/admin/artefacts endpoints.
+func WithArtefactLedger(l persist.AuthoredArtefactLedger) ServerOption {
+	return func(h *Handlers) { h.ArtefactLedger = l }
+}
+
+// WithArtefactRollback injects the rollback/restore service.
+func WithArtefactRollback(svc ArtefactRollbackService) ServerOption {
+	return func(h *Handlers) { h.ArtefactRollback = svc }
+}
+
+// WithArtefactPurge injects the purge runner.
+func WithArtefactPurge(svc ArtefactPurgeRunner) ServerOption {
+	return func(h *Handlers) { h.ArtefactPurge = svc }
+}
+
+// WithAuthoredFlows injects the GAP-4 agent-authored flow repository.
+// The admin /api/v1/admin/flows endpoints return 503 when unset.
+func WithAuthoredFlows(repo cpn.AuthoredFlowRepository) ServerOption {
+	return func(h *Handlers) { h.AuthoredFlows = repo }
+}
+
+// WithSkillManifest injects the GAP-8 skill manifest aggregator.
+// The admin /api/v1/admin/skills endpoints return 503 when unset.
+func WithSkillManifest(svc SkillManifestPort) ServerOption {
+	return func(h *Handlers) { h.SkillManifest = svc }
 }

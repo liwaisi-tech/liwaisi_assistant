@@ -1,6 +1,7 @@
-import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, type JSX } from 'react';
+import { useDeferredValue, useCallback, useMemo, useState, useContext, createContext, useTransition, type JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MarkdownContent } from '../MarkdownContent.tsx';
+import { HostApprovalCard } from '../hitl/HostApprovalCard.tsx';
 import type {
   A2UIPayload,
   A2UIComponent,
@@ -11,6 +12,8 @@ import type {
   CardVariant,
   FormField,
   ChoiceOption,
+  HostApprovalAction,
+  HostApprovalPayload,
 } from './types.ts';
 
 // ── Resolution context ─────────────────────────────────────────────────────
@@ -29,6 +32,37 @@ interface ResolutionContextValue {
 }
 
 const ResolutionContext = createContext<ResolutionContextValue>({});
+
+// ── Form state context ─────────────────────────────────────────────────────
+// Threaded by the top-level renderer through any A2UI surface that includes
+// standalone `textfield` / `checkbox` / `choice` primitives bound to a
+// shared data model. Fields register + update their value by path (e.g.
+// `/form/registry_id`) so a sibling `button` with actionType=`submit_*`
+// can harvest the full bag in one shot and dispatch it via onAction.
+//
+// Design notes:
+// • Values are stored as string | boolean | number to match what A2UI v0.8
+//   primitives emit through their `value` / `text` bindings.
+// • initialValues seed the bag on first mount so pre-filled data-models
+//   (RegisterModelForm's `form.primary_route_adapter: "openrouter"`,
+//   `enable_enrichment: true`) are persisted even if the user never
+//   touches that field.
+// • getValue returns `undefined` when the path has never been set — the
+//   caller decides whether to coerce to empty string, 0, or false.
+
+type FormFieldValue = string | number | boolean | undefined;
+
+interface FormStateContextValue {
+  getValue: (path: string) => FormFieldValue;
+  setValue: (path: string, value: FormFieldValue) => void;
+  snapshot: () => Record<string, FormFieldValue>;
+}
+
+const FormStateContext = createContext<FormStateContextValue | null>(null);
+
+function useFormState(): FormStateContextValue | null {
+  return useContext(FormStateContext);
+}
 
 // ── Component Catalog ──────────────────────────────────────────────────────
 
@@ -55,6 +89,55 @@ function TextComponent({ component }: ComponentProps) {
 
 // ── button ──────────────────────────────────────────────────────────────────
 
+// FORM_ACTION_TYPES is the set of unprefixed action names that, when fired
+// from a Button, harvest the surrounding form-state bag and hand it to the
+// parent as the action payload. Keeps the dispatch ergonomic: surfaces
+// describe fields + a submit button, the renderer does the book-keeping.
+// Extending this list is cheap — add the action name here, the collector
+// below picks it up automatically.
+const FORM_ACTION_TYPES = new Set<string>([
+  'submit_register',
+  'submit_default',
+  'accept_license',
+]);
+
+// REGISTER_CONTEXT_LENGTH_KEYS / REGISTER_BOOL_KEYS drive the type coercion
+// at submit time (REQ-GAP-REG-004). A2UI v0.8 TextField always reports
+// `text`/`textFieldType=number` as a string bucket through the data model,
+// so the renderer casts before dispatch so the backend never receives
+// `"262000"` where it expects `262000`.
+const REGISTER_NUMBER_KEYS = new Set<string>(['context_length']);
+const REGISTER_BOOL_KEYS = new Set<string>(['enable_enrichment']);
+
+function coerceFormValue(key: string, raw: FormFieldValue): FormFieldValue {
+  if (REGISTER_NUMBER_KEYS.has(key)) {
+    if (typeof raw === 'number') return raw;
+    const n = Number(raw ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (REGISTER_BOOL_KEYS.has(key)) {
+    return raw === true || raw === 'true';
+  }
+  return raw ?? '';
+}
+
+/**
+ * collectFormContext turns the FormState bag into the v0.8 `context` array
+ * shape the backend expects for a userAction — one `{key, value}` pair per
+ * field. Path segments are stripped to the leaf name (e.g. `/form/vendor`
+ * → `vendor`) so the backend's handler does not need path-awareness.
+ */
+function collectFormContext(
+  snapshot: Record<string, FormFieldValue>,
+): Array<{ key: string; value: FormFieldValue }> {
+  const out: Array<{ key: string; value: FormFieldValue }> = [];
+  for (const [path, raw] of Object.entries(snapshot)) {
+    const leaf = path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path;
+    out.push({ key: leaf, value: coerceFormValue(leaf, raw) });
+  }
+  return out;
+}
+
 function ButtonComponent({ component, onAction }: ComponentProps) {
   const label = (component.props.label as string) ?? '';
   const componentId = (component.props.id as string) ?? '';
@@ -76,17 +159,41 @@ function ButtonComponent({ component, onAction }: ComponentProps) {
   const isHitl = actionType.startsWith('hitl:');
   const lockedByResolution = isHitl && resolvedPayload !== undefined;
   const isChosen = lockedByResolution && resolvedAction !== null && actionType === `hitl:${resolvedAction}`;
-  const disabled = propDisabled || lockedByResolution;
+
+  // React 19 `useTransition` surfaces a pending state for the submit click
+  // without blocking the main thread. GUD-REG-001 / vercel-react-best-
+  // practices: wrap dispatch in startTransition so the rest of the form
+  // stays interactive while the parent onAction handler propagates the
+  // userAction upstream.
+  const [isPending, startTransition] = useTransition();
+  const form = useFormState();
+
+  const disabled = propDisabled || lockedByResolution || isPending;
   const dim = lockedByResolution && !isChosen;
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (disabled) return;
+    // Form-submit actions harvest the FormState bag and expose it as the
+    // v0.8 `context` array. Non-form actions pass through the propPayload
+    // unchanged for backward-compat with existing button call-sites.
+    if (FORM_ACTION_TYPES.has(actionType) && form) {
+      const snapshot = form.snapshot();
+      const context = collectFormContext(snapshot);
+      startTransition(() => {
+        onAction({
+          type: actionType,
+          componentId,
+          payload: { context, fields: snapshot },
+        });
+      });
+      return;
+    }
     onAction({
       type: actionType,
       componentId,
       payload: component.props.payload ?? null,
     });
-  };
+  }, [disabled, actionType, form, componentId, onAction, component.props.payload]);
 
   const variantStyles: Record<string, { bg: string; color: string; border: string; glow: string }> = {
     primary: { bg: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)', border: 'rgba(14, 165, 233, 0.3)', glow: '0 0 8px -2px var(--accent-glow)' },
@@ -145,15 +252,26 @@ function extractResolvedHITLAction(payload: string | undefined): string | null {
 
 function CardComponent({ component, onAction }: ComponentProps) {
   const title = component.props.title as string | undefined;
-  // `variant` drives the escape-hatch card's left-rail accent. The accent
-  // tint distinguishes the two escape flavors at a glance without a new
-  // surface type: frustration uses --accent (offer of agency), contradiction
-  // uses --text-muted (neutral path-framing per REQ-124). Default is unchanged.
+  // `variant` drives the card's accent treatment:
+  //   • `info` — brae-awakening first-turn card (spec §4.4). A distinctive
+  //     elevated surface: low-amplitude accent-tinted gradient, a pulsing
+  //     glyph in the header, JetBrains Mono title. Not a generic banner —
+  //     this is brae's "eyes-open" moment and should read like a terminal
+  //     line after `uname -a` finishes.
+  //   • `escape-frustration` / `escape-contradiction` — existing iterative-
+  //     clarification escape-hatch left-rail treatments.
+  //   • `default` — baseline, unchanged.
+  const rawVariant = component.props.variant;
   const variant: CardVariant =
-    component.props.variant === 'escape-frustration' ||
-    component.props.variant === 'escape-contradiction'
-      ? (component.props.variant as CardVariant)
+    rawVariant === 'info' ||
+    rawVariant === 'escape-frustration' ||
+    rawVariant === 'escape-contradiction'
+      ? (rawVariant as CardVariant)
       : 'default';
+
+  if (variant === 'info') {
+    return <InfoCard title={title}>{renderChildren(component.children, onAction)}</InfoCard>;
+  }
 
   const variantStyle =
     variant === 'escape-frustration'
@@ -179,6 +297,75 @@ function CardComponent({ component, onAction }: ComponentProps) {
           {title}
         </h4>
       )}
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// InfoCard is the elevated surface for the awakening first-turn message.
+// Visual contract (spec §4.4 + design guidance):
+//   • Low-amplitude radial gradient seeded from the card's top-left corner
+//     so the card reads as "lit from within" without shouting.
+//   • 1px accent-tinted border with a 10% tint fill behind the gradient.
+//   • Header: pulsing glyph (◉) → JetBrains Mono title in --text-primary.
+//   • Body inherits default text rendering — stack / divider / text handle
+//     their own spacing.
+// The gradient and pulse use tokens already in use elsewhere in the app so
+// no new CSS variables are introduced.
+function InfoCard({ title, children }: { title?: string; children: JSX.Element[] | null }) {
+  return (
+    <div
+      data-testid="awakening-card"
+      className="rounded-xl p-4 my-2 relative overflow-hidden"
+      style={{
+        backgroundImage:
+          'radial-gradient(120% 140% at 0% 0%, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0.04) 35%, transparent 70%)',
+        backgroundColor: 'var(--bg-surface)',
+        border: '1px solid rgba(14, 165, 233, 0.28)',
+        boxShadow: '0 0 24px -12px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.02)',
+      }}
+    >
+      {title && (
+        <div className="flex items-center gap-2 mb-3">
+          <span
+            aria-hidden="true"
+            className="activity-pulse"
+            style={{
+              display: 'inline-block',
+              width: 8,
+              height: 8,
+              borderRadius: 9999,
+              background: 'var(--accent)',
+              boxShadow: '0 0 8px var(--accent-glow)',
+            }}
+          />
+          <h4
+            className="text-sm font-semibold tracking-tight"
+            style={{
+              color: 'var(--text-primary)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {title}
+          </h4>
+        </div>
+      )}
+      <div className="relative">{children}</div>
+    </div>
+  );
+}
+
+// ── stack ───────────────────────────────────────────────────────────────────
+// Vertical flex container used by the awakening card (spec §4.4). Rendered
+// with a small gap so nested `text` children get breathing room without
+// each one having to carry its own margin. Maps to A2UI v0.8 `stack`.
+function StackComponent({ component, onAction }: ComponentProps) {
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'sm';
+  const gapClass = gap === 'lg' ? 'gap-3' : gap === 'md' ? 'gap-2' : 'gap-1.5';
+  return (
+    <div className={`flex flex-col ${gapClass} my-1`}>
       {renderChildren(component.children, onAction)}
     </div>
   );
@@ -310,6 +497,217 @@ function FormComponent({ component, onAction }: ComponentProps) {
         {submitLabel}
       </button>
     </form>
+  );
+}
+
+// ── row ─────────────────────────────────────────────────────────────────────
+// Horizontal flex-wrap container. Fills a gap in the v0.8 primitive set for
+// cases like the model-admin surface where buttons/chips need to flow
+// horizontally and wrap to the next line on narrow screens. Children render
+// sequentially; `gap` maps to Tailwind spacing (`sm|md|lg`).
+
+function RowComponent({ component, onAction }: ComponentProps) {
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'sm';
+  const wrap = props.wrap !== false;
+  const align = (props.align as string) ?? 'center';
+  const gapCls = gap === 'lg' ? 'gap-3' : gap === 'md' ? 'gap-2' : 'gap-1.5';
+  const wrapCls = wrap ? 'flex-wrap' : '';
+  const alignCls = align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : 'items-center';
+  return (
+    <div className={`flex ${wrapCls} ${alignCls} ${gapCls} my-1`}>
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// ── column ──────────────────────────────────────────────────────────────────
+// Vertical flex container. Sibling to `row`. a2ui v0.8 core primitive (see
+// https://a2ui.org/specification/v0.8-a2ui/ — Layout), used by every
+// management surface as the outer wrapper. Children render sequentially;
+// `gap` maps to the same spacing tokens as `row`.
+
+function ColumnComponent({ component, onAction }: ComponentProps) {
+  const props = component.props ?? {};
+  const gap = (props.gap as string) ?? 'md';
+  const align = (props.align as string) ?? 'stretch';
+  const gapCls = gap === 'lg' ? 'gap-3' : gap === 'sm' ? 'gap-1.5' : 'gap-2';
+  const alignCls =
+    align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : align === 'center' ? 'items-center' : 'items-stretch';
+  return (
+    <div className={`flex flex-col ${alignCls} ${gapCls} my-1`}>
+      {renderChildren(component.children, onAction)}
+    </div>
+  );
+}
+
+// ── textfield ───────────────────────────────────────────────────────────────
+// Standalone controlled text input — maps to a2ui v0.8 `TextField`. Writes
+// to FormStateContext by `path` so a sibling submit-button can collect the
+// full form bag in one shot. `validationRegexp` (if present) is applied as
+// a native `pattern` attribute for cheap browser-side validation; the
+// authoritative check lives on the server (REQ-A2UI-005).
+
+function TextFieldComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+  const textFieldType = (component.props.textFieldType as string) ?? 'shortText';
+  const placeholder = component.props.placeholder as string | undefined;
+  const validationRegexp = component.props.validationRegexp as string | undefined;
+  const required = component.props.required === true;
+
+  const form = useFormState();
+  // Controlled read — fall back to the seeded initial value, then to '' so
+  // React does not warn about uncontrolled → controlled swaps.
+  const rawValue = form?.getValue(path);
+  const value = rawValue === undefined || rawValue === null ? '' : String(rawValue);
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!form || !path) return;
+      if (textFieldType === 'number') {
+        const parsed = Number(e.target.value);
+        form.setValue(path, Number.isFinite(parsed) ? parsed : 0);
+        return;
+      }
+      form.setValue(path, e.target.value);
+    },
+    [form, path, textFieldType],
+  );
+
+  return (
+    <div className="flex flex-col gap-1 my-1">
+      {label && (
+        <label htmlFor={id || path} className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          {label}
+        </label>
+      )}
+      <input
+        id={id || path}
+        name={path}
+        type={textFieldType === 'number' ? 'number' : 'text'}
+        value={value}
+        onChange={handleChange}
+        placeholder={placeholder}
+        required={required}
+        pattern={validationRegexp}
+        className="px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+        style={{
+          backgroundColor: 'var(--bg-input)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-dim)',
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+        }}
+      />
+    </div>
+  );
+}
+
+// ── checkbox ────────────────────────────────────────────────────────────────
+// Standalone controlled boolean input — maps to a2ui v0.8 `CheckBox`. Like
+// `textfield`, writes to FormStateContext by `path` so a sibling submit
+// button can collect the final bag.
+
+function CheckBoxComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+
+  const form = useFormState();
+  const rawValue = form?.getValue(path);
+  const checked = rawValue === true;
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!form || !path) return;
+      form.setValue(path, e.target.checked);
+    },
+    [form, path],
+  );
+
+  return (
+    <label htmlFor={id || path} className="flex items-start gap-2 my-1 cursor-pointer text-sm"
+           style={{ color: 'var(--text-primary)' }}>
+      <input
+        id={id || path}
+        name={path}
+        type="checkbox"
+        checked={checked}
+        onChange={handleChange}
+        className="mt-0.5"
+        style={{ accentColor: 'var(--accent)' }}
+      />
+      {label && <span className="leading-snug">{label}</span>}
+    </label>
+  );
+}
+
+// ── multiplechoice ──────────────────────────────────────────────────────────
+// Select-style single-choice for `maxAllowedSelections: 1`. a2ui v0.8 core
+// primitive. Reads/writes a single string value (the selected option's
+// `value`) through FormStateContext. For multi-select (>1) this would need
+// a set-based bag; out of scope for the RegisterModelForm surface.
+
+interface MultipleChoiceOption {
+  label: string;
+  value: string;
+}
+
+function MultipleChoiceComponent({ component }: ComponentProps) {
+  const id = (component.props.id as string) ?? '';
+  const label = component.props.label as string | undefined;
+  const path = (component.props.path as string) ?? '';
+  const options = (component.props.options as MultipleChoiceOption[]) ?? [];
+  const maxAllowedSelections =
+    typeof component.props.maxAllowedSelections === 'number'
+      ? (component.props.maxAllowedSelections as number)
+      : 1;
+
+  const form = useFormState();
+  const rawValue = form?.getValue(path);
+  const selected = typeof rawValue === 'string' ? rawValue : '';
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (!form || !path) return;
+      form.setValue(path, e.target.value);
+    },
+    [form, path],
+  );
+
+  // Single-select fallback renders as a native <select>. Multi-select (not
+  // currently exercised by REQ-GAP-REG-001) renders nothing interactive so
+  // we never silently accept user input the server cannot reconcile.
+  if (maxAllowedSelections !== 1) {
+    return <UnknownComponent component={component} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-1 my-1">
+      {label && (
+        <label htmlFor={id || path} className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          {label}
+        </label>
+      )}
+      <select
+        id={id || path}
+        name={path}
+        value={selected}
+        onChange={handleChange}
+        className="px-3 py-2 rounded-lg text-sm outline-none transition-colors"
+        style={{
+          backgroundColor: 'var(--bg-input)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-dim)',
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+        }}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -877,22 +1275,10 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
   const assumptions = (component.props.assumptions as string[] | undefined) ?? [];
   const questions = useMemo(() => extractQuestions(component.children), [component.children]);
   const { resolvedPayload, resolvedAt } = useContext(ResolutionContext);
-
-  // REQ-102..105: when the backend has persisted a HITL response paired
-  // with this A2UI surface, render a read-only summary instead of the
-  // interactive form. Answers are parsed from the payload (submit: raw
-  // JSON object with `answers`; approve/revise: wrapped action JSON).
-  if (resolvedPayload !== undefined) {
-    return (
-      <QuestionnaireLocked
-        questions={questions}
-        restatedGoal={restatedGoal}
-        assumptions={assumptions}
-        resolvedPayload={resolvedPayload}
-        resolvedAt={resolvedAt}
-      />
-    );
-  }
+  // All hooks MUST run on every render — when resolvedPayload flips from
+  // undefined to defined live (after HITL submit), the early return for
+  // QuestionnaireLocked would otherwise change the hook count and crash
+  // the tree under React's rules of hooks.
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [freeTextMode, setFreeTextMode] = useState<Record<string, boolean>>({});
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>({});
@@ -981,6 +1367,21 @@ function QuestionnaireComponent({ component, onAction }: ComponentProps) {
     },
     [currentAnswered, goNext, isFinalStep],
   );
+
+  // REQ-102..105: when a HITL response is paired with this surface (live
+  // submission OR rehydration), render the read-only summary. Placed AFTER
+  // every hook so the hook count is identical across renders.
+  if (resolvedPayload !== undefined) {
+    return (
+      <QuestionnaireLocked
+        questions={questions}
+        restatedGoal={restatedGoal}
+        assumptions={assumptions}
+        resolvedPayload={resolvedPayload}
+        resolvedAt={resolvedAt}
+      />
+    );
+  }
 
   const hasFraming = Boolean(restatedGoal) || assumptions.length > 0;
 
@@ -1191,7 +1592,20 @@ const componentCatalog: Record<string, React.FC<ComponentProps>> = {
   progress: ProgressComponent,
   form: FormComponent,
   list: ListComponent,
+  row: RowComponent,
+  // a2ui v0.8 core primitives added to render the RegisterModelForm
+  // surface (REQ-GAP-REG-001). These are not new extensions — they are
+  // part of the v0.8 primitive set documented at
+  // https://a2ui.org/specification/v0.8-a2ui/ (Column, TextField,
+  // CheckBox, MultipleChoice). REQ-A2UI-002 forbids NEW catalog entries
+  // (extensions beyond the existing set); filling in missing core
+  // primitives is explicitly outside that prohibition.
+  column: ColumnComponent,
+  textfield: TextFieldComponent,
+  checkbox: CheckBoxComponent,
+  multiplechoice: MultipleChoiceComponent,
   divider: DividerComponent,
+  stack: StackComponent,
   alert: AlertComponent,
   badge: BadgeComponent,
   choice: ChoiceComponent,
@@ -1203,7 +1617,11 @@ function A2UIComponentRenderer({ component, onAction }: ComponentProps) {
   if (!Comp) {
     return <UnknownComponent component={component} />;
   }
-  return <Comp component={component} onAction={onAction} />;
+  // Normalize: components emitted without a `props` object (valid in A2UI
+  // v0.8 for prop-less primitives like `stack`, `divider`) would otherwise
+  // crash every `component.props.X` access downstream. Guarantee a shape.
+  const normalized = component.props ? component : { ...component, props: {} };
+  return <Comp component={normalized} onAction={onAction} />;
 }
 
 // ── Main Renderer ──────────────────────────────────────────────────────────
@@ -1214,6 +1632,107 @@ interface A2UIMessageRendererProps {
   onAction: (action: A2UIAction) => void;
   resolvedPayload?: string;
   resolvedAt?: Date;
+}
+
+/**
+ * flattenInitialValues walks the payload's optional `data` bag into the
+ * path-keyed form-state map. e.g. `{form: {registry_id: "", vendor: ""}}`
+ * becomes `{"/form/registry_id": "", "/form/vendor": ""}`. This way the
+ * authors of the surface can emit a nested data-model (the shape used in
+ * the parent spec §4.6.2) and the FormState bag presents it by path
+ * without the fields having to walk into nested objects themselves.
+ * Only leaf primitives (string | number | boolean) are retained.
+ */
+function flattenInitialValues(
+  data: Record<string, unknown> | undefined,
+  prefix = '',
+): Record<string, FormFieldValue> {
+  if (!data) return {};
+  const out: Record<string, FormFieldValue> = {};
+  for (const [k, v] of Object.entries(data)) {
+    const path = `${prefix}/${k}`;
+    if (v === null || v === undefined) {
+      out[path] = '';
+    } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      out[path] = v;
+    } else if (typeof v === 'object' && !Array.isArray(v)) {
+      Object.assign(out, flattenInitialValues(v as Record<string, unknown>, path));
+    }
+  }
+  return out;
+}
+
+// HOST_APPROVAL_ACTIONS is the allow-list used to recover a
+// HostApprovalAction from a persisted response row after rehydration.
+// Anything outside this set is treated as "unresolved" so the card renders
+// interactive rather than silently locking on a surprise string.
+const HOST_APPROVAL_ACTIONS = new Set<HostApprovalAction>([
+  'approve-once',
+  'approve-and-remember',
+  'deny',
+  'deny-and-blacklist',
+]);
+
+/**
+ * extractHostApprovalAction parses the resolved-payload envelope that
+ * HostApprovalCard emits through onRespond. Mirrors extractResolvedHITLAction
+ * above but narrows to the HostApproval action set so the card's "locked"
+ * visual is exact on rehydration (REQ-041/042 +
+ * spec-process-bugfix-a2ui-hitl-rehydration.md — surface must survive a
+ * reload byte-identically).
+ */
+/**
+ * isObsoleteEnvelope returns true when the resolved-payload envelope marks
+ * the surface as stale — either the rehydration-time `expired` sentinel or
+ * the live-race `orphaned` sentinel. Callers render an "Aprobación
+ * obsoleta" notice instead of interactive buttons (§9.3 / AC-005).
+ */
+function isObsoleteEnvelope(payload: string | undefined): boolean {
+  if (!payload) return false;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const a = (parsed as Record<string, unknown>).action;
+    return a === 'expired' || a === 'orphaned';
+  } catch {
+    return false;
+  }
+}
+
+function extractHostApprovalAction(payload: string | undefined): HostApprovalAction | null {
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    // Direct envelope — `{"action":"approve-once"}` — the shape
+    // HostApprovalCard sends through onRespond.
+    const direct = obj.action ?? obj.extended;
+    if (typeof direct === 'string' && HOST_APPROVAL_ACTIONS.has(direct as HostApprovalAction)) {
+      return direct as HostApprovalAction;
+    }
+    // Wrapped envelope — useChat.handleResolveHITL wraps the extended
+    // action under `content` when the HITL action narrows to `approve`:
+    // `{"action":"approve","content":"{\"action\":\"approve-once\"}"}`.
+    // Unwrap one level and try again so rehydration matches live state.
+    if (typeof obj.content === 'string') {
+      try {
+        const inner = JSON.parse(obj.content) as unknown;
+        if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+          const innerObj = inner as Record<string, unknown>;
+          const nested = innerObj.action ?? innerObj.extended;
+          if (typeof nested === 'string' && HOST_APPROVAL_ACTIONS.has(nested as HostApprovalAction)) {
+            return nested as HostApprovalAction;
+          }
+        }
+      } catch {
+        // nested malformed — treat as unresolved.
+      }
+    }
+  } catch {
+    // fall through — live or malformed envelopes stay unresolved.
+  }
+  return null;
 }
 
 export function A2UIMessageRenderer({
@@ -1237,6 +1756,29 @@ export function A2UIMessageRenderer({
     [resolvedPayload, resolvedAt],
   );
 
+  // Seed FormState once per payload identity so the user's edits survive
+  // re-renders triggered by streaming text updates. A fresh surface (e.g.
+  // after the backend emits a surfaceUpdate with the SAME surfaceId) is
+  // considered equal to the previous payload if its `data` is unchanged,
+  // and its fields therefore keep their values across validation rounds
+  // (REQ-GAP-REG-003 / AC-REG-003).
+  const [formBag, setFormBag] = useState<Record<string, FormFieldValue>>(() =>
+    flattenInitialValues(deferredPayload.data),
+  );
+
+  const getValue = useCallback(
+    (path: string): FormFieldValue => formBag[path],
+    [formBag],
+  );
+  const setValue = useCallback((path: string, value: FormFieldValue) => {
+    setFormBag((prev) => ({ ...prev, [path]: value }));
+  }, []);
+  const snapshot = useCallback(() => ({ ...formBag }), [formBag]);
+  const formContextValue = useMemo<FormStateContextValue>(
+    () => ({ getValue, setValue, snapshot }),
+    [getValue, setValue, snapshot],
+  );
+
   // Motion — §Motion in the iterative-clarification-loop spec.
   // Only A2UI bubbles that carry a `round` field animate on mount; other
   // bubbles keep their current mount behavior to avoid introducing motion
@@ -1246,17 +1788,67 @@ export function A2UIMessageRenderer({
   const hasRound = Boolean(deferredPayload.round);
   const contentClass = hasRound ? 'a2ui-content a2ui-round-in' : 'a2ui-content';
 
+  // ── host.approval short-circuit ────────────────────────────────────────
+  // GAP-6 (spec-architecture-host-gate-security-policy.md §3 REQ-040..042)
+  // ships the HostGate approval HITL via a schema-discriminated envelope
+  // rather than generic a2ui primitives. Catching it here keeps the
+  // existing component catalog untouched while giving the HostGate its own
+  // risk-aware visual treatment.
+  //
+  // Rehydration parity: ResolutionContext already carries resolvedPayload
+  // + resolvedAt, so we decode the HostApprovalAction once and pass the
+  // locked state into the card — the rehydrated DOM is byte-identical to
+  // the live post-submit DOM (per spec-process-bugfix-a2ui-hitl-
+  // rehydration.md).
+  if (deferredPayload.schema === 'host.approval' && deferredPayload.hostApproval) {
+    const resolvedAction = extractHostApprovalAction(resolvedPayload);
+    const hostApproval: HostApprovalPayload = deferredPayload.hostApproval;
+    // AC-005 / §9.3: the reducer marks pre-fix surfaces with
+    // `{"action":"expired"}` and the orphaned-resolve path marks stale
+    // cards with `{"action":"orphaned"}`. Either envelope means the card
+    // has no live transition to back it — render it locked with the
+    // neutral "Aprobación obsoleta" notice instead of crashing.
+    const isObsolete = !resolvedAction && isObsoleteEnvelope(resolvedPayload);
+    return (
+      <ResolutionContext.Provider value={resolutionValue}>
+        <div className={contentClass}>
+          {deferredPayload.round ? (
+            <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+          ) : null}
+          <HostApprovalCard
+            payload={hostApproval}
+            resolvedAction={resolvedAction}
+            resolvedAt={resolvedAt}
+            obsolete={isObsolete}
+            onRespond={(action) =>
+              handleAction({
+                type: 'hitl:host-approval',
+                // componentId is derived from the payload's operation+command
+                // so the reducer can key on a stable value when the backend
+                // returns the full transitionId separately via onHITLAction.
+                componentId: `host-approval:${hostApproval.operation}`,
+                payload: { action },
+              })
+            }
+          />
+        </div>
+      </ResolutionContext.Provider>
+    );
+  }
+
   return (
     <ResolutionContext.Provider value={resolutionValue}>
-      <div className={contentClass}>
-        {deferredPayload.round ? (
-          <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
-        ) : null}
-        {deferredPayload.components.map((component, i) => (
-          <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
-        ))}
-        {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
-      </div>
+      <FormStateContext.Provider value={formContextValue}>
+        <div className={contentClass}>
+          {deferredPayload.round ? (
+            <RoundBadge round={deferredPayload.round} resolvedAt={resolvedAt} />
+          ) : null}
+          {deferredPayload.components.map((component, i) => (
+            <A2UIComponentRenderer key={i} component={component} onAction={handleAction} />
+          ))}
+          {isStreaming && <span className="streaming-cursor-inline" aria-hidden="true" />}
+        </div>
+      </FormStateContext.Provider>
     </ResolutionContext.Provider>
   );
 }

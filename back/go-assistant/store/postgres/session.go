@@ -120,7 +120,8 @@ func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string,
 	tag, err := r.pool.Exec(ctx,
 		`INSERT INTO messages (id, session_id, role, content, cpn_id, cpn_role, cpn_depth, timestamp, parent_message_id)
 		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
-		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')`,
+		 FROM sessions WHERE id = $2 AND state NOT IN ('closed', 'expired')
+		 ON CONFLICT (id) DO NOTHING`,
 		msg.ID, sessionID, msg.Role, msg.Content, msg.CPNID, msg.CPNRole, msg.CPNDepth, msg.Timestamp, parentID,
 	)
 	if err != nil {
@@ -131,7 +132,18 @@ func (r *SessionRepository) AppendMessage(ctx context.Context, sessionID string,
 		return fmt.Errorf("postgres session append message: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Distinguish between not found and closed
+		// RowsAffected can be 0 for three reasons:
+		//   (1) the session row's state is closed/expired (WHERE filter),
+		//   (2) the session does not exist, or
+		//   (3) the message ID already exists (ON CONFLICT DO NOTHING).
+		// (3) is benign — mid-run flush and persistAfterRun both try to
+		// persist the same A2UI / assistant messages, and the second writer
+		// must not return ErrSessionClosed.
+		var exists bool
+		dupErr := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM messages WHERE id = $1)", msg.ID).Scan(&exists)
+		if dupErr == nil && exists {
+			return nil
+		}
 		var state string
 		checkErr := r.pool.QueryRow(ctx, "SELECT state FROM sessions WHERE id = $1", sessionID).Scan(&state)
 		if checkErr != nil {

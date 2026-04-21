@@ -215,6 +215,19 @@ func fireHITL(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 		c.GroupNotifier.SwitchCMP(c.ID)
 	}
 
+	// FIX-HITL-PERSIST: Flush accumulated history to persistence before
+	// blocking. Without this, messages streamed during the current CPN run
+	// (LLM responses, A2UI surfaces) live only in memory and are lost if
+	// the user disconnects while HITL is pending — persistAfterRun only
+	// fires after Run() returns, which hasn't happened yet.
+	if c.OnHITLWaiting != nil {
+		c.mu.RLock()
+		snap := make([]*Message, len(c.History))
+		copy(snap, c.History)
+		c.mu.RUnlock()
+		c.OnHITLWaiting(snap)
+	}
+
 	// REQ-005: Block on channel or ctx.Done.
 	var tok Token
 	var chanOK bool
@@ -440,6 +453,15 @@ func fireHITLWithRevision(ctx context.Context, t *Transition, c *CPN, _ []Token)
 		// REQ-015: Notify group on state change.
 		if c.GroupNotifier != nil {
 			c.GroupNotifier.SwitchCMP(c.ID)
+		}
+
+		// FIX-HITL-PERSIST: Flush history before blocking (same as fireHITL).
+		if c.OnHITLWaiting != nil {
+			c.mu.RLock()
+			snap := make([]*Message, len(c.History))
+			copy(snap, c.History)
+			c.mu.RUnlock()
+			c.OnHITLWaiting(snap)
 		}
 
 		// REQ-012: Block on channel or context cancellation.

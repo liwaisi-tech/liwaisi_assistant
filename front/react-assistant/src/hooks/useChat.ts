@@ -1,10 +1,40 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { BackendSessionState, SessionState } from '../types/api';
-import type { StreamChunkData, CPNEventData } from '../types/sse';
-import type { ChatMessage, HITLAction } from '../types/chat';
-import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError } from '../services/api';
+import type { StreamChunkData, CPNEventData, TransitionStartedPayload, TransitionCompletedPayload, ToolExecutedPayload } from '../types/sse';
+import type { ChatMessage, HITLAction, ToolExecution } from '../types/chat';
+import type { A2UIAction } from '../features/chat/a2ui/types';
+import { getSession, sendMessage as apiSendMessage, resolveHITL as apiResolveHITL, ApiError, HITLTransitionOrphanedError } from '../services/api';
 import { useSSE, type SSEConnectionState } from './useSSE';
-import { A2UI_MARKER } from '../features/chat/a2ui/constants';
+import { A2UI_MARKER, AWAKENING_CPN_ROLE } from '../features/chat/a2ui/constants';
+
+// A2UI_ACTION_MARKER prefixes any user message that carries a serialized
+// v0.8 userAction envelope. The CPN's `t-recv-response` transition (GAP-CPN)
+// detects this marker and parses the JSON tail as `{name, context}` per
+// REQ-GAP-REG-002 / AC-REG-002. Keeps the existing `POST /sessions/:id/
+// messages` endpoint as the single wire for "user → agent" events without
+// adding a sibling REST route.
+export const A2UI_ACTION_MARKER = '$$a2ui-action:';
+
+// CurrentActivity describes what the agent is doing right now, surfaced
+// by the ActivityBubble. Populated from transition_started events that
+// carry a non-null display_label.
+// See spec-design-agent-activity-indicator.md §3.3.
+export interface CurrentActivity {
+  verb: string;
+  detail?: string;
+  startedAt: number;
+  transitionId: string;
+  cpnId: string;
+}
+
+// RecentReceipt is the post-completion pill that briefly summarises the
+// just-finished work (duration + cost). Auto-dismissed by the component
+// after the spec's 4 s window.
+export interface RecentReceipt {
+  durationMs: number;
+  costUsd: number;
+  shownAt: number;
+}
 
 export interface ChatState {
   // Tracks the session whose stream we are willing to apply. STREAM_CHUNK
@@ -16,6 +46,16 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionState: SessionState;
   error: string | null;
+  /**
+   * Neutral, non-error notice string surfaced above the composer. Used for
+   * benign races (e.g. HITL_TRANSITION_ORPHANED: the card the user just
+   * clicked was already resolved by a parallel channel). Rendered in a
+   * slate/muted style — distinct from the red `error` banner.
+   * REQ-007 / AC-004 / §9.4.
+   */
+  notice: string | null;
+  currentActivity: CurrentActivity | null;
+  recentReceipt: RecentReceipt | null;
 }
 
 export type ChatAction =
@@ -33,6 +73,20 @@ export type ChatAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'HITL_REQUESTED'; transitionId: string; prompt: string; cpnId: string; cpnRole: string; suppressBubble?: boolean }
   | { type: 'HITL_RESOLVED'; transitionId: string; action: HITLAction; resolvedPayload?: string }
+  // HITL_ORPHANED: the backend reported HITL_TRANSITION_ORPHANED for the
+  // given transitionId. Locks the surface with a stable `{"action":
+  // "orphaned"}` envelope (parallels the existing `expired` sentinel) so
+  // the renderer dims buttons without flashing a red error banner, and
+  // raises a neutral `notice` string. §4.3 / REQ-007 / AC-004.
+  | { type: 'HITL_ORPHANED'; transitionId: string; notice: string }
+  | { type: 'CLEAR_NOTICE' }
+  | { type: 'ACTIVITY_START'; transitionId: string; cpnId: string; sessionId: string; verb: string; detail?: string }
+  | { type: 'ACTIVITY_END'; transitionId: string; sessionId: string; durationMs?: number; costUsd?: number }
+  | { type: 'ACTIVITY_RECEIPT_SHOW'; durationMs: number; costUsd: number }
+  | { type: 'ACTIVITY_RECEIPT_DISMISS' }
+  | { type: 'INJECT_LOCAL_MESSAGE'; id: string; content: string; cpnRole?: string }
+  | { type: 'UPDATE_MESSAGE_CONTENT'; id: string; content: string }
+  | { type: 'TOOL_EXECUTED'; cpnId: string; sessionId: string; execution: ToolExecution }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -64,7 +118,10 @@ function mapBackendStateToReducerState(s: BackendSessionState): SessionState {
 // also restores hitlResolved so the existing "You approved" badge and the
 // hitl:* button-lock pattern reappear after rehydration. Iterating once
 // over the array keeps this O(n).
-export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
+export function enrichWithResolutions(
+  messages: ChatMessage[],
+  sessionState?: BackendSessionState,
+): ChatMessage[] {
   const resolutions = new Map<string, { payload: string; at: Date; action: HITLAction | null }>();
   for (const m of messages) {
     if (m.role === 'user' && m.parentMessageId) {
@@ -75,23 +132,52 @@ export function enrichWithResolutions(messages: ChatMessage[]): ChatMessage[] {
       });
     }
   }
-  if (resolutions.size === 0) return messages;
+
+  // FIX-HITL-PERSIST: Detect A2UI surfaces that have no paired response row
+  // AND the session is not in an active HITL-waiting state. These are "stale"
+  // surfaces from a previous CPN run that was interrupted (user logged out
+  // while HITL was pending). Mark them as expired so the renderer disables
+  // the buttons instead of showing an interactive form that can't be resolved.
+  const isHITLActive = sessionState === 'hitl_pending';
+
   const result: ChatMessage[] = [];
   for (const m of messages) {
     // Drop HITL response rows — their content is surfaced via the parent
     // A2UI row's resolvedPayload, not as a standalone user bubble.
     if (m.role === 'user' && m.parentMessageId) continue;
+
+    // Check if this is a resolved A2UI surface.
     const hit = resolutions.get(m.id);
-    if (!hit) {
-      result.push(m);
+    if (hit) {
+      result.push({
+        ...m,
+        resolvedPayload: hit.payload,
+        resolvedAt: hit.at,
+        ...(hit.action ? { hitlResolved: hit.action } : {}),
+      });
       continue;
     }
-    result.push({
-      ...m,
-      resolvedPayload: hit.payload,
-      resolvedAt: hit.at,
-      ...(hit.action ? { hitlResolved: hit.action } : {}),
-    });
+
+    // Check if this is an unresolved A2UI surface that should be expired.
+    if (
+      !isHITLActive &&
+      m.role === 'assistant' &&
+      m.content.trimStart().startsWith(A2UI_MARKER) &&
+      !resolutions.has(m.id)
+    ) {
+      // Set resolvedPayload to a sentinel so the renderer locks the surface.
+      // Use a JSON envelope with action "expired" so buttons are dimmed
+      // and the questionnaire shows a stale state. No hitlResolved badge
+      // since no human action was taken.
+      result.push({
+        ...m,
+        resolvedPayload: '{"action":"expired"}',
+        resolvedAt: m.timestamp,
+      });
+      continue;
+    }
+
+    result.push(m);
   }
   return result;
 }
@@ -167,14 +253,38 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         return state;
       }
 
-      // 1. Done sentinel — no content, just signals response complete
+      // respondingModel is surfaced on the FINAL chunk (Done=true) of an
+      // LLM transition per REQ-GAP-IND-001. Support both snake_case (wire)
+      // and PascalCase (legacy reducer field) so the reducer tolerates
+      // either shape without a breaking migration. Empty string is
+      // treated as absent so older bubbles rehydrate without a badge.
+      const respondingModel =
+        (typeof data.responding_model === 'string' && data.responding_model.length > 0
+          ? data.responding_model
+          : undefined) ??
+        (typeof data.ResponsibleModel === 'string' && data.ResponsibleModel.length > 0
+          ? data.ResponsibleModel
+          : undefined);
+
+      // 1. Done sentinel — no content, just signals response complete.
+      // When the final chunk carries a respondingModel, stamp it onto the
+      // most-recent streaming assistant bubble for this CPNID before
+      // closing it (REQ-GAP-IND-003).
       if (data.Done && !data.Content) {
         return {
           ...state,
           sessionState: 'idle',
-          messages: state.messages.map((m) =>
-            m.isStreaming ? { ...m, isStreaming: false } : m
-          ),
+          messages: state.messages.map((m) => {
+            if (!m.isStreaming) return m;
+            if (respondingModel && m.cpnId === data.CPNID && m.role === 'assistant') {
+              return {
+                ...m,
+                isStreaming: false,
+                metadata: { ...m.metadata, responding_model: respondingModel },
+              };
+            }
+            return { ...m, isStreaming: false };
+          }),
         };
       }
 
@@ -186,6 +296,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         cpnId: data.CPNID,
         cpnRole: data.CPNRole,
         timestamp: new Date(),
+        ...(data.Done && respondingModel
+          ? { metadata: { responding_model: respondingModel } }
+          : {}),
       });
 
       // 2. A2UI boundary (REQ-008/009): any chunk starting with the marker
@@ -236,10 +349,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
       if (existingIdx >= 0) {
         const updated = [...state.messages];
+        const prev = updated[existingIdx];
         updated[existingIdx] = {
-          ...updated[existingIdx],
-          content: updated[existingIdx].content + data.Content,
+          ...prev,
+          content: prev.content + data.Content,
           isStreaming: !data.Done,
+          // On the final chunk of an LLM transition, persist respondingModel
+          // onto the bubble's metadata so MessageBubble can render the
+          // RoundBadge without re-reading the SSE stream (REQ-GAP-IND-003).
+          ...(data.Done && respondingModel
+            ? { metadata: { ...prev.metadata, responding_model: respondingModel } }
+            : {}),
         };
         return { ...state, messages: updated, sessionState: data.Done ? 'idle' : 'running' };
       }
@@ -255,6 +375,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sessionState: 'completed',
+        currentActivity: null,
         messages: state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false } : m
         ),
@@ -264,6 +385,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sessionState: 'idle',
+        currentActivity: null,
         messages: state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false } : m
         ),
@@ -275,27 +397,89 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'CLEAR_ERROR':
       return { ...state, error: null };
 
-    case 'HITL_REQUESTED':
+    case 'HITL_REQUESTED': {
+      // The A2UI card / HITL prompt mounts in this dispatch, becoming the
+      // user-facing affordance. Clear any "Waiting for you" activity bubble
+      // so the user does not see a duplicate signal (REQ-032).
+      if (!action.suppressBubble) {
+        return {
+          ...state,
+          sessionState: 'waiting',
+          currentActivity: null,
+          messages: [
+            ...state.messages,
+            {
+              id: `hitl-${action.transitionId}-${Date.now()}`,
+              role: 'assistant',
+              content: action.prompt,
+              isStreaming: false,
+              cpnId: action.cpnId,
+              cpnRole: action.cpnRole,
+              timestamp: new Date(),
+              hitlTransitionId: action.transitionId,
+              hitlActions: ['approve', 'reject'],
+            },
+          ],
+        };
+      }
+      // Custom-surface path: the transition already pushed an A2UI bubble
+      // through STREAM_CHUNK before this HITL_REQUESTED arrived. Stamp the
+      // transition id onto the most-recent A2UI assistant bubble for this
+      // cpnId so HITL_RESOLVED can match it and propagate resolvedPayload
+      // → ResolutionContext → QuestionnaireLocked. Without this stamp the
+      // submit button never locks, allowing a double-submit that returns
+      // 409 ErrNoHITLWaiting on the second click.
+      let stampIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        if (
+          m.role === 'assistant' &&
+          m.cpnId === action.cpnId &&
+          m.content.startsWith(A2UI_MARKER) &&
+          !m.hitlTransitionId
+        ) {
+          stampIdx = i;
+          break;
+        }
+      }
+      if (stampIdx === -1) {
+        return { ...state, sessionState: 'waiting', currentActivity: null };
+      }
+      const stamped = [...state.messages];
+      stamped[stampIdx] = {
+        ...stamped[stampIdx],
+        hitlTransitionId: action.transitionId,
+      };
+      return { ...state, sessionState: 'waiting', currentActivity: null, messages: stamped };
+    }
+
+    case 'HITL_ORPHANED': {
+      // Lock every stale surface keyed by this transition. We also sweep
+      // surfaces that carry a live `hitlActions` bag (no transitionId yet)
+      // for the same parentage so legacy pre-fix `t-review` rows get the
+      // same obsolete treatment the new host-approval cards use (CON-002).
+      const orphaned = '{"action":"orphaned"}';
+      const next = state.messages.map((m) => {
+        if (m.hitlTransitionId !== action.transitionId) return m;
+        return {
+          ...m,
+          hitlActions: undefined,
+          resolvedPayload: orphaned,
+          resolvedAt: new Date(),
+        };
+      });
       return {
         ...state,
-        sessionState: 'waiting',
-        messages: action.suppressBubble
-          ? state.messages
-          : [
-              ...state.messages,
-              {
-                id: `hitl-${action.transitionId}-${Date.now()}`,
-                role: 'assistant',
-                content: action.prompt,
-                isStreaming: false,
-                cpnId: action.cpnId,
-                cpnRole: action.cpnRole,
-                timestamp: new Date(),
-                hitlTransitionId: action.transitionId,
-                hitlActions: ['approve', 'reject'],
-              },
-            ],
+        // Clear the red error banner: this is a benign race, not a failure.
+        error: null,
+        notice: action.notice,
+        sessionState: 'idle',
+        messages: next,
       };
+    }
+
+    case 'CLEAR_NOTICE':
+      return { ...state, notice: null };
 
     case 'HITL_RESOLVED':
       return {
@@ -317,6 +501,111 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ),
       };
 
+    case 'ACTIVITY_START': {
+      // Session-id race guard (REQ-020). Drop events for sessions other
+      // than the one the user is viewing. The null branch keeps backward
+      // compat with chunk dispatch (parity with STREAM_CHUNK rule).
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      // Idempotence (REQ-016). Re-dispatch with the same transitionId is
+      // a no-op so duplicate transition_started events do not reset the
+      // visible startedAt clock.
+      if (state.currentActivity?.transitionId === action.transitionId) {
+        return state;
+      }
+      return {
+        ...state,
+        currentActivity: {
+          verb: action.verb,
+          detail: action.detail,
+          transitionId: action.transitionId,
+          cpnId: action.cpnId,
+          startedAt: Date.now(),
+        },
+      };
+    }
+
+    case 'ACTIVITY_END': {
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      const hasReceipt = action.durationMs !== undefined;
+      return {
+        ...state,
+        currentActivity: null,
+        recentReceipt: hasReceipt
+          ? {
+              durationMs: action.durationMs!,
+              costUsd: action.costUsd ?? 0,
+              shownAt: Date.now(),
+            }
+          : state.recentReceipt,
+      };
+    }
+
+    case 'ACTIVITY_RECEIPT_SHOW':
+      return {
+        ...state,
+        recentReceipt: {
+          durationMs: action.durationMs,
+          costUsd: action.costUsd,
+          shownAt: Date.now(),
+        },
+      };
+
+    case 'ACTIVITY_RECEIPT_DISMISS':
+      return { ...state, recentReceipt: null };
+
+    case 'INJECT_LOCAL_MESSAGE':
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: action.id,
+            role: 'assistant',
+            content: action.content,
+            isStreaming: false,
+            cpnRole: action.cpnRole,
+            timestamp: new Date(),
+          },
+        ],
+      };
+
+    case 'UPDATE_MESSAGE_CONTENT':
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.id ? { ...m, content: action.content } : m,
+        ),
+      };
+
+    case 'TOOL_EXECUTED': {
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      // Append to the most recent assistant message for this cpnId.
+      // Prefer the active streaming message; fall back to the last
+      // non-streaming assistant message if the tool fired after Done.
+      let targetIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        if (m.role === 'assistant' && m.cpnId === action.cpnId) {
+          targetIdx = i;
+          break;
+        }
+      }
+      if (targetIdx === -1) return state;
+      const updated = [...state.messages];
+      const prev = updated[targetIdx];
+      updated[targetIdx] = {
+        ...prev,
+        toolExecutions: [...(prev.toolExecutions ?? []), action.execution],
+      };
+      return { ...state, messages: updated };
+    }
+
     case 'RESET':
       return { ...initialState };
 
@@ -330,6 +619,9 @@ export const initialState: ChatState = {
   messages: [],
   sessionState: 'idle',
   error: null,
+  notice: null,
+  currentActivity: null,
+  recentReceipt: null,
 };
 
 export interface UseChatOptions {
@@ -347,15 +639,78 @@ export interface UseChatOptions {
   onSessionNotFound?: (sessionId: string) => void;
 }
 
+/**
+ * AwakeningPhase gates the composer while the `brae-awakens` CPN topology
+ * (spec-architecture-brae-awakening-self-discovery.md §4.3) drives the
+ * session's first agentic turn.
+ *   • `pending`  — fresh session, no assistant message has landed yet.
+ *                  Composer is disabled, placeholder reads "brae is waking up…".
+ *   • `complete` — either the awakening card arrived (cpnRole='awakening')
+ *                  or the session already has at least one assistant row
+ *                  (rehydration of an older chat). Composer is unlocked.
+ * See REQ-008 / AC-001 / BEH-003.
+ */
+export type AwakeningPhase = 'pending' | 'complete';
+
+/**
+ * Pure awakening-phase derivation. Exported so the state machine is
+ * covered by focused unit tests without driving the full reducer/hook.
+ * See `useChat.test.ts > awakening phase` for the contract under test.
+ */
+export function computeAwakeningPhase(
+  sessionId: string | null,
+  messages: ChatMessage[],
+  sessionState: SessionState,
+): AwakeningPhase {
+  if (!sessionId) return 'complete';
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      // Explicit awakening role is the happy path; any assistant row at
+      // all means the agent has spoken (either live or rehydrated) so
+      // the gate opens either way.
+      if (m.cpnRole === AWAKENING_CPN_ROLE) return 'complete';
+      return 'complete';
+    }
+  }
+  if (sessionState === 'running' || sessionState === 'waiting') {
+    return 'pending';
+  }
+  return 'complete';
+}
+
 export interface UseChatReturn {
   messages: ChatMessage[];
   sessionState: SessionState;
   sessionId: string | null;
   isConnected: boolean;
   connectionState: SSEConnectionState;
+  /**
+   * Awakening gate — `pending` until the session's first assistant message
+   * lands, then `complete`. Drives MessageInput's disabled state and its
+   * "waking up" placeholder copy (REQ-008 / AC-001).
+   */
+  awakeningPhase: AwakeningPhase;
   sendMessage: (content: string) => Promise<void>;
   resolveHITL: (transitionId: string, action: HITLAction) => Promise<void>;
   error: string | null;
+  /** Neutral informational notice (e.g. stale HITL dismissal). */
+  notice: string | null;
+  /** Clear the transient neutral notice. */
+  clearNotice: () => void;
+  currentActivity: CurrentActivity | null;
+  recentReceipt: RecentReceipt | null;
+  dismissReceipt: () => void;
+  // Local message injection — used by the in-chat A2UI model-admin
+  // fragment to drop a synthetic assistant bubble without a backend
+  // round-trip. The bubble's content carries a `$$a2ui:` payload which
+  // the existing renderer picks up.
+  injectLocalMessage: (id: string, content: string, cpnRole?: string) => void;
+  updateMessageContent: (id: string, content: string) => void;
+  // sendUserAction serializes a v0.8 userAction envelope onto the chat
+  // message wire so the CPN's recv-response transition can act on it
+  // without the frontend calling /admin/models directly (REQ-FE-006 /
+  // REQ-GAP-REG-002).
+  sendUserAction: (action: A2UIAction) => Promise<void>;
 }
 
 export function useChat(sessionId: string | null, options?: UseChatOptions): UseChatReturn {
@@ -391,7 +746,8 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
         // (linked via parent_message_id) so the questionnaire can render
         // locked with the answers the user submitted
         // (spec-process-bugfix-a2ui-hitl-response-persistence.md).
-        const enriched = enrichWithResolutions(messages);
+        const backendState = narrowToBackendState(session.state);
+        const enriched = enrichWithResolutions(messages, backendState);
         dispatch({
           type: 'SESSION_LOADED',
           sessionId: sessionId!,
@@ -401,7 +757,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           // BackendSessionState. Narrow defensively at the seam: any legacy
           // SessionState value (waiting/completed/failed) maps to 'idle' from
           // the reducer's perspective.
-          state: narrowToBackendState(session.state),
+          state: backendState,
         });
       } catch (err) {
         if (cancelled) return;
@@ -475,19 +831,97 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     });
   }, []);
 
+  // Activity-indicator wiring (REQ-017). transition_started events with a
+  // non-null display_label populate currentActivity; transition_completed
+  // clears it (and surfaces a receipt when totals are present). External
+  // callbacks (options?.onTransitionStarted/Completed) still fire so the
+  // execution monitor can subscribe independently.
+  const onTransitionStarted = useCallback(
+    (data: CPNEventData) => {
+      const payload = data.Payload as TransitionStartedPayload | undefined;
+      const label = payload?.display_label;
+      if (label?.verb) {
+        dispatch({
+          type: 'ACTIVITY_START',
+          transitionId: data.TransitionID,
+          cpnId: data.CPNID,
+          sessionId: data.SessionID,
+          verb: label.verb,
+          detail: label.detail,
+        });
+      }
+      options?.onTransitionStarted?.(data);
+    },
+    [options?.onTransitionStarted]
+  );
+
+  const onTransitionCompleted = useCallback(
+    (data: CPNEventData) => {
+      const payload = data.Payload as TransitionCompletedPayload | undefined;
+      // Only end the activity if this completion belongs to the transition
+      // currently displayed — avoids ending an unrelated activity bubble
+      // when bursts of completions arrive out of order.
+      dispatch({
+        type: 'ACTIVITY_END',
+        transitionId: data.TransitionID,
+        sessionId: data.SessionID,
+        durationMs: payload?.duration_ms,
+        costUsd: payload?.cost_usd,
+      });
+      options?.onTransitionCompleted?.(data);
+    },
+    [options?.onTransitionCompleted]
+  );
+
+  const onToolExecuted = useCallback(
+    (data: CPNEventData) => {
+      const raw = data.Payload as ToolExecutedPayload | undefined;
+      if (!raw) return;
+      // Only surface the three system-tool names from GAP-11 (REQ-020).
+      const name = raw.tool_name ?? '';
+      if (name !== 'bash_exec' && name !== 'file_read' && name !== 'file_write') return;
+      const execution: ToolExecution = {
+        id: `tool-${data.ID || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        toolName: name,
+        namespace: raw.namespace ?? '',
+        durationMs: raw.duration_ms ?? 0,
+        success: raw.success ?? true,
+        error: raw.error,
+        arguments: raw.arguments,
+        timestamp: new Date(data.Timestamp || Date.now()),
+      };
+      dispatch({
+        type: 'TOOL_EXECUTED',
+        cpnId: data.CPNID,
+        sessionId: data.SessionID,
+        execution,
+      });
+    },
+    [],
+  );
+
   const { isConnected, connectionState } = useSSE({
     sessionId,
     onStreamChunk,
     onSessionCompleted,
     onSessionFailed,
     onHITLRequested,
-    onTransitionStarted: options?.onTransitionStarted,
-    onTransitionCompleted: options?.onTransitionCompleted,
+    onTransitionStarted,
+    onTransitionCompleted,
+    onToolExecuted,
     onSubNetStarted: options?.onSubNetStarted,
     onSubNetCompleted: options?.onSubNetCompleted,
     onSubNetFailed: options?.onSubNetFailed,
     onSessionNotFound: options?.onSessionNotFound,
   });
+
+  const dismissReceipt = useCallback(() => {
+    dispatch({ type: 'ACTIVITY_RECEIPT_DISMISS' });
+  }, []);
+
+  const clearNotice = useCallback(() => {
+    dispatch({ type: 'CLEAR_NOTICE' });
+  }, []);
 
   const handleResolveHITL = useCallback(
     async (transitionId: string, action: HITLAction, content?: string) => {
@@ -515,6 +949,19 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           ...((action === 'revise' || action === 'submit') && content ? { content } : {}),
         });
       } catch (err) {
+        // REQ-007 / AC-004: a HITL_TRANSITION_ORPHANED response is a benign
+        // race (another tab or parallel channel already resolved the gate,
+        // or the rehydrated card has no live backing). Dismiss the stale
+        // card with a neutral notice instead of a red "Failed to respond"
+        // banner.
+        if (err instanceof HITLTransitionOrphanedError) {
+          dispatch({
+            type: 'HITL_ORPHANED',
+            transitionId: err.transitionId ?? transitionId,
+            notice: 'Esta aprobación ya fue resuelta',
+          });
+          return;
+        }
         dispatch({ type: 'SET_ERROR', error: err instanceof ApiError ? err.message : 'Failed to respond' });
       }
     },
@@ -544,14 +991,78 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [sessionId]
   );
 
+  const injectLocalMessage = useCallback(
+    (id: string, content: string, cpnRole?: string) => {
+      dispatch({ type: 'INJECT_LOCAL_MESSAGE', id, content, cpnRole });
+    },
+    [],
+  );
+
+  const updateMessageContent = useCallback(
+    (id: string, content: string) => {
+      dispatch({ type: 'UPDATE_MESSAGE_CONTENT', id, content });
+    },
+    [],
+  );
+
+  const sendUserAction = useCallback(
+    async (action: A2UIAction) => {
+      if (!sessionId) return;
+      // Envelope: { name, componentId, context, payload } — keeps the
+      // action name hoisted so the backend parser can switch on it
+      // without having to re-parse a nested object. `context` mirrors the
+      // a2ui v0.8 shape used in §4.6.2 (array of {key, value} pairs).
+      const rawPayload = (action.payload ?? null) as
+        | { context?: Array<{ key: string; value: unknown }>; fields?: Record<string, unknown> }
+        | null;
+      const envelope = {
+        name: action.type,
+        componentId: action.componentId,
+        context: rawPayload?.context ?? [],
+        fields: rawPayload?.fields ?? null,
+      };
+      const content = `${A2UI_ACTION_MARKER}${JSON.stringify(envelope)}`;
+      try {
+        await apiSendMessage(sessionId, content);
+      } catch (err) {
+        if (err instanceof ApiError) {
+          dispatch({ type: 'SET_ERROR', error: err.message });
+        } else {
+          dispatch({ type: 'SET_ERROR', error: 'Failed to send action' });
+        }
+      }
+    },
+    [sessionId],
+  );
+
+  // Awakening gate (spec §4.4 / REQ-008 / AC-001). Derived from the
+  // message list + session state so no extra reducer action is required:
+  // the moment a STREAM_CHUNK lands that introduces an assistant message
+  // — especially one stamped with cpnRole='awakening' — we flip to
+  // 'complete'. `useMemo` keeps the derivation cheap and stable across
+  // unrelated re-renders (vercel rerender-derived-state-no-effect).
+  const awakeningPhase: AwakeningPhase = useMemo(
+    () => computeAwakeningPhase(sessionId, state.messages, state.sessionState),
+    [sessionId, state.messages, state.sessionState],
+  );
+
   return {
     messages: state.messages,
     sessionState: state.sessionState,
     sessionId,
     isConnected,
     connectionState,
+    awakeningPhase,
     sendMessage,
     resolveHITL: handleResolveHITL,
     error: state.error,
+    notice: state.notice,
+    clearNotice,
+    currentActivity: state.currentActivity,
+    recentReceipt: state.recentReceipt,
+    dismissReceipt,
+    injectLocalMessage,
+    updateMessageContent,
+    sendUserAction,
   };
 }

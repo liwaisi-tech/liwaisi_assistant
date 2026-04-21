@@ -1455,3 +1455,120 @@ func TestResponseContainsJSONObject(t *testing.T) {
 		})
 	}
 }
+
+// ── Responding-model on final stream chunk (REQ-GAP-IND-001 / REQ-FE-005) ─
+
+// When streaming is enabled, ONLY the final chunk (Done=true) carries a
+// non-empty RespondingModel; intermediate chunks must leave it blank so the
+// frontend can detect the turn-end atomically.
+func TestFireLLM_RespondingModel_OnlyOnFinalChunk(t *testing.T) {
+	deltas := []string{"Hola ", "mundo"}
+	mock := &mockLLMClient{
+		completeStreamFunc: func(ctx context.Context, req *LLMRequest, onChunk func(string)) (LLMResponse, error) {
+			for _, d := range deltas {
+				onChunk(d)
+			}
+			return LLMResponse{
+				Content: "Hola mundo",
+				// The adapter echoes the executed model id — e.g. after a
+				// mid-turn fallback. fireLLM prefers this over the authored
+				// LLMConfig.Model so the badge reports what actually ran.
+				Model: "anthropic/claude-opus-4-6",
+			}, nil
+		},
+	}
+	trans := newBasicLLMTransition()
+	trans.LLMConfig.StreamOutput = true
+	trans.LLMConfig.Model = "google/gemma-4-31b-it" // authored, pre-fallback
+
+	ec := &eventCollector{}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.EventSink = ec.sink
+
+	if _, _, err := fireLLM(context.Background(), trans, cpn, []Token{{Color: ColorString, Payload: "hi"}}); err != nil {
+		t.Fatalf("fireLLM: %v", err)
+	}
+
+	var doneChunks, intermediate []StreamChunk
+	for _, e := range ec.getEvents() {
+		if e.Type != EventStreamChunk {
+			continue
+		}
+		chunk := e.Payload.(StreamChunk)
+		if chunk.Done {
+			doneChunks = append(doneChunks, chunk)
+		} else {
+			intermediate = append(intermediate, chunk)
+		}
+	}
+
+	if len(doneChunks) != 1 {
+		t.Fatalf("expected exactly 1 done chunk, got %d", len(doneChunks))
+	}
+	final := doneChunks[0]
+	if final.RespondingModel == "" {
+		t.Fatal("final chunk must set RespondingModel")
+	}
+	// Contains the echoed registry_id AND the adapter hint.
+	if !strings.Contains(final.RespondingModel, "anthropic/claude-opus-4-6") {
+		t.Errorf("RespondingModel = %q; expected echoed registry_id", final.RespondingModel)
+	}
+	if !strings.Contains(final.RespondingModel, "openrouter") {
+		t.Errorf("RespondingModel = %q; expected openrouter adapter hint", final.RespondingModel)
+	}
+
+	// Intermediate chunks must NOT carry the badge — REQ-GAP-IND-001 "earlier
+	// chunks' values MAY be empty" is interpreted as MUST for the streaming
+	// path: a non-empty mid-stream value would incorrectly trigger the badge
+	// render before the assistant message is complete.
+	for i, c := range intermediate {
+		if c.RespondingModel != "" {
+			t.Errorf("intermediate chunk[%d] unexpectedly set RespondingModel = %q", i, c.RespondingModel)
+		}
+	}
+}
+
+// When the adapter does not echo resp.Model (e.g. early-abort during
+// streaming), fireLLM falls back to the authored LLMConfig.Model so the badge
+// still renders something meaningful.
+func TestFireLLM_RespondingModel_FallsBackToAuthoredModel(t *testing.T) {
+	mock := &mockLLMClient{
+		completeStreamFunc: func(ctx context.Context, req *LLMRequest, onChunk func(string)) (LLMResponse, error) {
+			onChunk("x")
+			return LLMResponse{Content: "x"}, nil // no Model echoed
+		},
+	}
+	trans := newBasicLLMTransition()
+	trans.LLMConfig.StreamOutput = true
+	trans.LLMConfig.Model = "google/gemma-4-31b-it"
+
+	ec := &eventCollector{}
+	cpn := newTestCPNForLLM(mock, map[string]*Transition{trans.ID: trans})
+	cpn.EventSink = ec.sink
+
+	if _, _, err := fireLLM(context.Background(), trans, cpn, []Token{{Color: ColorString, Payload: "hi"}}); err != nil {
+		t.Fatalf("fireLLM: %v", err)
+	}
+	for _, e := range ec.getEvents() {
+		if e.Type != EventStreamChunk {
+			continue
+		}
+		c := e.Payload.(StreamChunk)
+		if !c.Done {
+			continue
+		}
+		if !strings.Contains(c.RespondingModel, "google/gemma-4-31b-it") {
+			t.Fatalf("final RespondingModel = %q; want fallback to authored model", c.RespondingModel)
+		}
+	}
+}
+
+// Empty authored model + empty echoed model → empty RespondingModel (no badge).
+func TestFormatRespondingModel_EmptyYieldsEmpty(t *testing.T) {
+	if got := formatRespondingModel("", ""); got != "" {
+		t.Errorf("empty inputs should yield empty string, got %q", got)
+	}
+	if got := formatRespondingModel("", "  "); got != "" {
+		t.Errorf("whitespace-only should yield empty string, got %q", got)
+	}
+}

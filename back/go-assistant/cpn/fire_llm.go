@@ -2,6 +2,7 @@ package cpn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,21 +12,38 @@ import (
 )
 
 // renderSystemPrompt returns the per-invocation system prompt for an LLM
-// transition. It prepends the session's regional-variant preamble to the
+// transition. Prepends the host environment preamble (REQ-012, via
+// c.HostContextFormatter) then the regional-variant preamble to the
 // transition's static SystemPrompt without mutating the transition (CON-003).
-// Returns the original prompt unchanged when SkipRegionalPreamble is set.
+// Regional preamble is skipped when SkipRegionalPreamble is set.
 func renderSystemPrompt(t *Transition, c *CPN) string {
+	var hostPreamble string
+	if c.HostContextFormatter != nil {
+		hostPreamble = c.HostContextFormatter(c)
+	}
+
+	var base string
 	if t.LLMConfig != nil && t.LLMConfig.SkipRegionalPreamble {
-		return t.SystemPrompt
+		base = t.SystemPrompt
+	} else {
+		regional := prompts.PreambleFor(c.RegionalVariant)
+		switch {
+		case regional == "":
+			base = t.SystemPrompt
+		case t.SystemPrompt == "":
+			base = regional
+		default:
+			base = regional + "\n\n" + t.SystemPrompt
+		}
 	}
-	preamble := prompts.PreambleFor(c.RegionalVariant)
-	if preamble == "" {
-		return t.SystemPrompt
+
+	if hostPreamble == "" {
+		return base
 	}
-	if t.SystemPrompt == "" {
-		return preamble
+	if base == "" {
+		return hostPreamble
 	}
-	return preamble + "\n\n" + t.SystemPrompt
+	return hostPreamble + "\n\n" + base
 }
 
 // MaxToolCallIterations caps the agentic loop to prevent infinite cycles.
@@ -227,7 +245,7 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 			copy(retryMessages, messages)
 			if len(retryMessages) > 0 && retryMessages[0].Role == "system" {
 				sys := *retryMessages[0]
-				sys.Content = sys.Content + "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
+				sys.Content += "\n\nJSON only, no thinking, no fences. Your entire response MUST be a single JSON object starting with { and ending with }."
 				retryMessages[0] = &sys
 			}
 			retryReq.Messages = retryMessages
@@ -286,16 +304,26 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 
 	// Emit done sentinel if streaming was active.
 	if streamOutput {
+		// REQ-GAP-IND-001 / REQ-FE-005: stamp the final chunk with the resolved
+		// route's registry_id + adapter hint so the frontend can render a
+		// responding-model badge. Preference order for the model id: the LLM
+		// adapter's echoed resp.Model (honours mid-turn fallbacks), otherwise
+		// the authored LLMConfig.Model. Adapter is "openrouter" for the
+		// OpenRouter client which is the only driving adapter in this repo;
+		// the hint is defensive so a future direct-provider adapter can
+		// override via route metadata. Earlier chunks leave the field blank
+		// (REQ-GAP-IND-001: "Earlier chunks' values MAY be empty").
 		c.emit(&Event{
 			Type:           EventStreamChunk,
 			TransitionID:   t.ID,
 			TransitionKind: NodeKindLLM,
 			Payload: StreamChunk{
-				SessionID: c.SessionID,
-				CPNID:     c.ID,
-				CPNRole:   c.Role,
-				Content:   "",
-				Done:      true,
+				SessionID:       c.SessionID,
+				CPNID:           c.ID,
+				CPNRole:         c.Role,
+				Content:         "",
+				Done:            true,
+				RespondingModel: formatRespondingModel(resp.Model, t.LLMConfig.Model),
 			},
 		})
 	}
@@ -383,12 +411,26 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 		default:
 		}
 
-		// Append the assistant message with tool calls.
-		assistantMsg := &LLMMessage{
-			Role:    "assistant",
-			Content: resp.Content,
+		// Append the assistant message with tool calls. When the LLM returns
+		// multiple tool_calls in a single turn, OpenAI/Gemini require ONE
+		// assistant message carrying all of them (followed by N tool
+		// messages, one per tool_call_id). LLMMessage.ToolCall is singular,
+		// so we emit one assistant message per tool_call and let
+		// formatChatMessages serialise each as its own assistant+tool pair.
+		// Carrying the tool_call on the assistant message is mandatory:
+		// without it the subsequent tool/role message has no matching
+		// tool_call_id and Gemini returns HTTP 400 "invalid request
+		// parameters" on the re-call.
+		for idx, tc := range resp.ToolCalls {
+			am := &LLMMessage{Role: "assistant", ToolCall: tc}
+			if idx == 0 {
+				am.Content = resp.Content // preserve any text the LLM emitted
+			}
+			messages = append(messages, am)
 		}
-		messages = append(messages, assistantMsg)
+		if len(resp.ToolCalls) == 0 {
+			messages = append(messages, &LLMMessage{Role: "assistant", Content: resp.Content})
+		}
 
 		// Execute each tool call.
 		for _, tc := range resp.ToolCalls {
@@ -425,30 +467,130 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 						OriginID:       t.ID,
 						OriginKind:     string(NodeKindLLM),
 					}},
+					DisplayLabel: resolveLabelForTransition(c, toolTransition),
 				},
 				Timestamp: startTime,
 			})
 
+			// Single-gate routing: for host-gated system tools (bash_exec,
+			// file_read, file_write) the HOST·HITL gate owns the approval
+			// surface end-to-end. We pre-check the gate here so that
+			// approve-and-remember actually persists (HandleRequiresHITL
+			// writes the learned safe-pattern + stamps the first-run
+			// ledger). Without this, fire_llm's generic tool-HITL card
+			// would intercept the approval but never reach the gate, and
+			// the subsequent gate.Check inside the executor would still
+			// return ErrRequiresHITL forever.
+			hostGated := false
+			if gateOp, derived := DeriveHostGateOp(tc.ToolName, tc.Arguments); derived &&
+				c.HostRuntime != nil && c.HostRuntime.Gate != nil && c.HostRuntime.HITLHandler != nil {
+				hostGated = true
+				gateCtx := WithSessionID(ctx, c.SessionID)
+				if gateErr := c.HostRuntime.Gate.Check(gateCtx, gateOp); gateErr != nil {
+					handled := c.HostRuntime.HITLHandler.HandleHITL(ctx, t, c, gateOp, gateErr)
+					if handled != nil {
+						// Denied — report back to the LLM as a tool error and
+						// skip executor. Emit resolved so the UI clears.
+						c.emit(&Event{
+							Type:           EventHITLResolved,
+							TransitionID:   t.ID,
+							TransitionKind: NodeKindTool,
+							SessionID:      c.SessionID,
+							CPNID:          c.ID,
+							Payload:        "rejected",
+							Timestamp:      time.Now(),
+						})
+						messages = append(messages, &LLMMessage{
+							Role: "tool",
+							ToolResult: &LLMToolResult{
+								ToolCallID: tc.ID,
+								Content:    "Tool execution rejected by user",
+							},
+						})
+						continue
+					}
+					c.emit(&Event{
+						Type:           EventHITLResolved,
+						TransitionID:   t.ID,
+						TransitionKind: NodeKindTool,
+						SessionID:      c.SessionID,
+						CPNID:          c.ID,
+						Payload:        "approved",
+						Timestamp:      time.Now(),
+					})
+				}
+			}
+
 			// HITL gate: tools with RequiresHITL block until human approval.
-			if toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
+			// TransitionID uses t.ID (the LLM transition) so the frontend can
+			// resolve via POST /hitl/{t.ID}, which maps to t.HITLConfig.Channel.
+			// Host-gated tools (handled above) skip this path to avoid a
+			// duplicate approval card.
+			if !hostGated && toolTransition.ToolMeta != nil && toolTransition.ToolMeta.RequiresHITL {
+				// Emit the host.approval A2UI surface as a stream chunk so the
+				// frontend renders HostApprovalCard with Approve/Reject buttons.
+				// This mirrors the custom-surface pattern used by t-review.
+				a2uiContent := buildToolApprovalA2UI(tc.ToolName, tc.Arguments)
+				c.emit(&Event{
+					Type:           EventStreamChunk,
+					TransitionID:   t.ID,
+					TransitionKind: NodeKindLLM,
+					SessionID:      c.SessionID,
+					CPNID:          c.ID,
+					CPNDepth:       c.Depth,
+					CPNRole:        c.Role,
+					Payload: StreamChunk{
+						SessionID: c.SessionID,
+						CPNID:     c.ID,
+						CPNRole:   c.Role,
+						Content:   a2uiContent,
+						Done:      true,
+					},
+					Timestamp: time.Now(),
+				})
+
+				// REQ-001/REQ-002 (spec-process-bugfix-tool-hitl-single-gate):
+				// emit HITLRequestedPayload{CustomSurface:true} so the
+				// integration-layer event callback (cmd/server/main.go) sees
+				// the typed struct and suppresses its legacy t-review card.
+				// Previously this site emitted a map[string]any, which the
+				// type-switch in main.go did not match → the legacy WARN
+				// branch fired and a second "Review Required" card appeared
+				// after the host.approval surface (the Gate B defect).
+				//
+				// GUD-002: record the skip so on-call can confirm in logs
+				// that the topology/builder pair are cooperating.
+				slog.DebugContext(ctx, "fire_llm tool-HITL: skipping legacy t-review wiring (host.approval owns surface)",
+					"transition_id", t.ID,
+					"tool_name", tc.ToolName,
+					"requires_hitl", true,
+				)
 				c.emit(&Event{
 					Type:           EventHITLRequested,
-					TransitionID:   tc.ToolName,
+					TransitionID:   t.ID,
 					TransitionKind: NodeKindTool,
 					SessionID:      c.SessionID,
 					CPNID:          c.ID,
 					CPNDepth:       c.Depth,
 					CPNRole:        c.Role,
-					Payload: map[string]any{
-						"tool_name":    tc.ToolName,
-						"arguments":    string(tc.Arguments),
-						"tool_call_id": tc.ID,
-						"description":  toolTransition.ToolMeta.Description,
+					Payload: HITLRequestedPayload{
+						Prompt:        "Permiso para operar en tu máquina",
+						CustomSurface: true,
 					},
 					Timestamp: time.Now(),
 				})
 
 				c.setState(StateWaiting)
+
+				// FIX-HITL-PERSIST: Flush history before blocking on
+				// tool-HITL approval (same pattern as fireHITL).
+				if c.OnHITLWaiting != nil {
+					c.mu.RLock()
+					snap := make([]*Message, len(c.History))
+					copy(snap, c.History)
+					c.mu.RUnlock()
+					c.OnHITLWaiting(snap)
+				}
 
 				if t.HITLConfig != nil && t.HITLConfig.Channel != nil {
 					select {
@@ -460,9 +602,16 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 							return "", loopCost, fmt.Errorf("transition %s: HITL channel closed unexpectedly", t.ID)
 						}
 						c.setState(StateRunning)
-						payload := fmt.Sprintf("%v", response.Payload)
-						if strings.EqualFold(strings.TrimSpace(payload), "reject") ||
-							response.Color == ColorError {
+						rejected := response.Color == ColorError
+						if !rejected {
+							if hr, ok := response.Payload.(HITLResponse); ok {
+								rejected = hr.Action == HITLReject
+							} else {
+								payload := fmt.Sprintf("%v", response.Payload)
+								rejected = strings.EqualFold(strings.TrimSpace(payload), "reject")
+							}
+						}
+						if rejected {
 							// Tool rejected — send error to LLM.
 							messages = append(messages, &LLMMessage{
 								Role: "tool",
@@ -473,7 +622,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 							})
 							c.emit(&Event{
 								Type:           EventHITLResolved,
-								TransitionID:   tc.ToolName,
+								TransitionID:   t.ID,
 								TransitionKind: NodeKindTool,
 								SessionID:      c.SessionID,
 								CPNID:          c.ID,
@@ -485,7 +634,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 						// Approved — continue to tool execution.
 						c.emit(&Event{
 							Type:           EventHITLResolved,
-							TransitionID:   tc.ToolName,
+							TransitionID:   t.ID,
 							TransitionKind: NodeKindTool,
 							SessionID:      c.SessionID,
 							CPNID:          c.ID,
@@ -513,7 +662,11 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					// REQ-009: Tool errors sent back to LLM for recovery.
 					resultContent = fmt.Sprintf("error: %s", execErr.Error())
 				} else {
-					resultContent = fmt.Sprintf("%v", toolResult.Payload)
+					if raw, merr := json.Marshal(toolResult.Payload); merr == nil {
+						resultContent = string(raw)
+					} else {
+						resultContent = fmt.Sprintf("%+v", toolResult.Payload)
+					}
 				}
 			}
 
@@ -537,6 +690,7 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					DurationMs: durationMs,
 					Success:    execErr == nil,
 					Error:      errorString(execErr),
+					Arguments:  tc.Arguments,
 				},
 				Timestamp: time.Now(),
 			})
@@ -652,4 +806,105 @@ func inferOutputColor(requireJSON bool) ColorSet {
 		return ColorJSON
 	}
 	return ColorArtifact
+}
+
+// formatRespondingModel produces the "<registry_id> · <adapter>" label shown
+// by the frontend RoundBadge (REQ-FE-005 / REQ-GAP-IND-001). Empty input yields
+// an empty label so the frontend can branch on truthiness without introducing
+// a placeholder like "unknown · openrouter".
+//
+// Preference order for the registry id:
+//  1. The LLM adapter's echoed model — honours mid-turn fallbacks and is the
+//     real id that answered.
+//  2. The authored LLMConfig.Model — the resolved id stamped by
+//     applyUserModelPreferences; stable when the adapter did not echo a value.
+//
+// Adapter: "openrouter" is the only driving adapter at the time of this slice
+// (every Route in the registry uses ProviderAdapter="openrouter"). When direct
+// adapters land, the hint can be derived from the selected Route without
+// changing the callers of this helper.
+func formatRespondingModel(echoed, authored string) string {
+	id := strings.TrimSpace(echoed)
+	if id == "" {
+		id = strings.TrimSpace(authored)
+	}
+	if id == "" {
+		return ""
+	}
+	return id + " · openrouter"
+}
+
+// HostApprovalInvocation is the raw-invocation sub-payload of
+// HostApprovalPayload. Kept separate so the frontend's collapsed
+// "Detalles técnicos" panel can render only this object.
+// REQ-004 / SEC-002 — MUST reflect the exact arguments passed to the host
+// adapter; divergence is a critical security bug.
+type HostApprovalInvocation struct {
+	Tool string          `json:"tool"`
+	Args json.RawMessage `json:"args"`
+}
+
+// HostApprovalPayload is the A2UI surface payload for the HOST·HITL gate.
+// Shape defined in spec-process-bugfix-tool-hitl-single-gate.md §4.1.
+// The outer envelope adds a `schema` discriminator and a `hostApproval`
+// wrapper for frontend parity with the previous shape.
+type HostApprovalPayload struct {
+	Command           string                 `json:"command"`
+	Invocation        HostApprovalInvocation `json:"invocation"`
+	Risk              string                 `json:"risk"`
+	Title             string                 `json:"title"`
+	Context           string                 `json:"context,omitempty"`
+	RememberAvailable bool                   `json:"rememberAvailable,omitempty"`
+}
+
+// buildToolApprovalA2UI generates the $$a2ui: host.approval payload that the
+// frontend renders as a HostApprovalCard with Approve / Reject buttons.
+// The payload shape is defined by HostApprovalPayload (spec §4.1).
+//
+// command is the human-readable shell command extracted via
+// ParseShellInvocation; invocation.args echoes the raw tool-call arguments
+// for the collapsed "Detalles técnicos" disclosure. When the parser flags
+// an unrecognised shape the risk escalates to "caution" regardless of tool.
+func buildToolApprovalA2UI(toolName string, args json.RawMessage) string {
+	risk := "caution"
+	if toolName == "file_read" {
+		risk = "safe"
+	}
+
+	command, parsed := ParseShellInvocation(toolName, args)
+	if !parsed && risk == "safe" {
+		// Unknown/unrecognised shape — bump to caution per spec §9.2.
+		risk = "caution"
+	}
+	if len(command) > 400 {
+		command = command[:397] + "…"
+	}
+
+	// Preserve the raw arg bytes verbatim so the Details panel can display
+	// them byte-identical to the executed invocation (SEC-002).
+	invocationArgs := args
+	if len(invocationArgs) == 0 {
+		invocationArgs = json.RawMessage("{}")
+	}
+
+	payload := HostApprovalPayload{
+		Command: command,
+		Invocation: HostApprovalInvocation{
+			Tool: toolName,
+			Args: invocationArgs,
+		},
+		Risk:  risk,
+		Title: "Permiso para operar en tu máquina",
+	}
+
+	// Wrap in the A2UI envelope used by the frontend HostApprovalCard parser.
+	envelope := struct {
+		Schema       string              `json:"schema"`
+		HostApproval HostApprovalPayload `json:"hostApproval"`
+	}{
+		Schema:       "host.approval",
+		HostApproval: payload,
+	}
+	raw, _ := json.Marshal(envelope)
+	return "$$a2ui:" + string(raw)
 }

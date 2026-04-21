@@ -37,6 +37,80 @@ export interface ModelsResponse {
   // §4 — once the backend returns these, the UI prefers them.
   default?: string;
   available?: string[];
+  // Registry metadata from the DB-backed model registry
+  // (spec-architecture-model-registry-and-a2ui-management.md). Empty array
+  // when the registry is disabled so existing consumers keep working.
+  registry?: ModelRegistryEntry[];
+}
+
+// ── Model registry (spec-architecture-model-registry-and-a2ui-management.md) ──
+
+export interface ModelRegistryEntry {
+  id: string;
+  registry_id: string;
+  vendor: string;
+  family: string;
+  version: string;
+  variant?: string;
+  display_name: string;
+  description: string;
+  hugging_face_id?: string;
+  modalities: { input: string[]; output: string[] };
+  capabilities: ModelCapabilities;
+  context: { length: number; tokenizer: string };
+  pricing: { input_per_token: number; output_per_token: number; currency: string };
+  supported_params: string[];
+  default_params?: Record<string, unknown>;
+  license: ModelLicense;
+  lifecycle: ModelLifecycle;
+  routes: ModelRoute[];
+  source_metadata?: Record<string, unknown>;
+  is_product_default: boolean;
+  invokable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelCapabilities {
+  text: boolean;
+  tools: boolean;
+  streaming: boolean;
+  reasoning: boolean;
+  structured_output: boolean;
+  vision: boolean;
+  audio: boolean;
+}
+
+export interface ModelLicense {
+  kind: string;
+  spdx_id?: string;
+  community_slug?: string;
+  name?: string;
+  url?: string;
+  source: string;
+  status: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+}
+
+export interface ModelLifecycle {
+  state: string;
+  registered_at: string;
+  activated_at?: string;
+  deprecated_at?: string;
+  sunset_at?: string;
+  replaced_by?: string;
+  reason?: string;
+}
+
+export interface ModelRoute {
+  provider_adapter: string;
+  provider_model_id: string;
+  endpoint_base_url?: string;
+  priority: number;
+  enabled: boolean;
+  region?: string;
+  is_moderated?: boolean;
 }
 
 export type PersonalityPreset = 'balanced' | 'creative' | 'precise' | 'custom' | '';

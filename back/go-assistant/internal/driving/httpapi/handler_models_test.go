@@ -11,7 +11,7 @@ import (
 
 // TestHandleGetModels_IncludesDefault asserts REQ-OBS-002 / AC-010:
 // GET /api/v1/models returns a top-level "default" key equal to
-// openrouter.PRODUCT_DEFAULT_MODEL so the frontend can seed the onboarding
+// openrouter.ProductDefaultModel so the frontend can seed the onboarding
 // wizard without re-stating the product default.
 func TestHandleGetModels_IncludesDefault(t *testing.T) {
 	h := &Handlers{}
@@ -33,17 +33,17 @@ func TestHandleGetModels_IncludesDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("response missing top-level string field %q; body=%s", "default", rr.Body.String())
 	}
-	if got != openrouter.PRODUCT_DEFAULT_MODEL {
-		t.Errorf("default = %q, want %q", got, openrouter.PRODUCT_DEFAULT_MODEL)
+	if got != openrouter.ProductDefaultModel {
+		t.Errorf("default = %q, want %q", got, openrouter.ProductDefaultModel)
 	}
 	// Legacy alias retained for in-flight frontends.
-	if body["default_model"] != openrouter.PRODUCT_DEFAULT_MODEL {
-		t.Errorf("default_model = %v, want %q", body["default_model"], openrouter.PRODUCT_DEFAULT_MODEL)
+	if body["default_model"] != openrouter.ProductDefaultModel {
+		t.Errorf("default_model = %v, want %q", body["default_model"], openrouter.ProductDefaultModel)
 	}
 }
 
 // TestHandleGetModels_RolesAllDefault asserts every role in the response
-// resolves to PRODUCT_DEFAULT_MODEL (REQ-CFG-001).
+// resolves to ProductDefaultModel (REQ-CFG-001).
 func TestHandleGetModels_RolesAllDefault(t *testing.T) {
 	h := &Handlers{}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
@@ -59,8 +59,8 @@ func TestHandleGetModels_RolesAllDefault(t *testing.T) {
 		t.Fatal("roles array is empty")
 	}
 	for _, r := range body.Roles {
-		if r.DefaultModel != openrouter.PRODUCT_DEFAULT_MODEL {
-			t.Errorf("role %q default = %q, want %q", r.Key, r.DefaultModel, openrouter.PRODUCT_DEFAULT_MODEL)
+		if r.DefaultModel != openrouter.ProductDefaultModel {
+			t.Errorf("role %q default = %q, want %q", r.Key, r.DefaultModel, openrouter.ProductDefaultModel)
 		}
 	}
 }

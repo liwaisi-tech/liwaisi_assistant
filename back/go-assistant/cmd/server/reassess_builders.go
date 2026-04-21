@@ -250,4 +250,3 @@ func buildEscapeHatchA2UIPayload(rr reassessResult, rt roundToken, cfg reassessC
 	}
 	return env, nil
 }
-

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { TFunction } from 'i18next';
 import { getModels } from '../../../services/api';
-import type { ModelRole } from '../../../types/setup';
+import type { ModelRole, ModelRegistryEntry } from '../../../types/setup';
 
 interface ModelStepProps {
   t: TFunction;
@@ -22,9 +22,28 @@ export function ModelStep({
   const [roles, setRoles] = useState<ModelRole[]>([]);
   const [defaultModel, setDefaultModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [registry, setRegistry] = useState<ModelRegistryEntry[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+
+  const registryByID = useMemo(() => {
+    const map = new Map<string, ModelRegistryEntry>();
+    for (const entry of registry) map.set(entry.registry_id, entry);
+    return map;
+  }, [registry]);
+
+  const formatModelOption = useCallback(
+    (registryID: string): string => {
+      const entry = registryByID.get(registryID);
+      if (!entry) return registryID;
+      const ctx = entry.context?.length
+        ? ` · ${Math.round(entry.context.length / 1000)}k`
+        : '';
+      return `${entry.display_name} — ${entry.vendor}${ctx}`;
+    },
+    [registryByID],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +59,7 @@ export function ModelStep({
         setDefaultModel(dflt);
         setRoles(res.roles);
         setAvailableModels(avail);
+        setRegistry(res.registry ?? []);
         if (!selectedModel) {
           onSelectModel(dflt);
         }
@@ -127,7 +147,7 @@ export function ModelStep({
             >
               {availableModels.map((model) => (
                 <option key={model} value={model}>
-                  {model}
+                  {formatModelOption(model)}
                 </option>
               ))}
             </select>
@@ -231,7 +251,7 @@ export function ModelStep({
                       >
                         {availableModels.map((model) => (
                           <option key={model} value={model}>
-                            {model}
+                            {formatModelOption(model)}
                           </option>
                         ))}
                       </select>

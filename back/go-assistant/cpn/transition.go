@@ -114,6 +114,39 @@ type Transition struct {
 	// When nil, all events (passing ObservedCPNID check) are accepted.
 	// Only meaningful when Kind == NodeKindObserver.
 	EventFilter func(e Event) bool
+
+	// BashConfig holds the command-level parameters for a NodeKindBash
+	// transition (GAP-1). Only meaningful when Kind == NodeKindBash.
+	BashConfig *BashConfig
+
+	// RegisterToolConfig holds the manifest for a NodeKindRegisterTool
+	// transition (GAP-3). When nil, fire_register_tool reads the manifest
+	// from the consumed ColorToolManifest token payload instead.
+	// Only meaningful when Kind == NodeKindRegisterTool.
+	RegisterToolConfig *RegisterToolConfig
+
+	// SynthesizeConfig holds the LLM + size-cap settings for a
+	// NodeKindSynthesize transition (GAP-4). Nil for other kinds.
+	SynthesizeConfig *SynthesizeConfig
+
+	// InstantiateConfig holds the parent↔child place mapping + HITL
+	// options for a NodeKindInstantiate transition (GAP-4). Nil for
+	// other kinds.
+	InstantiateConfig *InstantiateConfig
+
+	// Silent suppresses the DisplayLabel on this transition's lifecycle
+	// events so the UI activity indicator does not surface internal/observer
+	// firings. The events themselves are still emitted for monitoring and
+	// metrics — only the display_label JSON field is omitted.
+	// Defaults to false; observer constructors set it to true.
+	Silent bool
+
+	// Deprecated marks this transition as non-firable (GAP-7 CON-003).
+	// Tokens on its input places drain naturally to downstream paths.
+	Deprecated bool
+
+	// DeprecateReason is a human-readable explanation for deprecation.
+	DeprecateReason string
 }
 
 // ToolMeta carries tool metadata from the registry to the CPN execution layer.
@@ -136,12 +169,16 @@ func (t *Transition) CircuitBreaker() *CircuitBreakerState {
 
 // NewTransition creates a Transition with the given identity and arc configuration.
 // Guard and ErrorPlace can be set after construction via direct field assignment.
+//
+// Observer-kind transitions are constructed with Silent: true so their lifecycle
+// events do not surface a DisplayLabel in the activity indicator (spec REQ-007).
 func NewTransition(id string, kind NodeKind, inputPlaces, outputPlaces []string) *Transition {
 	return &Transition{
 		ID:           id,
 		Kind:         kind,
 		InputPlaces:  inputPlaces,
 		OutputPlaces: outputPlaces,
+		Silent:       kind == NodeKindObserver,
 	}
 }
 
@@ -165,6 +202,11 @@ func (t *Transition) CanFire(places map[string]*Place) bool {
 // canFireWith evaluates firability using the provided guard instead of t.Guard.
 // Used by CPN.effectiveCanFire to inject the centaurian guard without mutation.
 func (t *Transition) canFireWith(places map[string]*Place, guard func([]*Token) bool) bool {
+	// GAP-7 CON-003: deprecated transitions are never firable.
+	if t.Deprecated {
+		return false
+	}
+
 	// Circuit breaker check (Block 4).
 	if t.cbState != nil && !t.cbState.Allow() {
 		return false

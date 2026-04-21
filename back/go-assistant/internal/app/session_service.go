@@ -14,11 +14,15 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/openrouter"
 )
+
+// fallbackDefaultModel is the compile-time safety net used only when the
+// model registry is unreachable AND WithDefaultModel was never called. Keep
+// it in the domain package so the app layer never imports infra/openrouter.
+const fallbackDefaultModel = "google/gemini-2.5-flash"
 
 // rehydrateTimeout bounds the time a single-flight rehydration can block the
 // service on a persistence round-trip. Keeps ghost-session lookups bounded so
@@ -57,12 +61,64 @@ type SessionService struct {
 	topologyFactory TopologyFactory
 	persist         *PersistDeps
 	tokenLedger     TokenLedgerReader
-	toolRegistry    *tools.Registry
+	toolRegistry    SessionToolRegistry
+	defaultModel    string            // injected by WithDefaultModel; fallback when registry unavailable
+	modelRegistry   cpn.ModelRegistry // optional; enables REQ-GATE-001 runtime validation
+
+	// hostRuntime is the GAP-1 host-side collaborator. When non-nil, every
+	// created CPN inherits it so NodeKindBash transitions can fire.
+	hostRuntime *cpn.HostRuntime
+
+	// hostCapabilityRepo is the GAP-2 snapshot store. When non-nil, every
+	// new session seeds its root CPN's p-host-capabilities place from the
+	// latest stored snapshot; a cold/stale repo triggers host-discovery-cpn
+	// as a sub-CPN before the session proceeds.
+	hostCapabilityRepo persist.HostCapabilityRepository
+
+	// hostDiscoveryFactory constructs a host-discovery-cpn when the cache
+	// misses. Provided by main.go at wire-up (and overridable in tests).
+	hostDiscoveryFactory func(sessionID string) *cpn.CPN
+
+	// hostSnapshotTTL is the freshness window for a cached snapshot before a
+	// new discovery run is triggered. Defaults to 24h per spec REQ-021.
+	hostSnapshotTTL time.Duration
 
 	// sf serializes concurrent rehydration attempts for the same session id,
 	// so N misses on a restart trigger exactly one persistence round-trip
 	// (spec REQ-004, AC-004, PAT-001).
 	sf singleflight.Group
+
+	// safeRegistry is the GAP-4 sealed catalogue of safe primitives. When
+	// non-nil, every root CPN receives it so synthesize / instantiate
+	// transitions can resolve references.
+	safeRegistry cpn.SafeRegistryPort
+
+	// authoredFlows is the GAP-4 flow repository.
+	authoredFlows cpn.AuthoredFlowRepository
+
+	// topologyRouter surfaces first-instantiation HITL approvals.
+	topologyRouter cpn.TopologyHITLRouter
+
+	// mutationLog is the GAP-7 audit log for topology mutations. When non-nil,
+	// every created CPN inherits it so MutateTopology calls are persisted.
+	mutationLog cpn.MutationAuditLog
+
+	// awakensFactory constructs the `brae-awakens` topology on new session
+	// creation (spec-architecture-brae-awakening-self-discovery). Nil
+	// disables the awakening path and preserves the legacy
+	// host-discovery-cpn seed (CON-006).
+	awakensFactory AwakensFactory
+
+	// awakeningMode flags sessions currently driving `brae-awakens` so the
+	// host-gate can silently deny non-introspection commands (CON-003,
+	// SEC-004, AC-005). Nil disables the silent-deny path.
+	awakeningMode AwakeningModeMarker
+
+	// awakeningComposer builds the probe-fanout sub-CPN from the LLM plan.
+	// When nil the probe-compose transition surfaces a clear error rather
+	// than silently stalling. See spec-architecture-brae-awakening-probe-
+	// fanout.md §4.3–§4.4.
+	awakeningComposer awakens.ComposerFunc
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -99,8 +155,74 @@ func WithTokenLedger(reader TokenLedgerReader) SessionServiceOption {
 }
 
 // WithToolRegistry sets the tool registry for personality injection and tool resolution.
-func WithToolRegistry(reg *tools.Registry) SessionServiceOption {
+func WithToolRegistry(reg SessionToolRegistry) SessionServiceOption {
 	return func(s *SessionService) { s.toolRegistry = reg }
+}
+
+// WithDefaultModel sets the fallback model ID used when the ModelRegistry is
+// unavailable. Should be called with the product-default from infra/openrouter
+// at the composition root (cmd/server/main.go). When not called, the service
+// falls back to the compile-time constant fallbackDefaultModel.
+func WithDefaultModel(model string) SessionServiceOption {
+	return func(s *SessionService) { s.defaultModel = model }
+}
+
+// WithModelRegistry wires the DB-backed model registry for runtime validation
+// of every resolved model ID. When set, each resolved candidate (from the
+// per-role override → preferred → role-default → product-default cascade) is
+// checked against REQ-GATE-001 (lifecycle=active AND license approved) and
+// falls back to the product default with a WARN log if the gate fails.
+func WithModelRegistry(reg cpn.ModelRegistry) SessionServiceOption {
+	return func(s *SessionService) { s.modelRegistry = reg }
+}
+
+// WithHostRuntime wires the host-side collaborators (HostAdapter, HostGate,
+// BashSessionManager) so NodeKindBash transitions can fire (GAP-1). When
+// unset, any CPN that contains a bash transition fails at dispatch time
+// with a descriptive error.
+func WithHostRuntime(rt *cpn.HostRuntime) SessionServiceOption {
+	return func(s *SessionService) { s.hostRuntime = rt }
+}
+
+// WithHostCapabilityRepo wires the GAP-2 host-discovery snapshot store.
+// Callers typically pair this with WithHostDiscoveryFactory so a stale /
+// missing snapshot triggers an on-demand discovery run.
+func WithHostCapabilityRepo(repo persist.HostCapabilityRepository) SessionServiceOption {
+	return func(s *SessionService) { s.hostCapabilityRepo = repo }
+}
+
+// WithHostDiscoveryFactory wires the CPN factory used to spawn the
+// host-discovery sub-CPN when the snapshot cache misses.
+func WithHostDiscoveryFactory(f func(sessionID string) *cpn.CPN) SessionServiceOption {
+	return func(s *SessionService) { s.hostDiscoveryFactory = f }
+}
+
+// WithHostSnapshotTTL overrides the 24h default from spec REQ-021.
+func WithHostSnapshotTTL(d time.Duration) SessionServiceOption {
+	return func(s *SessionService) { s.hostSnapshotTTL = d }
+}
+
+// WithSafeRegistry wires the GAP-4 safe primitive catalogue onto every
+// session CPN so synthesize / instantiate transitions can dispatch.
+func WithSafeRegistry(reg cpn.SafeRegistryPort) SessionServiceOption {
+	return func(s *SessionService) { s.safeRegistry = reg }
+}
+
+// WithAuthoredFlowRepository wires the GAP-4 flow repository.
+func WithAuthoredFlowRepository(repo cpn.AuthoredFlowRepository) SessionServiceOption {
+	return func(s *SessionService) { s.authoredFlows = repo }
+}
+
+// WithTopologyHITLRouter wires the GAP-4 HITL router used by the
+// NodeKindInstantiate handler on first-instantiation-per-session.
+func WithTopologyHITLRouter(router cpn.TopologyHITLRouter) SessionServiceOption {
+	return func(s *SessionService) { s.topologyRouter = router }
+}
+
+// WithMutationLog wires the GAP-7 topology mutation audit log. When set,
+// every created CPN inherits it so MutateTopology calls are persisted.
+func WithMutationLog(log cpn.MutationAuditLog) SessionServiceOption {
+	return func(s *SessionService) { s.mutationLog = log }
 }
 
 // NewSessionService creates a SessionService with the given dependencies.
@@ -133,8 +255,27 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	root := s.topologyFactory(id)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.HostRuntime = s.hostRuntime
+	root.SafeRegistry = s.safeRegistry
+	root.FlowRepository = s.authoredFlows
+	root.TopologyRouter = s.topologyRouter
+	root.MutationLog = s.mutationLog
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
+
+	// brae-awakens. When configured, the awakening topology runs
+	// asynchronously (see runAwakeningAsync below) and — on success —
+	// emits the first assistant message (cpn_role="awakening"), persists
+	// a snapshot (source="awakening"), and seeds p-host-capabilities.
+	// First-boot awakening has no fallback: failures are logged and the
+	// session remains without a fresh snapshot.
+	// Fast path: seed from an existing DB snapshot if one is fresh. We
+	// never block session creation on discovery — the full awakening runs
+	// asynchronously below after the session row exists.
+	s.seedHostCapabilitiesFromCache(ctx, root)
+
+	_ = channel // channel is consumed by the topology; every current ChannelType is interactive
+	runAwakeningAsync := s.awakensFactory != nil
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
@@ -171,6 +312,61 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
+		// GAP-3: CPN gets a handle to the registry so
+		// NodeKindRegisterTool can publish new tools at runtime.
+		root.ToolRegistry = s.toolRegistry
+	}
+
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	// Must run after InjectIntoCPN so ToolMeta is populated on tool transitions.
+	// Uses RegisterToolHITL (not RegisterHITL) because LLM transitions are
+	// NodeKindLLM, not NodeKindHITL, and RegisterHITL enforces the latter.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register tool-HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
+	// Wire HOST·HITL channels to NodeKindBash transitions so the gate's
+	// SessionHITLRouter can publish an approval surface and block on the
+	// same hitlInject bus the LLM-level tool-HITL flow uses. We pre-wire
+	// unconditionally because the gate decides per-op whether HITL is
+	// required; a channel that is never written to is free.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register host-HITL channel", "transition", t.ID, "err", err)
+		}
 	}
 
 	st := &sessionState{state: cpn.StateIdle}
@@ -189,6 +385,13 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		if err := s.persist.Sessions.Create(ctx, rec); err != nil {
 			s.logger.Warn("persist session create", "session_id", id, "error", err)
 		}
+	}
+
+	// Kick off awakening in the background. The session is already usable;
+	// when awakening completes, it appends the first-turn A2UI card as an
+	// assistant message (AC-001) which the frontend picks up over SSE.
+	if runAwakeningAsync {
+		go s.runAwakeningAsync(session)
 	}
 
 	s.logger.Info("session created", "session_id", id, "user_id", userID, "channel", channel)
@@ -251,6 +454,13 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	// failed runs (e.g., HITL rejection leaving tokens in p-classified/p-plan).
 	session.Root.Reset()
 
+	// Re-seed p-host-capabilities after Reset (which clears every place
+	// including this well-known terminal place). Without this, IsComplete
+	// fails on every turn past the first: p-host-capabilities is terminal
+	// but empty, so the CPN deadlocks as soon as t-direct/t-execute deposit
+	// to p-output. The seed is cheap (cache lookup, TTL-gated).
+	s.ensureHostCapabilitiesSeed(ctx, session.Root)
+
 	// Sync conversation history to CPN so LLM transitions have context.
 	// Must happen AFTER Reset (which clears History).
 	msgs := session.Messages()
@@ -269,11 +479,89 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		Timestamp: time.Now(),
 	}
 
-	source := findSourcePlace(session.Root)
+	// REQ-FIX-001: look up p-input directly; findSourcePlace is non-deterministic
+	// when SeedHostSnapshot has added p-host-capabilities to the map.
+	source := session.Root.Places["p-input"]
+	if source == nil {
+		source = findSourcePlace(session.Root)
+	}
 	if source != nil {
 		if err := source.Deposit(tok); err != nil {
 			return fmt.Errorf("deposit token: %w", err)
 		}
+	}
+
+	// FIX-HITL-PERSIST: Wire flush callbacks so that messages accumulated
+	// during a CPN run are persisted immediately — before blocking on
+	// human input (HITL) and after each batch of transitions completes.
+	// Without this, a user who disconnects while HITL is pending or during
+	// a long-running execution loses all LLM responses, A2UI surfaces,
+	// and tool results from the current run (persistAfterRun only fires
+	// after Run returns).
+	//
+	// The callback tracks which messages have already been flushed via
+	// lastFlushed to avoid duplicate inserts on successive callbacks
+	// within the same run (e.g. t-classify → t-direct → t-clarify → t-review).
+	var lastFlushed int
+	flushHistory := func(historySnapshot []*cpn.Message, source string) {
+		if s.persist == nil || s.persist.Sessions == nil {
+			return
+		}
+		// Only persist messages newer than what we've already flushed.
+		startIdx := max(historyLen, lastFlushed)
+		if startIdx >= len(historySnapshot) {
+			return
+		}
+		newMsgs := historySnapshot[startIdx:]
+
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+
+		flushed := 0
+		for _, m := range newMsgs {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+				continue
+			}
+			rec := persist.MessageToRecord(sessionID, m)
+			if err := s.persist.Sessions.AppendMessage(flushCtx, sessionID, rec); err != nil {
+				s.logger.Warn("mid-run flush persist message", "session_id", sessionID, "msg_id", m.ID, "source", source, "error", err)
+			} else {
+				flushed++
+			}
+		}
+		lastFlushed = len(historySnapshot)
+
+		// Also sync the flushed messages into session.Messages so
+		// rehydration from the in-memory session is consistent.
+		for _, m := range newMsgs {
+			if m.Role != cpn.RoleAssistant && m.ParentMessageID == "" {
+				continue
+			}
+			session.AppendMessage(m)
+		}
+
+		if flushed > 0 {
+			s.logger.Info("mid-run flush persisted messages",
+				"session_id", sessionID,
+				"source", source,
+				"flushed", flushed,
+				"history_len", len(historySnapshot),
+			)
+		}
+
+		// Touch activity timestamp.
+		touchCtx, touchCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer touchCancel()
+		_ = s.persist.Sessions.Touch(touchCtx, sessionID)
+	}
+
+	// Called before HITL transitions block on human input.
+	session.Root.OnHITLWaiting = func(historySnapshot []*cpn.Message) {
+		flushHistory(historySnapshot, "hitl-waiting")
+	}
+	// Called after each batch of transition firings completes in the executor.
+	session.Root.OnHistoryChanged = func(historySnapshot []*cpn.Message) {
+		flushHistory(historySnapshot, "executor-batch")
 	}
 
 	bgCtx, cancel := context.WithCancel(context.Background())
@@ -295,9 +583,12 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		// pointing at the surface — both must propagate so persistence and
 		// rehydration can pair them (REQ-001/002/006). Without this sync,
 		// those responses are lost when the CPN fails.
-		if len(session.Root.History) > historyLen {
+		// FIX-HITL-PERSIST: Start syncing from lastFlushed when the HITL
+		// callback already promoted some entries to session.Messages + DB.
+		syncStart := max(historyLen, lastFlushed)
+		if len(session.Root.History) > syncStart {
 			var newRows, assistantCount, userCount int
-			for _, m := range session.Root.History[historyLen:] {
+			for _, m := range session.Root.History[syncStart:] {
 				// Assistant rows are always CPN-originated and always sync.
 				// User rows only sync when they are HITL responses (identified
 				// by ParentMessageID linking to an earlier A2UI surface). All
@@ -491,28 +782,55 @@ func (s *SessionService) CancelSession(sessionID string) {
 
 // ResolveHITL forwards a human response to a waiting HITL transition.
 //
-// Rehydrates the session from persistence on in-memory miss (REQ-003a). If the
-// session has no in-flight execution to accept the response, returns
-// ErrSessionInactive so the caller can distinguish "ghost" from "idle" and
-// prompt the user for a new run rather than silently failing.
+// Rehydrates the session from persistence on in-memory miss (REQ-003a). The
+// error contract distinguishes two failure modes (spec §4.3, REQ-006):
+//
+//   - ErrSessionInactive: the session has no live in-memory execution state
+//     (freshly rehydrated / ghost session). The user should be prompted to
+//     start a new run.
+//   - ErrTransitionOrphaned: the session is (or was) live in-process but this
+//     specific transition is no longer waiting — its token has been consumed
+//     already, the flow moved past the gate, or the CPN has reached a
+//     terminal state. The frontend should dismiss the stale card with a
+//     neutral notice (REQ-007).
 func (s *SessionService) ResolveHITL(ctx context.Context, sessionID, transitionID string, resp cpn.HITLResponse) error {
 	session, _, err := s.getOrRehydrate(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 
-	// HITL resolution requires an in-flight execution to be waiting on a
-	// human response. If no CPN run is live (Running/Waiting), any rehydrated
-	// topology is idle and there is no HITL channel registered for a real
-	// transition. Signal this explicitly so the frontend can prompt a new run.
 	s.mu.RLock()
 	st := s.states[sessionID]
 	s.mu.RUnlock()
+
+	// Precise predicate for the two failure modes (spec §4.3, REQ-006):
+	//
+	//   ErrSessionInactive  — the CPN has no live execution at all (no state
+	//                         record, or state ∉ {Running, Waiting}). A freshly
+	//                         rehydrated ("ghost") session lands here because
+	//                         rehydrate() seeds StateIdle. The user should be
+	//                         prompted to start a new run.
+	//
+	//   ErrTransitionOrphaned — the CPN IS live (Running/Waiting) but the
+	//                           specific transition is no longer awaiting a
+	//                           response. This is the duplicate-gate case
+	//                           described in spec §7: the tool already fired
+	//                           via the host-HITL channel and a stale t-review
+	//                           card is being resolved against a flow that has
+	//                           moved on. The frontend dismisses the card with
+	//                           a neutral notice (REQ-007 / AC-004).
 	if st == nil || !isExecutionLive(st.get()) {
 		return fmt.Errorf("%w: %s", ErrSessionInactive, sessionID)
 	}
 
-	return session.ResolveHITL(ctx, transitionID, resp)
+	if err := session.ResolveHITL(ctx, transitionID, resp); err != nil {
+		if errors.Is(err, cpn.ErrNoHITLWaiting) {
+			return fmt.Errorf("%w: transition %q on session %s: %w",
+				ErrTransitionOrphaned, transitionID, sessionID, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // isExecutionLive reports whether a session state indicates an in-flight CPN
@@ -695,6 +1013,9 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 	root := s.topologyFactory(newID)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.SafeRegistry = s.safeRegistry
+	root.FlowRepository = s.authoredFlows
+	root.TopologyRouter = s.topologyRouter
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
 	root.EventSink = func(e *cpn.Event) {
@@ -731,6 +1052,54 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
+		root.ToolRegistry = s.toolRegistry
+	}
+
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register tool-HITL channel", "transition", t.ID, "err", err)
+		}
+	}
+
+	// Mirror HOST·HITL wiring for NodeKindBash transitions on the forked
+	// topology so the gate's SessionHITLRouter finds a ready inject
+	// channel after a fork operation.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("register host-HITL channel", "transition", t.ID, "err", err)
+		}
 	}
 
 	// Load forked messages into in-memory session history.
@@ -804,14 +1173,14 @@ func (s *SessionService) resolveRegionalVariant(ctx context.Context, userID stri
 //  1. UserRecord.ModelOverrides[LLMConfig.Role] when Role is non-empty and
 //     the override is non-empty.
 //  2. UserRecord.PreferredModel when non-empty.
-//  3. openrouter.PRODUCT_DEFAULT_MODEL.
+//  3. openrouter.ProductDefaultModel.
 //
 // This function is the ONLY legitimate mutator of LLMConfig.Model — all
 // topology authors leave it empty and express intent through Role. No ENV
 // lookup occurs here (REQ-CFG-002).
 //
 // Error handling is best-effort: if the user cannot be fetched, every LLM
-// transition is stamped with PRODUCT_DEFAULT_MODEL so the session still
+// transition is stamped with ProductDefaultModel so the session still
 // runs with a well-defined model. Callers MUST NOT attempt to re-resolve
 // the model elsewhere (GUD-001).
 func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cpn.CPN, userID string) {
@@ -821,12 +1190,153 @@ func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cp
 		// here; we treat that as "no preference" and fall through.
 		rec, _ = s.persist.Users.GetByID(ctx, userID)
 	}
+	// Per-session resolver cache: every transition in this topology resolves
+	// against the same user record and the same registry snapshot, so one
+	// GetInvokable per candidate and one GetProductDefault suffice — not
+	// once per transition (REQ-FIX-011 / AC-011).
+	cache := newResolveCache()
 	for _, t := range root.Transitions {
 		if t.Kind != cpn.NodeKindLLM || t.LLMConfig == nil {
 			continue
 		}
-		t.LLMConfig.Model = resolveModelForUser(rec, t.LLMConfig.Role)
+		t.LLMConfig.Model = s.resolveModelWithGateCached(ctx, rec, t.LLMConfig.Role, cache)
 	}
+}
+
+// resolveCache memoises ModelRegistry lookups for a single session-build.
+// All fields are goroutine-unsafe — applyUserModelPreferences is single
+// threaded per session, so no sync is needed.
+type resolveCache struct {
+	invokable      map[string]bool   // candidate → passed REQ-GATE-001
+	roleDefault    map[string]string // role → registry_id (empty string on not-found)
+	productDefault *cpn.ModelRegistryEntry
+	productErr     error
+	productDone    bool
+}
+
+func newResolveCache() *resolveCache {
+	return &resolveCache{
+		invokable:   make(map[string]bool),
+		roleDefault: make(map[string]string),
+	}
+}
+
+// resolveModelWithGate runs the REQ-CFG-005 precedence cascade AND, if a
+// ModelRegistry is wired, validates each candidate against REQ-GATE-001.
+//
+// Cascade (highest wins):
+//  1. UserRecord.ModelOverrides[role]          (per-role override)
+//  2. UserRecord.PreferredModel                (global user preference)
+//  3. ModelRegistry role default (when role != "" and registry is wired)
+//  4. ModelRegistry product default / openrouter.ProductDefaultModel
+//
+// When the registry is wired, steps 1-3 each get validated with GetInvokable
+// and fall through on ErrModelNotInvokable / ErrModelNotFound. A WARN log is
+// emitted for each fallback so REQ-OBS-004 has a trail to read.
+//
+// When the registry is NOT wired (tests, legacy bootstrap), behavior exactly
+// matches the pre-registry resolveModelForUser helper.
+func (s *SessionService) resolveModelWithGate(ctx context.Context, rec *persist.UserRecord, role string) string {
+	// Back-compat single-call shim for the test suite. Builds a fresh cache
+	// so legacy callers see pre-REQ-FIX-011 behaviour exactly.
+	return s.resolveModelWithGateCached(ctx, rec, role, newResolveCache())
+}
+
+func (s *SessionService) resolveModelWithGateCached(ctx context.Context, rec *persist.UserRecord, role string, cache *resolveCache) string {
+	if s.modelRegistry == nil {
+		return resolveModelForUser(rec, role)
+	}
+
+	// Step 1 — per-role override
+	if rec != nil && role != "" {
+		if m, ok := rec.ModelOverrides[role]; ok && m != "" {
+			if s.validateInvokableCached(ctx, m, "user override", role, cache) {
+				return m
+			}
+		}
+	}
+
+	// Step 2 — global preferred
+	if rec != nil && rec.PreferredModel != "" {
+		if s.validateInvokableCached(ctx, rec.PreferredModel, "user preferred", role, cache) {
+			return rec.PreferredModel
+		}
+	}
+
+	// Step 3 — role default from registry
+	if role != "" {
+		roleID, ok := cache.roleDefault[role]
+		if !ok {
+			if id, err := s.modelRegistry.GetRoleDefault(ctx, role); err == nil {
+				roleID = id
+			}
+			cache.roleDefault[role] = roleID
+		}
+		if roleID != "" && s.validateInvokableCached(ctx, roleID, "role default", role, cache) {
+			return roleID
+		}
+	}
+
+	// Step 4 — product default
+	if !cache.productDone {
+		cache.productDefault, cache.productErr = s.modelRegistry.GetProductDefault(ctx)
+		cache.productDone = true
+	}
+	if cache.productErr != nil {
+		dm := s.defaultModel
+		if dm == "" {
+			dm = fallbackDefaultModel
+		}
+		s.logger.Error("model registry product default unreachable; using compile-time constant",
+			"role", role,
+			"err", cache.productErr,
+			"fallback_model", dm,
+		)
+		return dm
+	}
+	return cache.productDefault.RegistryID
+}
+
+// validateInvokableCached is the memoised variant. The cache is shared
+// across every transition in one applyUserModelPreferences pass so
+// repeated candidates cost at most one registry hit (REQ-FIX-011).
+func (s *SessionService) validateInvokableCached(ctx context.Context, candidate, source, role string, cache *resolveCache) bool {
+	if s.modelRegistry == nil {
+		return true
+	}
+	if ok, cached := cache.invokable[candidate]; cached {
+		return ok
+	}
+	_, err := s.modelRegistry.GetInvokable(ctx, candidate)
+	if err == nil {
+		cache.invokable[candidate] = true
+		return true
+	}
+	var reason string
+	switch {
+	case errors.Is(err, cpn.ErrModelNotInvokable):
+		reason = "lifecycle or license gate failed"
+	case errors.Is(err, cpn.ErrModelNotFound):
+		reason = "model not registered"
+	default:
+		// Infrastructure failure — don't silently advance. Prefer the registered
+		// product default over a possibly-invokable-but-unverified candidate.
+		s.logger.Error("model registry GetInvokable failed; falling back",
+			"source", source,
+			"role", role,
+			"candidate", candidate,
+			"err", err,
+		)
+		return false
+	}
+	s.logger.Warn("model not invokable; falling back",
+		"source", source,
+		"role", role,
+		"candidate", candidate,
+		"reason", reason,
+	)
+	cache.invokable[candidate] = false
+	return false
 }
 
 // resolveModelForUser applies the three-level precedence cascade. Exported
@@ -844,7 +1354,7 @@ func resolveModelForUser(rec *persist.UserRecord, role string) string {
 			return rec.PreferredModel
 		}
 	}
-	return openrouter.PRODUCT_DEFAULT_MODEL
+	return fallbackDefaultModel
 }
 
 // injectPersonality loads the user's personality and prefixes all LLM system prompts.
@@ -876,6 +1386,14 @@ func (s *SessionService) injectPersonality(ctx context.Context, c *cpn.CPN, user
 	personality, ok := outToken.Payload.(*cpn.Personality)
 	if !ok {
 		return
+	}
+
+	// REQ-007 / PAT-003: append the "## Environment awareness" block using
+	// the latest host_capability_snapshots row for the session's host_id.
+	// The block is rendered by AsSystemPrompt() under the personality's
+	// Tensions section.
+	if block := s.environmentAwarenessBlock(ctx); block != "" {
+		personality.EnvironmentAwareness = block
 	}
 
 	// Prefix all LLM transitions' system prompts with the personality.
@@ -1230,6 +1748,9 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 	root := s.topologyFactory(sessionID)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
+	root.SafeRegistry = s.safeRegistry
+	root.FlowRepository = s.authoredFlows
+	root.TopologyRouter = s.topologyRouter
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, rec.UserID)
 	s.applyUserModelPreferences(ctx, root, rec.UserID)
 	root.EventSink = func(e *cpn.Event) {
@@ -1272,6 +1793,61 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 	s.injectPersonality(ctx, root, rec.UserID)
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
+	}
+
+	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
+			continue
+		}
+		needsHITL := false
+		for _, toolName := range t.LLMTools {
+			if toolTrans, ok := root.Transitions[toolName]; ok {
+				if toolTrans.ToolMeta != nil && toolTrans.ToolMeta.RequiresHITL {
+					needsHITL = true
+					break
+				}
+			}
+		}
+		if !needsHITL {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("rehydrate register tool-HITL channel",
+				"session_id", sessionID,
+				"transition", t.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Mirror HOST·HITL wiring for NodeKindBash transitions so a rehydrated
+	// session can resume a pending host-approval without re-creating the
+	// whole CPN.
+	for _, t := range root.Transitions {
+		if t.Kind != cpn.NodeKindBash {
+			continue
+		}
+		if t.HITLConfig == nil {
+			t.HITLConfig = &cpn.HITLConfig{}
+		}
+		if t.HITLConfig.Channel != nil {
+			continue
+		}
+		ch := make(chan cpn.Token, 1)
+		t.HITLConfig.Channel = ch
+		if err := session.RegisterToolHITL(t.ID, ch); err != nil {
+			s.logger.Error("rehydrate register host-HITL channel",
+				"session_id", sessionID,
+				"transition", t.ID,
+				"error", err,
+			)
+		}
 	}
 
 	// REQ-006: replay message history so SessionInfo.Messages is not silently
@@ -1350,4 +1926,188 @@ func findSourcePlace(c *cpn.CPN) *cpn.Place {
 		}
 	}
 	return nil
+}
+
+// defaultHostSnapshotTTL is the REQ-021 24h freshness window.
+const defaultHostSnapshotTTL = 24 * time.Hour
+
+// placeholderHostSnapshot returns a minimal HostCapabilitySnapshot that
+// keeps p-host-capabilities non-empty on sessions where awakening has not
+// yet deposited a real snapshot. It is marked with source="placeholder" so
+// operators can tell it apart in downstream reads; PeekHostSnapshot's
+// latest-wins semantics ensures that the real snapshot supersedes this one
+// as soon as awakening deposits it.
+func placeholderHostSnapshot(hostID string) persist.HostCapabilitySnapshot {
+	return persist.HostCapabilitySnapshot{
+		HostID:     hostID,
+		CapturedAt: time.Now().UTC(),
+		Source:     "placeholder",
+		Identity:   persist.HostIdentity{MachineID: hostID, Env: map[string]string{}},
+		Kernel:     persist.HostKernel{OSRelease: map[string]string{}},
+	}
+}
+
+// ensureHostCapabilitiesSeed seeds root's p-host-capabilities place with the
+// latest snapshot from the repository. If the snapshot is missing or older
+// than hostSnapshotTTL (default 24h), it first runs host-discovery-cpn
+// synchronously, stores its result via the repo, and seeds the fresh
+// snapshot. Failures are logged and swallowed — the session proceeds without
+// the seed and downstream consumers PEEK for (snap, false).
+func (s *SessionService) ensureHostCapabilitiesSeed(ctx context.Context, root *cpn.CPN) {
+	if root == nil || s.hostCapabilityRepo == nil {
+		return
+	}
+	ttl := s.hostSnapshotTTL
+	if ttl <= 0 {
+		ttl = defaultHostSnapshotTTL
+	}
+
+	hostID := s.resolveHostID(ctx)
+	snap, err := s.hostCapabilityRepo.LatestForHost(ctx, hostID)
+	fresh := err == nil && !snap.CapturedAt.IsZero() && time.Since(snap.CapturedAt) <= ttl
+
+	if fresh {
+		cpn.SeedHostSnapshot(root, snap)
+		return
+	}
+
+	// Cache miss or stale — the awakening path owns capability discovery
+	// when wired (REQ-001). Its deterministic fallback persists a snapshot
+	// asynchronously, so the next SendMessage will hit the cache branch
+	// above. We MUST NOT spawn legacy host-discovery-cpn here: its
+	// composite probes are not in the introspection safe band and would
+	// block on a 30s HITL timeout on every user message. Safer to proceed
+	// without a seed and let downstream consumers Peek defensively.
+	//
+	// However, chat topologies declare p-host-capabilities as a terminal
+	// place (context sink). IsComplete() requires every terminal to hold
+	// a token, so an empty p-host-capabilities deadlocks every user turn
+	// until awakening deposits a real snapshot. Seed a minimal placeholder
+	// so the terminal check passes; PeekHostSnapshot returns latest-wins,
+	// so the real snapshot (awakening or next-run cache hit) takes over
+	// transparently.
+	if s.awakensFactory != nil {
+		if err != nil && !errorsIsHostSnapshotNotFound(err) {
+			s.logger.Warn("host capability lookup failed; proceeding with placeholder seed",
+				slog.String("host_id", hostID),
+				slog.Any("error", err),
+			)
+		}
+		cpn.SeedHostSnapshot(root, placeholderHostSnapshot(hostID))
+		return
+	}
+
+	// Legacy path (no awakening factory wired): run discovery inline.
+	if s.hostDiscoveryFactory == nil {
+		if err != nil && !errorsIsHostSnapshotNotFound(err) {
+			s.logger.Warn("host capability lookup failed",
+				slog.String("host_id", hostID),
+				slog.Any("error", err),
+			)
+		}
+		return
+	}
+
+	if runSnap, runErr := s.runHostDiscovery(ctx); runErr == nil {
+		cpn.SeedHostSnapshot(root, runSnap)
+	} else {
+		s.logger.Warn("host discovery run failed; session starts without host-capabilities seed",
+			slog.Any("error", runErr),
+		)
+	}
+}
+
+// runHostDiscovery spawns host-discovery-cpn as a sub-CPN at depth 1, waits
+// for it to complete, and returns the deposited HostCapabilitySnapshot (if
+// any). The caller owns the decision about what to do with it.
+func (s *SessionService) runHostDiscovery(ctx context.Context) (persist.HostCapabilitySnapshot, error) {
+	if s.hostDiscoveryFactory == nil {
+		return persist.HostCapabilitySnapshot{}, fmt.Errorf("no host discovery factory")
+	}
+	sessionID := "host-discovery-bootstrap"
+	subCPN := s.hostDiscoveryFactory(sessionID)
+	if subCPN == nil {
+		return persist.HostCapabilitySnapshot{}, fmt.Errorf("host discovery factory returned nil")
+	}
+	subCPN.HostRuntime = s.hostRuntime
+	subCPN.Depth = 1
+
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := subCPN.Run(runCtx); err != nil {
+		return persist.HostCapabilitySnapshot{}, fmt.Errorf("run host discovery: %w", err)
+	}
+	// Scan terminal place(s) for a snapshot token.
+	for _, p := range subCPN.Places {
+		if p.ID != "p-snapshot" {
+			continue
+		}
+		if tokens, ok := p.Peek(); ok && len(tokens) > 0 {
+			if snap, ok := tokens[0].Payload.(persist.HostCapabilitySnapshot); ok {
+				return snap, nil
+			}
+		}
+	}
+	return persist.HostCapabilitySnapshot{}, fmt.Errorf("host-discovery-cpn completed without snapshot")
+}
+
+// resolveHostID reads /etc/machine-id (via the host adapter if available,
+// else direct os.ReadFile as a fallback). On failure it returns a
+// deterministic hash of hostname so the repo's host_id column is never
+// empty.
+func (s *SessionService) resolveHostID(ctx context.Context) string {
+	// Preferred: HostAdapter (hexagonal). The default ReadFile jail rejects
+	// /etc/machine-id, so we fall back to the direct read below.
+	if s.hostRuntime != nil && s.hostRuntime.Adapter != nil {
+		if data, err := s.hostRuntime.Adapter.ReadFile(ctx, "/etc/machine-id"); err == nil {
+			id := trimMachineID(data)
+			if id != "" {
+				return id
+			}
+		}
+	}
+	if data, err := osReadFileHostID("/etc/machine-id"); err == nil {
+		id := trimMachineID(data)
+		if id != "" {
+			return id
+		}
+	}
+	// Fallback: hash of hostname.
+	host, _ := osHostname()
+	return fallbackMachineIDHash(host)
+}
+
+// trimMachineID strips whitespace/newlines from /etc/machine-id contents.
+func trimMachineID(data []byte) string {
+	out := make([]byte, 0, len(data))
+	for _, b := range data {
+		if b == '\n' || b == '\r' || b == ' ' || b == '\t' {
+			continue
+		}
+		out = append(out, b)
+	}
+	return string(out)
+}
+
+// errorsIsHostSnapshotNotFound isolates the import of persist for the
+// bootstrap helper so the rest of the file doesn't pick up a dependency on
+// the sentinel.
+func errorsIsHostSnapshotNotFound(err error) bool {
+	return errors.Is(err, persist.ErrHostSnapshotNotFound)
+}
+
+// environmentAwarenessBlock returns the "## Environment awareness" block
+// to inject into later-turn system prompts (REQ-007). Reads the latest
+// host_capability_snapshots row for the resolved host_id; returns "" on
+// any error so injection degrades silently.
+func (s *SessionService) environmentAwarenessBlock(ctx context.Context) string {
+	if s.hostCapabilityRepo == nil {
+		return ""
+	}
+	hostID := s.resolveHostID(ctx)
+	snap, err := s.hostCapabilityRepo.LatestForHost(ctx, hostID)
+	if err != nil {
+		return ""
+	}
+	return awakens.EnvironmentAwarenessBlock(snap)
 }

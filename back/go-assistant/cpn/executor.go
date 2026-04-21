@@ -148,7 +148,10 @@ func (c *CPN) Run(ctx context.Context) error {
 				Type:           EventTransitionStarted,
 				TransitionID:   f.transition.ID,
 				TransitionKind: f.transition.Kind,
-				Payload:        TransitionStartedPayload{InputTokens: snapshots},
+				Payload: TransitionStartedPayload{
+					InputTokens:  snapshots,
+					DisplayLabel: resolveLabelForTransition(c, f.transition),
+				},
 			})
 		}
 
@@ -175,6 +178,7 @@ func (c *CPN) Run(ctx context.Context) error {
 					CostUSD:       costUSD,
 					DurationMs:    elapsed.Milliseconds(),
 					ExecutedModel: meta.executedModel,
+					DisplayLabel:  resolveLabelForTransition(c, t),
 				}
 				if err != nil {
 					payload.Error = err.Error()
@@ -236,6 +240,24 @@ func (c *CPN) Run(ctx context.Context) error {
 			// REQ-011: No ErrorPlace — CPN fails.
 			c.setFailed(fr.err)
 			return fr.err
+		}
+
+		// FIX-HITL-PERSIST: Flush accumulated history after each batch of
+		// transition firings. This covers LLM streaming output, tool results,
+		// subnet summaries — any message appended to c.History during the
+		// firings that just completed. The callback is invoked only when
+		// History actually grew to avoid no-op overhead.
+		if c.OnHistoryChanged != nil {
+			c.mu.RLock()
+			hLen := len(c.History)
+			c.mu.RUnlock()
+			if hLen > 0 {
+				c.mu.RLock()
+				snap := make([]*Message, hLen)
+				copy(snap, c.History)
+				c.mu.RUnlock()
+				c.OnHistoryChanged(snap)
+			}
 		}
 
 		// REQ-012 (Block 16): Evaluate mode transition rules after each firing round.
@@ -332,6 +354,16 @@ func dispatch(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 			return fireHITLWithRevision(ctx, t, c, consumed)
 		}
 		return fireHITL(ctx, t, c, consumed)
+	case NodeKindBash:
+		return fireBash(ctx, t, c, consumed)
+	case NodeKindRegisterTool:
+		return fireRegisterTool(ctx, t, c, consumed)
+	case NodeKindSynthesize:
+		return fireSynthesize(ctx, t, c, consumed)
+	case NodeKindInstantiate:
+		return fireInstantiate(ctx, t, c, consumed)
+	case NodeKindTopologyMutate:
+		return fireTopologyMutate(ctx, t, c, consumed)
 	case NodeKindObserver:
 		return nil, 0, fmt.Errorf("%w: Observer dispatch not implemented", ErrInvalidNodeKind)
 	default:

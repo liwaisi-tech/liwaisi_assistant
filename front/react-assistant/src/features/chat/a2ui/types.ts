@@ -22,7 +22,82 @@ export interface A2UIPayload {
    * `max >= 2`, the renderer draws a RoundBadge above the component tree.
    * See REQ-100 / REQ-127 in the iterative clarification loop spec. */
   round?: A2UIRound;
+  /** Optional schema discriminator. When present, the renderer may pick a
+   * dedicated surface component instead of walking `components`. Used by
+   * GAP-6 HostGate approvals (schema = 'host.approval'), where the payload
+   * carries a structured `hostApproval` bag and the UI treatment is
+   * risk-band-specific rather than generic a2ui primitives. Unknown schemas
+   * fall through to the default component walk so older clients stay
+   * compatible. See spec-architecture-host-gate-security-policy.md §3
+   * REQ-040..REQ-042. */
+  schema?: string;
+  /** Payload for schema='host.approval'. Present iff the surface is a
+   * HostGate approval prompt. See REQ-040 in the HostGate policy spec. */
+  hostApproval?: HostApprovalPayload;
 }
+
+/** HostGate approval prompt payload — surfaced when a shell, PTY, write, or
+ * kill operation hits a pattern that requires human confirmation before
+ * the host adapter may proceed. REQ-040.
+ *
+ * Post bugfix-tool-hitl-single-gate (REQ-003/REQ-004, §4.1): the payload
+ * now carries a parsed `command` string (clean, human-readable shell
+ * invocation) plus an `invocation` bag with the raw tool-invocation JSON
+ * for the "Detalles técnicos" disclosure. Legacy fields (`operation`,
+ * `risk_band`, `rationale`, `alternatives`) are kept optional for
+ * backwards-compat with pre-fix persisted chats (CON-002). */
+export interface HostApprovalPayload {
+  /** Clean, human-readable shell command or operation summary (REQ-003). */
+  command: string;
+  /** Raw tool invocation JSON, for the collapsed "technical details" panel
+   *  (REQ-004, §4.1). Optional only because legacy pre-fix payloads did
+   *  not carry it — in that case the disclosure is suppressed. */
+  invocation?: {
+    tool: string;
+    args: unknown;
+    [k: string]: unknown;
+  };
+  /** Risk classification drives card border color and warning copy. New in
+   *  §4.1; prefer over the legacy `risk_band` when present. */
+  risk?: RiskLevel;
+  /** Title shown at the top of the card; falls back to a hard-coded Spanish
+   *  default when absent. */
+  title?: string;
+  /** Optional working-directory or target path hint (§4.1). */
+  context?: string;
+  /** When false, the frontend hides the "Aprobar y recordar" button
+   *  (AC-008). */
+  rememberAvailable?: boolean;
+
+  // ── Legacy fields (pre bugfix-tool-hitl-single-gate) ─────────────────
+  /** Legacy operation discriminator. Optional post-fix; when absent, the
+   *  card renders without the operation pill. */
+  operation?: HostApprovalOperation;
+  /** Legacy risk band (maps 1:1 to `risk` when `risk` is not provided). */
+  risk_band?: HostApprovalRiskBand;
+  rationale?: string;
+  alternatives?: string[];
+}
+
+/** Risk classification per §4.1 of the single-gate spec. Narrower than
+ *  `HostApprovalRiskBand` (no `forbidden`) — the backend no longer emits
+ *  forbidden cards; they are denied server-side before reaching the UI. */
+export type RiskLevel = 'safe' | 'caution' | 'danger';
+
+/** The four host operations that can require an approval prompt. */
+export type HostApprovalOperation = 'exec' | 'spawn_pty' | 'write_file' | 'kill';
+
+/** Risk bands the UI actually renders. `forbidden` is server-denied before
+ * it ever reaches the UI, so the renderer treats it as a defensive case
+ * and never exposes an Approve button for it. */
+export type HostApprovalRiskBand = 'safe' | 'caution' | 'dangerous' | 'forbidden';
+
+/** User decisions on a host.approval prompt. Matches REQ-042 verbatim. */
+export type HostApprovalAction =
+  | 'approve-once'
+  | 'approve-and-remember'
+  | 'deny'
+  | 'deny-and-blacklist';
 
 /** A single declarative UI component descriptor. */
 export interface A2UIComponent {
@@ -48,12 +123,16 @@ export type ButtonSize = 'sm' | 'lg';
 
 /** Card variant.
  *  - `default`: baseline card (existing behavior, no change).
+ *  - `info`: elevated info surface used by the brae-awakening first-turn
+ *    card (§4.4 of spec-architecture-brae-awakening-self-discovery.md).
+ *    Draws a subtle gradient, a JetBrains-Mono title, and a small
+ *    "◉ awakened" glyph in the header.
  *  - `escape-frustration`: 3px accent-coloured left rail; used on the
  *    frustration escape-hatch (REQ-121..123).
  *  - `escape-contradiction`: 3px muted-coloured left rail; used on the
  *    contradiction escape-hatch (REQ-124..125).
  * See spec-architecture-cpn-iterative-clarification-loop §4.4. */
-export type CardVariant = 'default' | 'escape-frustration' | 'escape-contradiction';
+export type CardVariant = 'default' | 'info' | 'escape-frustration' | 'escape-contradiction';
 
 /** Progress bar state. */
 export interface ProgressProps {

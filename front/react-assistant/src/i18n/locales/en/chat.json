@@ -32,6 +32,7 @@
     "placeholder": "Type a message...",
     "placeholderWaiting": "Review the plan above...",
     "placeholderDisabled": "Waiting for response...",
+    "placeholderAwakening": "brae is waking up\u2026",
     "sendAriaLabel": "Send message",
     "inputAriaLabel": "Message input",
     "hint": "Press Enter to send, Shift+Enter for newline"
@@ -71,6 +72,11 @@
     "questionnaire": {
       "respondedAt": "Responded at {{time}}",
       "responded": "Responded"
+    },
+    "hostApproval": {
+      "technicalDetails": "Technical details",
+      "obsolete": "Obsolete approval",
+      "orphanedToast": "This approval has already been resolved"
     },
     "clarify": {
       "badge": {
@@ -114,5 +120,85 @@
     "title": "Session resumed",
     "message": "We reconnected you to a fresh chat after a server restart. Your draft is still here.",
     "dismiss": "Dismiss notice"
+  },
+  "models": {
+    "list": {
+      "title": "Model registry",
+      "subtitle": "Pick an action. Only models with an approved license can become the product default.",
+      "loading": "Loading model registry\u2026",
+      "summary": {
+        "total": "{{count}} registered",
+        "invokable": "{{count}} invokable",
+        "needs_review": "{{count}} awaiting license review",
+        "default": "default: {{name}}"
+      },
+      "actions": {
+        "set_default": "Set as default",
+        "approve_commercial": "Approve commercial",
+        "approve_non_commercial": "Approve non-commercial",
+        "block": "Block",
+        "delete": "Delete",
+        "refresh": "Refresh"
+      },
+      "badge": {
+        "default": "\u2605 Default",
+        "license_prefix": "License: {{status}}"
+      },
+      "error": {
+        "title": "Model admin error"
+      }
+    },
+    "form": {
+      "title": "Register a new model",
+      "intro": "Fill in the canonical information. License review happens separately.",
+      "submit": "Register",
+      "cancel": "Cancel",
+      "fields": {
+        "registry_id": "registry_id (vendor/family-version)",
+        "vendor": "vendor",
+        "family": "family",
+        "version": "version",
+        "display_name": "display_name",
+        "hugging_face_id": "hugging_face_id (optional)",
+        "context_length": "context_length (tokens)",
+        "primary_route_adapter": "Primary route adapter",
+        "primary_route_model_id": "provider_model_id",
+        "enable_enrichment": "Enrich license from Hugging Face (if hugging_face_id set)"
+      }
+    },
+    "confirm": {
+      "title_delete": "Delete this model?",
+      "title_setdefault": "Set as product default?",
+      "title_license": "Apply this license decision?",
+      "before_label": "Before",
+      "after_label": "After",
+      "irreversible_notice": "This action cannot be undone."
+    },
+    "errors": {
+      "admin_only": "Model management is available to admins only.",
+      "validation_failed_cap": "I couldn't validate the form after 3 attempts. You can resume whenever you like."
+    },
+    "badge": {
+      "responding_model": "Responding: {{model}}"
+    },
+    "license": {
+      "approved_commercial": "Commercial",
+      "approved_non_commercial": "Non-commercial",
+      "restricted": "Restricted",
+      "blocked": "Blocked",
+      "unreviewed": "Unreviewed",
+      "review_in_progress": "In review",
+      "unknown": "Unknown"
+    },
+    "lifecycle": {
+      "discovered": "Discovered",
+      "pending_license_review": "Pending review",
+      "registered": "Registered",
+      "active": "Active",
+      "disabled": "Disabled",
+      "deprecated": "Deprecated",
+      "sunset": "Sunset",
+      "removed": "Removed"
+    }
   }
 }

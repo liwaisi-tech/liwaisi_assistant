@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -17,29 +18,35 @@ import (
 // Compile-time interface check.
 var _ cpn.LLMClient = (*Client)(nil)
 
-// PRODUCT_DEFAULT_MODEL is the single hard-coded default model for every
+// ProductDefaultModel is the single hard-coded default model for every
 // CPN transition. Per spec-architecture-model-selection-centralization.md
 // (REQ-CFG-001), this is the ONLY place a role's default is defined. User
 // preferences (UserRecord.PreferredModel / ModelOverrides) override this
 // at session resolve time via internal/app/session_service.go.
 //
 // When a future spec changes the default, edit this one line (CON-003).
-const PRODUCT_DEFAULT_MODEL = "google/gemma-4-31b-it"
+const ProductDefaultModel = "google/gemini-2.5-flash"
+
+// FallbackModel is used when the resolved model returns ErrNotFound (404)
+// from OpenRouter — e.g. a preview slug is retired or a user preference
+// points at a model the API no longer serves. Must be a slug OpenRouter is
+// guaranteed to serve; Anthropic Haiku is cheap, fast, and never-retired.
+const FallbackModel = "anthropic/claude-haiku-4-5"
 
 // ── ModelRegistry ────────────────────────────────────────────────────────────
 
 // DefaultModelRegistry holds the default model for each task role.
-// Every role maps to PRODUCT_DEFAULT_MODEL (REQ-CFG-001) — there is no
+// Every role maps to ProductDefaultModel (REQ-CFG-001) — there is no
 // per-role deviation from the product default. Historical ENV overrides
 // (MODEL_CLASSIFIER, MODEL_STRUCTURED, …) were removed in favour of the
 // per-user override mechanism (see UserRecord.ModelOverrides).
 var DefaultModelRegistry = map[string]string{
-	"classifier":   PRODUCT_DEFAULT_MODEL,
-	"structured":   PRODUCT_DEFAULT_MODEL,
-	"reasoning":    PRODUCT_DEFAULT_MODEL,
-	"long-context": PRODUCT_DEFAULT_MODEL,
-	"summarize":    PRODUCT_DEFAULT_MODEL,
-	"thinking":     PRODUCT_DEFAULT_MODEL,
+	"classifier":   ProductDefaultModel,
+	"structured":   ProductDefaultModel,
+	"reasoning":    ProductDefaultModel,
+	"long-context": ProductDefaultModel,
+	"summarize":    ProductDefaultModel,
+	"thinking":     ProductDefaultModel,
 }
 
 // AvailableModels lists all models offered to users for selection.
@@ -53,11 +60,14 @@ var AvailableModels = []string{
 	// Anthropic
 	"anthropic/claude-opus-4-6",
 	"anthropic/claude-sonnet-4-6",
+	"anthropic/claude-haiku-4-5",
 	"anthropic/claude-haiku-4-5-20251001",
 	// Google
+	"google/gemini-3-flash-preview",
 	"google/gemma-4-31b-it",
 	"google/gemma-4-26b-a4b-it",
 	"google/gemini-3.1-flash-lite-preview",
+	"google/gemini-2.5-flash",
 	"google/gemini-2.5-flash-lite",
 	"google/gemini-2.0-flash-001",
 	// Z.ai
@@ -86,6 +96,7 @@ var modelCostTable = map[string][2]float64{
 	"anthropic/claude-sonnet-4-6":         {3.00, 15.00},
 	"anthropic/claude-haiku-4-5-20251001": {0.80, 4.00},
 	// Google
+	"google/gemini-2.5-flash":     {0.30, 2.50},
 	"google/gemini-2.0-flash-001": {0.10, 0.40},
 }
 
@@ -137,7 +148,7 @@ type Client struct {
 // spec-architecture-model-selection-centralization.md (REQ-CFG-002). The
 // defaultModel argument still seeds Client.DefaultModel for the rare path
 // where LLMRequest.Model is empty at dispatch time; callers SHOULD pass
-// PRODUCT_DEFAULT_MODEL when they have no user-specific preference.
+// ProductDefaultModel when they have no user-specific preference.
 func NewClient(apiKey, defaultModel string) *Client {
 	return &Client{
 		apiKey:        apiKey,
@@ -146,8 +157,8 @@ func NewClient(apiKey, defaultModel string) *Client {
 		AppURL:        os.Getenv("OPENROUTER_APP_URL"),
 		AppTitle:      os.Getenv("OPENROUTER_APP_TITLE"),
 		BaseURL:       "https://openrouter.ai/api/v1",
-		HTTPClient: newResilientHTTPClient(120 * time.Second),
-		TokenLedger: NewTokenLedger(),
+		HTTPClient:    newResilientHTTPClient(120 * time.Second),
+		TokenLedger:   NewTokenLedger(),
 	}
 }
 
@@ -263,8 +274,25 @@ func (c *Client) Complete(ctx context.Context, req *cpn.LLMRequest) (llmResp cpn
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			slog.WarnContext(ctx, "openrouter 4xx",
+				"status", resp.StatusCode,
+				"model", resolvedModel,
+				"session_id", req.SessionID,
+				"body", string(bodyBytes),
+			)
+		}
+		mapped := mapHTTPStatusToError(resp.StatusCode)
+		// Fallback: retry once with FallbackModel when the resolved model is
+		// unknown to OpenRouter. Skip if we are already on the fallback.
+		if errors.Is(mapped, cpn.ErrNotFound) && resolvedModel != FallbackModel {
+			fallback := *req
+			fallback.Model = FallbackModel
+			resolvedModel = FallbackModel
+			return c.Complete(ctx, &fallback)
+		}
+		return cpn.LLMResponse{}, mapped
 	}
 
 	switch resolved.Endpoint {
@@ -363,7 +391,16 @@ func (c *Client) CompleteStream(ctx context.Context, req *cpn.LLMRequest, onChun
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return cpn.LLMResponse{}, mapHTTPStatusToError(resp.StatusCode)
+		mapped := mapHTTPStatusToError(resp.StatusCode)
+		// Fallback: retry once with FallbackModel when the resolved model is
+		// unknown to OpenRouter. Skip if we are already on the fallback.
+		if errors.Is(mapped, cpn.ErrNotFound) && resolvedModel != FallbackModel {
+			fallback := *req
+			fallback.Model = FallbackModel
+			resolvedModel = FallbackModel
+			return c.CompleteStream(ctx, &fallback, onChunk)
+		}
+		return cpn.LLMResponse{}, mapped
 	}
 
 	sh := NewStreamHandler()
@@ -430,10 +467,7 @@ func (c *Client) resolveModel(model string) string {
 func formatChatMessages(msgs []*cpn.LLMMessage) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
-		msg := map[string]any{
-			"role":    m.Role,
-			"content": m.Content,
-		}
+		msg := map[string]any{"role": m.Role}
 		if m.ToolCall != nil {
 			msg["tool_calls"] = []map[string]any{{
 				"id":   m.ToolCall.ID,
@@ -443,11 +477,20 @@ func formatChatMessages(msgs []*cpn.LLMMessage) []map[string]any {
 					"arguments": string(m.ToolCall.Arguments),
 				},
 			}}
+			// Gemini-via-OpenRouter rejects assistant messages that carry
+			// both tool_calls and content:"". Emit content only when the
+			// model actually produced text alongside the tool call.
+			if m.Content != "" {
+				msg["content"] = m.Content
+			}
+		} else {
+			msg["content"] = m.Content
 		}
 		if m.ToolResult != nil {
 			msg["role"] = "tool"
 			msg["tool_call_id"] = m.ToolResult.ToolCallID
 			msg["content"] = m.ToolResult.Content
+			delete(msg, "tool_calls")
 		}
 		out = append(out, msg)
 	}

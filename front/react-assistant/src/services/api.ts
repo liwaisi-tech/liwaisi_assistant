@@ -1,7 +1,7 @@
 import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse, SessionListResponse, UpdateSessionRequest, ForkSessionRequest, ForkSessionResponse } from '../types/api';
 import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
 import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
-import type { UserProfile, UpdatePreferencesPayload, OnboardingCompleteRequest, ModelsResponse } from '../types/setup';
+import type { UserProfile, UpdatePreferencesPayload, OnboardingCompleteRequest, ModelsResponse, ModelRegistryEntry } from '../types/setup';
 import type { AdminConfigResponse, PlatformStatusResponse } from '../types/admin';
 
 const BASE_URL = '/api/v1';
@@ -32,6 +32,15 @@ const SESSION_NOT_FOUND_RE = /^\s*session not found\s*$/i;
  */
 const SESSION_INACTIVE_RE = /^\s*session inactive\s*$/i;
 
+/**
+ * HITL_ORPHAN_CODE is the stable machine-readable code the backend returns
+ * (per spec-process-bugfix-tool-hitl-single-gate §4.3) when ResolveHITL is
+ * invoked against a transition whose token has already been consumed. The
+ * frontend treats it as a benign race: the stale card is dismissed with a
+ * neutral toast rather than a red banner (REQ-007 / AC-004).
+ */
+const HITL_ORPHAN_CODE = 'HITL_TRANSITION_ORPHANED';
+
 /** Extract the session id from a `/sessions/{id}/...` API path. Best-effort. */
 function extractSessionId(path: string): string {
   const match = path.match(/\/sessions\/([^/?]+)/);
@@ -59,8 +68,24 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    const errorMessage: string = typeof error?.error === 'string' ? error.error : response.statusText;
+    const rawBody = await response.json().catch(() => ({ error: response.statusText }));
+    const errorMessage: string =
+      typeof rawBody?.error === 'string'
+        ? rawBody.error
+        : typeof rawBody?.error?.message === 'string'
+          ? rawBody.error.message
+          : response.statusText;
+    // The backend emits HITL_TRANSITION_ORPHANED as a structured envelope
+    // `{"error":{"code":"HITL_TRANSITION_ORPHANED","message":"..."}}` with
+    // HTTP 409 (§4.3). We surface it as a dedicated typed error so the
+    // chat layer can dismiss the stale card without flashing a red banner.
+    const errorCode: string | undefined =
+      typeof rawBody?.error?.code === 'string' ? rawBody.error.code : undefined;
+    if (errorCode === HITL_ORPHAN_CODE) {
+      const transitionId: string | undefined =
+        typeof rawBody?.error?.transitionId === 'string' ? rawBody.error.transitionId : undefined;
+      throw new HITLTransitionOrphanedError(errorMessage, transitionId);
+    }
 
     // Map typed session errors BEFORE falling back to the generic ApiError so
     // callers can catch them narrowly (GUD-003, PAT-002).
@@ -111,6 +136,26 @@ export class SessionInactiveError extends Error {
   constructor(public readonly sessionId: string) {
     super(`session inactive: ${sessionId}`);
     Object.setPrototypeOf(this, SessionInactiveError.prototype);
+  }
+}
+
+/**
+ * Thrown on a 409 (or equivalent) from `ResolveHITL` when the target
+ * transition has already been resolved or orphaned (its token was already
+ * consumed, e.g. because a parallel channel fired the approval or the
+ * rehydrated card is backing a long-gone flow). Callers should dismiss
+ * the stale HITL surface with a neutral notice — not a red error banner
+ * (REQ-007 / AC-004 / §9.4). The optional `transitionId` lets the reducer
+ * lock the specific stale row even if the click arrived with a different
+ * card id in focus. */
+export class HITLTransitionOrphanedError extends Error {
+  readonly name = 'HITLTransitionOrphanedError';
+  constructor(
+    message: string,
+    public readonly transitionId?: string,
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, HITLTransitionOrphanedError.prototype);
   }
 }
 
@@ -314,6 +359,60 @@ export async function deleteAdminConfig(key: string): Promise<{ ok: boolean }> {
 
 export async function getPlatformStatus(): Promise<PlatformStatusResponse> {
   return request<PlatformStatusResponse>('/admin/config/status');
+}
+
+// ── Admin Model Registry API ──────────────────────────────────────────
+//
+// Used by the in-chat A2UI management fragment (spec-architecture-model-
+// registry-and-a2ui-management.md §5 REQ-API-001..007). All mutations
+// hit the backend AdminMiddleware; callers must be in LIWAISI_ADMIN_EMAILS.
+
+export interface AdminModelListResponse {
+  items: ModelRegistryEntry[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export async function adminListModels(params?: {
+  vendor?: string;
+  lifecycle?: string;
+  license?: string;
+  invokable?: boolean;
+  search?: string;
+}): Promise<AdminModelListResponse> {
+  const qp = new URLSearchParams();
+  if (params?.vendor) qp.set('vendor', params.vendor);
+  if (params?.lifecycle) qp.set('lifecycle', params.lifecycle);
+  if (params?.license) qp.set('license', params.license);
+  if (params?.invokable !== undefined) qp.set('invokable', String(params.invokable));
+  if (params?.search) qp.set('search', params.search);
+  const qs = qp.toString();
+  return adminRequest<AdminModelListResponse>(`/admin/models${qs ? `?${qs}` : ''}`);
+}
+
+export async function adminSetDefaultModel(registryID: string): Promise<ModelRegistryEntry> {
+  return adminRequest<ModelRegistryEntry>('/admin/models/set-default', {
+    method: 'POST',
+    body: JSON.stringify({ registry_id: registryID }),
+  });
+}
+
+export async function adminLicenseReview(
+  registryID: string,
+  status: string,
+  note?: string,
+): Promise<ModelRegistryEntry> {
+  return adminRequest<ModelRegistryEntry>('/admin/models/license-review', {
+    method: 'POST',
+    body: JSON.stringify({ registry_id: registryID, status, ...(note ? { note } : {}) }),
+  });
+}
+
+export async function adminDeleteModel(registryID: string): Promise<{ ok: boolean; registry_id: string }> {
+  return adminRequest<{ ok: boolean; registry_id: string }>(`/admin/models/${encodeURIComponent(registryID)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function joinWaitlist(email: string): Promise<WaitlistResponse> {

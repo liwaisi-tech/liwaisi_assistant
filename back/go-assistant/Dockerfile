@@ -26,15 +26,19 @@ FROM alpine:3.21
 
 # Security: non-root user
 # Alpine 3.21 ships with ca-certificates pre-installed
-RUN addgroup -S app && adduser -S app -G app
+RUN addgroup -S brae && adduser -S brae -G brae
 
 COPY --from=builder /liwaisi-server /usr/local/bin/liwaisi-server
 COPY --from=builder /build/store/postgres/migrations /app/migrations
+COPY --from=builder /build/infra/host/policies /app/infra/host/policies
+
+ENV HOST_POLICY_PATH=/app/infra/host/policies/default.yaml
+WORKDIR /app
 
 # Ensure secrets directory exists and is writable by app user
-RUN mkdir -p /data/secrets && chown app:app /data/secrets && chmod 0700 /data/secrets
+RUN mkdir -p /data/secrets && chown brae:brae /data/secrets && chmod 0700 /data/secrets
 
-USER app
+USER brae
 
 EXPOSE 8080
 

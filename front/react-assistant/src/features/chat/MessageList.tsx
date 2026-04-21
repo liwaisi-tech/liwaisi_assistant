@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
 import { MessageBubble } from './MessageBubble';
-import { StreamingIndicator } from './StreamingIndicator';
+import { ActivityBubble } from './ActivityBubble';
 import type { SessionState } from '../../types/api';
 import type { ChatMessage, HITLAction } from '../../types/chat';
+import type { CurrentActivity, RecentReceipt } from '../../hooks/useChat';
+import type { A2UIAction } from './a2ui/types';
 
 const SUGGESTION_KEYS = [
   'messageList.suggestions.explainCpn',
@@ -18,26 +20,34 @@ interface MessageListProps {
   sessionState: SessionState;
   onSuggestionClick?: (prompt: string) => void;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
+  onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
   onOpenMonitor?: () => void;
+  currentActivity?: CurrentActivity | null;
+  recentReceipt?: RecentReceipt | null;
+  onReceiptDismiss?: () => void;
 }
 
-export function MessageList({ messages, sessionState, onSuggestionClick, onHITLAction, onOpenMonitor }: MessageListProps) {
+export function MessageList({
+  messages,
+  sessionState,
+  onSuggestionClick,
+  onHITLAction,
+  onA2UIAction,
+  onOpenMonitor,
+  currentActivity = null,
+  recentReceipt = null,
+  onReceiptDismiss,
+}: MessageListProps) {
   const { t } = useTranslation('chat');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { loadNamespace('chat'); }, []);
 
   const lastMessage = messages.at(-1);
-  const hasStreamingMessage = lastMessage?.isStreaming === true;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, lastMessage?.content]);
-
-  const showThinking =
-    sessionState === 'running' &&
-    !hasStreamingMessage &&
-    lastMessage?.role === 'user';
 
   return (
     <div className="flex-1 overflow-y-auto chat-scroll">
@@ -107,6 +117,7 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
         {messages.map((msg) => (
           <MessageBubble
             key={msg.id}
+            id={msg.id}
             role={msg.role}
             content={msg.content}
             cpnId={msg.cpnId}
@@ -118,12 +129,19 @@ export function MessageList({ messages, sessionState, onSuggestionClick, onHITLA
             hitlResolved={msg.hitlResolved}
             resolvedPayload={msg.resolvedPayload}
             resolvedAt={msg.resolvedAt}
+            metadata={msg.metadata}
+            toolExecutions={msg.toolExecutions}
             onHITLAction={onHITLAction}
+            onA2UIAction={onA2UIAction}
             onOpenMonitor={onOpenMonitor}
           />
         ))}
 
-        {showThinking && <StreamingIndicator />}
+        <ActivityBubble
+          activity={currentActivity}
+          receipt={recentReceipt}
+          onReceiptDismiss={onReceiptDismiss}
+        />
 
         <div ref={bottomRef} />
       </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chatReducer, initialState, type ChatState } from './useChat';
+import { chatReducer, computeAwakeningPhase, initialState, type ChatState } from './useChat';
 import type { ChatMessage } from '../types/chat';
 import type { StreamChunkData } from '../types/sse';
 import { A2UI_MARKER } from '../features/chat/a2ui/constants';
@@ -258,6 +258,81 @@ describe('chatReducer — STREAM_CHUNK session-id race defence', () => {
   });
 });
 
+describe('chatReducer — HITL custom-surface stamping', () => {
+  // Regression: when t-clarify pushes its A2UI questionnaire via STREAM_CHUNK
+  // and then signals HITL_REQUESTED with custom_surface=true, the reducer
+  // must stamp hitlTransitionId onto that bubble. Otherwise HITL_RESOLVED
+  // can't match it, the questionnaire never locks, and a second submit
+  // hits the backend as 409 cpn.ErrNoHITLWaiting.
+  it('stamps hitlTransitionId on the latest A2UI bubble when suppressBubble=true', () => {
+    const afterStream = chatReducer(initialState, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: a2uiContent, Done: true }),
+    });
+    expect(afterStream.messages).toHaveLength(1);
+    expect(afterStream.messages[0].hitlTransitionId).toBeUndefined();
+
+    const afterRequest = chatReducer(afterStream, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: 'ignored',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(afterRequest.messages).toHaveLength(1);
+    expect(afterRequest.messages[0].hitlTransitionId).toBe('t-clarify');
+    expect(afterRequest.sessionState).toBe('waiting');
+
+    const afterResolve = chatReducer(afterRequest, {
+      type: 'HITL_RESOLVED',
+      transitionId: 't-clarify',
+      action: 'submit',
+      resolvedPayload: '{"q1":"a","q2":"b"}',
+    });
+    expect(afterResolve.messages[0].resolvedPayload).toBe('{"q1":"a","q2":"b"}');
+    expect(afterResolve.messages[0].resolvedAt).toBeInstanceOf(Date);
+    expect(afterResolve.sessionState).toBe('running');
+  });
+
+  it('only stamps the most recent matching A2UI bubble for the cpnId', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        // Older A2UI bubble for a different cpn — must NOT be stamped
+        { id: 'a-old', role: 'assistant', content: a2uiContent, isStreaming: false,
+          cpnId: 'cpn-other', timestamp: new Date() },
+        // Most recent A2UI bubble for the target cpn — gets stamped
+        { id: 'a-target', role: 'assistant', content: a2uiContent, isStreaming: false,
+          cpnId: 'cpn-root', timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.messages[0].hitlTransitionId).toBeUndefined();
+    expect(next.messages[1].hitlTransitionId).toBe('t-clarify');
+  });
+
+  it('falls back gracefully when no A2UI bubble exists yet', () => {
+    const next = chatReducer(initialState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-clarify',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.messages).toHaveLength(0);
+    expect(next.sessionState).toBe('waiting');
+  });
+});
+
 describe('chatReducer — RESET hygiene', () => {
   it('clears sessionId, messages, and sessionState (REQ-301 / REQ-304 / AC-301)', () => {
     const state: ChatState = {
@@ -272,5 +347,473 @@ describe('chatReducer — RESET hygiene', () => {
     expect(next.messages).toHaveLength(0);
     expect(next.sessionState).toBe('idle');
     expect(next.error).toBeNull();
+  });
+});
+
+describe('chatReducer — ACTIVITY_*', () => {
+  const startBase = {
+    type: 'ACTIVITY_START' as const,
+    transitionId: 't-1',
+    cpnId: 'cpn-root',
+    sessionId: 'sess-1',
+    verb: 'Thinking',
+  };
+
+  it('ACTIVITY_START sets currentActivity from a non-null DisplayLabel', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const next = chatReducer(state, startBase);
+    expect(next.currentActivity).not.toBeNull();
+    expect(next.currentActivity?.verb).toBe('Thinking');
+    expect(next.currentActivity?.transitionId).toBe('t-1');
+    expect(next.currentActivity?.cpnId).toBe('cpn-root');
+  });
+
+  it('ACTIVITY_START is idempotent — re-dispatch with same transitionId is a no-op', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const first = chatReducer(state, startBase);
+    const second = chatReducer(first, startBase);
+    expect(second).toBe(first);
+  });
+
+  it('ACTIVITY_START with detail keeps the detail on currentActivity', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-1' };
+    const next = chatReducer(state, { ...startBase, verb: 'Calling tool', detail: 'web_search' });
+    expect(next.currentActivity?.detail).toBe('web_search');
+  });
+
+  it('ACTIVITY_START drops events whose sessionId does not match active session (REQ-020)', () => {
+    const state: ChatState = { ...initialState, sessionId: 'sess-A' };
+    const next = chatReducer(state, { ...startBase, sessionId: 'sess-B' });
+    expect(next).toBe(state);
+  });
+
+  it('ACTIVITY_START is accepted while sessionId is null (pre-load grace window)', () => {
+    const state: ChatState = { ...initialState, sessionId: null };
+    const next = chatReducer(state, startBase);
+    expect(next.currentActivity).not.toBeNull();
+  });
+
+  it('ACTIVITY_END clears currentActivity and shows a receipt when totals are present', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-1',
+      sessionId: 'sess-1',
+      durationMs: 2310,
+      costUsd: 0.0041,
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).not.toBeNull();
+    expect(next.recentReceipt?.durationMs).toBe(2310);
+    expect(next.recentReceipt?.costUsd).toBe(0.0041);
+  });
+
+  it('ACTIVITY_END clears currentActivity even when totals are absent (no receipt)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Working',
+        transitionId: 't-2',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-2',
+      sessionId: 'sess-1',
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('ACTIVITY_END drops events whose sessionId does not match (REQ-020)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-A',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'ACTIVITY_END',
+      transitionId: 't-1',
+      sessionId: 'sess-B',
+    });
+    expect(next).toBe(startState);
+  });
+
+  it('ACTIVITY_RECEIPT_DISMISS clears recentReceipt', () => {
+    const startState: ChatState = {
+      ...initialState,
+      recentReceipt: { durationMs: 100, costUsd: 0, shownAt: 5000 },
+    };
+    const next = chatReducer(startState, { type: 'ACTIVITY_RECEIPT_DISMISS' });
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('SESSION_COMPLETED clears any in-flight currentActivity', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionState: 'running',
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, { type: 'SESSION_COMPLETED' });
+    expect(next.currentActivity).toBeNull();
+  });
+
+  it('SESSION_FAILED clears any in-flight currentActivity (no receipt either)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      currentActivity: {
+        verb: 'Working',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, { type: 'SESSION_FAILED' });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+
+  it('HITL_REQUESTED clears the "Waiting for you" currentActivity (REQ-032)', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Waiting for you',
+        transitionId: 't-hitl',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+    };
+    const next = chatReducer(startState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-hitl',
+      prompt: 'Approve?',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+    });
+    expect(next.currentActivity).toBeNull();
+    expect(next.sessionState).toBe('waiting');
+  });
+
+  it('HITL_REQUESTED with suppressBubble (custom-surface path) also clears currentActivity', () => {
+    const startState: ChatState = {
+      ...initialState,
+      sessionId: 'sess-1',
+      currentActivity: {
+        verb: 'Waiting for you',
+        transitionId: 't-hitl',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+      messages: [
+        {
+          id: 'a2ui-1',
+          role: 'assistant',
+          content: '$$a2ui:{"components":[]}',
+          isStreaming: false,
+          cpnId: 'cpn-root',
+          timestamp: new Date(),
+        },
+      ],
+    };
+    const next = chatReducer(startState, {
+      type: 'HITL_REQUESTED',
+      transitionId: 't-hitl',
+      prompt: '',
+      cpnId: 'cpn-root',
+      cpnRole: 'planner',
+      suppressBubble: true,
+    });
+    expect(next.currentActivity).toBeNull();
+  });
+
+  it('RESET clears activity + receipt slices', () => {
+    const startState: ChatState = {
+      ...initialState,
+      currentActivity: {
+        verb: 'Thinking',
+        transitionId: 't-1',
+        cpnId: 'cpn-root',
+        startedAt: 1000,
+      },
+      recentReceipt: { durationMs: 100, costUsd: 0, shownAt: 5000 },
+    };
+    const next = chatReducer(startState, { type: 'RESET' });
+    expect(next.currentActivity).toBeNull();
+    expect(next.recentReceipt).toBeNull();
+  });
+});
+
+// ── Local message injection (REQ-GAP-TEST-003) ──────────────────────────────
+// The model-admin `/models` shortcut relies on these two reducer actions to
+// inject a synthetic assistant bubble and rewrite its content without ever
+// hitting the SSE stream. Coverage here guards against either action
+// regressing into a full-list re-render.
+
+describe('chatReducer — INJECT_LOCAL_MESSAGE', () => {
+  it('appends an assistant bubble with the given id and content', () => {
+    const next = chatReducer(initialState, {
+      type: 'INJECT_LOCAL_MESSAGE',
+      id: 'local-1',
+      content: 'synthetic body',
+      cpnRole: 'models-admin',
+    });
+    expect(next.messages).toHaveLength(1);
+    const bubble = next.messages[0];
+    expect(bubble.id).toBe('local-1');
+    expect(bubble.role).toBe('assistant');
+    expect(bubble.content).toBe('synthetic body');
+    expect(bubble.cpnRole).toBe('models-admin');
+    expect(bubble.isStreaming).toBe(false);
+  });
+
+  it('preserves pre-existing messages', () => {
+    const prior: ChatMessage = {
+      id: 'u-1',
+      role: 'user',
+      content: 'hi',
+      isStreaming: false,
+      timestamp: new Date(),
+    };
+    const state: ChatState = { ...initialState, messages: [prior] };
+    const next = chatReducer(state, {
+      type: 'INJECT_LOCAL_MESSAGE',
+      id: 'local-2',
+      content: '$$a2ui:{}',
+    });
+    expect(next.messages).toHaveLength(2);
+    expect(next.messages[0]).toBe(prior); // identity preserved → no re-render
+  });
+});
+
+describe('chatReducer — UPDATE_MESSAGE_CONTENT', () => {
+  it('rewrites the content of the matching id only', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        { id: 'a', role: 'assistant', content: 'x', isStreaming: false, timestamp: new Date() },
+        { id: 'b', role: 'assistant', content: 'y', isStreaming: false, timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, { type: 'UPDATE_MESSAGE_CONTENT', id: 'b', content: 'Y2' });
+    expect(next.messages[0].content).toBe('x');
+    expect(next.messages[0]).toBe(state.messages[0]); // untouched reference
+    expect(next.messages[1].content).toBe('Y2');
+  });
+
+  it('is a no-op for an unknown id (returns structurally equivalent state)', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [
+        { id: 'a', role: 'assistant', content: 'x', isStreaming: false, timestamp: new Date() },
+      ],
+    };
+    const next = chatReducer(state, { type: 'UPDATE_MESSAGE_CONTENT', id: 'zzz', content: 'new' });
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].content).toBe('x');
+  });
+});
+
+// ── Responding-model capture (REQ-GAP-IND-003) ─────────────────────────────
+// The final stream_chunk for an LLM transition carries the resolved route's
+// registry_id + adapter on `responding_model`. The reducer must persist it
+// onto the matching bubble's `metadata.responding_model` so MessageBubble
+// can render the RoundBadge without re-reading the SSE stream.
+
+describe('chatReducer — STREAM_CHUNK responding_model capture', () => {
+  it('stamps responding_model onto the completed bubble when append-done fires', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'partial ', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({
+        Content: 'final token',
+        Done: true,
+        responding_model: 'anthropic/claude-opus-4-6 · openrouter',
+      }),
+    });
+    const bubble = next.messages[0];
+    expect(bubble.isStreaming).toBe(false);
+    expect(bubble.content).toBe('partial final token');
+    expect(bubble.metadata?.responding_model).toBe('anthropic/claude-opus-4-6 · openrouter');
+  });
+
+  it('stamps responding_model onto a done-sentinel close-out', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'hello', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({
+        Content: '',
+        Done: true,
+        responding_model: 'google/gemma-4-31b-it · openrouter',
+      }),
+    });
+    expect(next.messages[0].metadata?.responding_model).toBe('google/gemma-4-31b-it · openrouter');
+    expect(next.messages[0].isStreaming).toBe(false);
+  });
+
+  it('leaves metadata empty when the final chunk omits responding_model', () => {
+    const state: ChatState = {
+      ...initialState,
+      messages: [streamingBubble({ id: 'a', content: 'hi', isStreaming: true })],
+    };
+    const next = chatReducer(state, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: 'end', Done: true }),
+    });
+    expect(next.messages[0].metadata).toBeUndefined();
+  });
+
+  it('treats empty-string responding_model as absent (no metadata stamp)', () => {
+    const next = chatReducer(initialState, {
+      type: 'STREAM_CHUNK',
+      data: chunk({ Content: 'solo', Done: true, responding_model: '' }),
+    });
+    expect(next.messages[0].metadata).toBeUndefined();
+  });
+});
+
+// ── HITL_ORPHANED — single-gate spec AC-004 / §4.3 ───────────────────────
+describe('chatReducer — HITL_ORPHANED (bugfix-tool-hitl-single-gate)', () => {
+  it('locks the target surface with an orphaned envelope and surfaces a neutral notice', () => {
+    const state: ChatState = {
+      ...initialState,
+      sessionState: 'waiting',
+      error: 'Failed to respond', // simulate a stale red error
+      messages: [
+        {
+          id: 'assistant-gate',
+          role: 'assistant',
+          content: A2UI_MARKER + '{"schema":"host.approval","hostApproval":{}}',
+          cpnId: 'cpn-root',
+          cpnRole: 'host',
+          timestamp: new Date('2026-04-20T00:00:00Z'),
+          hitlTransitionId: 't-review:abc',
+          hitlActions: ['approve', 'reject'],
+        } as ChatMessage,
+      ],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_ORPHANED',
+      transitionId: 't-review:abc',
+      notice: 'Esta aprobación ya fue resuelta',
+    });
+    expect(next.error).toBeNull();
+    expect(next.notice).toBe('Esta aprobación ya fue resuelta');
+    expect(next.sessionState).toBe('idle');
+    expect(next.messages[0].hitlActions).toBeUndefined();
+    expect(next.messages[0].resolvedPayload).toBe('{"action":"orphaned"}');
+    expect(next.messages[0].resolvedAt).toBeInstanceOf(Date);
+  });
+
+  it('does not touch surfaces that do not match the transitionId', () => {
+    const other = {
+      id: 'assistant-other',
+      role: 'assistant' as const,
+      content: A2UI_MARKER + '{}',
+      cpnId: 'cpn-other',
+      cpnRole: 'planner',
+      timestamp: new Date('2026-04-20T00:00:00Z'),
+      hitlTransitionId: 't-other',
+    } as ChatMessage;
+    const state: ChatState = {
+      ...initialState,
+      messages: [other],
+    };
+    const next = chatReducer(state, {
+      type: 'HITL_ORPHANED',
+      transitionId: 't-review:abc',
+      notice: 'x',
+    });
+    expect(next.messages[0].resolvedPayload).toBeUndefined();
+  });
+
+  it('CLEAR_NOTICE resets notice without touching messages', () => {
+    const state: ChatState = { ...initialState, notice: 'hello' };
+    const next = chatReducer(state, { type: 'CLEAR_NOTICE' });
+    expect(next.notice).toBeNull();
+    expect(next.messages).toBe(state.messages);
+  });
+});
+
+// Awakening gate state machine — spec-architecture-brae-awakening-self-
+// discovery.md §4.4, REQ-008 / AC-001 / BEH-003. The composer must stay
+// locked while a brand-new session's awakening turn is in flight and
+// unlock the moment the first assistant message lands (live or rehydrated).
+describe('awakening phase — computeAwakeningPhase', () => {
+  it('returns complete when there is no session id (empty/home state)', () => {
+    expect(computeAwakeningPhase(null, [], 'idle')).toBe('complete');
+  });
+
+  it('returns pending for a running session with no assistant messages yet', () => {
+    expect(computeAwakeningPhase('sess-1', [], 'running')).toBe('pending');
+  });
+
+  it('returns pending while HITL is waiting and no assistant row has arrived', () => {
+    // Defensive: the awakening turn should never reach HITL before the
+    // first card lands, but if it did we still lock the composer so the
+    // user cannot double-queue messages before the session is ready.
+    expect(computeAwakeningPhase('sess-1', [], 'waiting')).toBe('pending');
+  });
+
+  it('flips to complete the moment an awakening-role assistant message arrives', () => {
+    const awakeningMsg: ChatMessage = {
+      id: 'a',
+      role: 'assistant',
+      content: '$$a2ui:{}',
+      isStreaming: false,
+      cpnRole: 'awakening',
+      timestamp: new Date(),
+    };
+    expect(computeAwakeningPhase('sess-1', [awakeningMsg], 'running')).toBe('complete');
+  });
+
+  it('treats any assistant message as awakening-complete (rehydration path)', () => {
+    // Rehydrated messages from GET /sessions/:id do NOT carry cpnRole —
+    // the backend's MessageResponse omits it. The gate must still open
+    // so reopening an old chat does not lock the composer.
+    const rehydrated: ChatMessage = {
+      id: 'a',
+      role: 'assistant',
+      content: 'hello',
+      isStreaming: false,
+      timestamp: new Date(),
+    };
+    expect(computeAwakeningPhase('sess-1', [rehydrated], 'idle')).toBe('complete');
+  });
+
+  it('returns complete for an idle session with no messages (legacy pre-awakening)', () => {
+    // Sessions that predate the awakening topology never emit a first-
+    // turn card. REQ-005 requires the fallback path to still produce one,
+    // but we refuse to hold the composer hostage for sessions in a
+    // terminal idle state.
+    expect(computeAwakeningPhase('sess-1', [], 'idle')).toBe('complete');
   });
 });

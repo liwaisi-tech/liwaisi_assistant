@@ -447,7 +447,7 @@ func TestOpenRouterClient_Complete_ModelResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	want := PRODUCT_DEFAULT_MODEL
+	want := ProductDefaultModel
 	if gotModel != want {
 		t.Errorf("resolved model = %q, want %q", gotModel, want)
 	}
@@ -1852,8 +1852,8 @@ func TestModelRegistry_ThinkingEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("ModelRegistry missing 'thinking' entry")
 	}
-	if model != PRODUCT_DEFAULT_MODEL {
-		t.Errorf("thinking model = %q, want %q", model, PRODUCT_DEFAULT_MODEL)
+	if model != ProductDefaultModel {
+		t.Errorf("thinking model = %q, want %q", model, ProductDefaultModel)
 	}
 }
 
@@ -1884,21 +1884,21 @@ func TestBuildModelRegistry_IgnoresEnv(t *testing.T) {
 		t.Errorf("buildModelRegistry must not read env; called %d times", callCount)
 	}
 	for role, got := range registry {
-		if got != PRODUCT_DEFAULT_MODEL {
-			t.Errorf("registry[%q] = %q, want %q (env overrides must be ignored)", role, got, PRODUCT_DEFAULT_MODEL)
+		if got != ProductDefaultModel {
+			t.Errorf("registry[%q] = %q, want %q (env overrides must be ignored)", role, got, ProductDefaultModel)
 		}
 	}
 }
 
-// TestProductDefaultModel asserts REQ-CFG-001: PRODUCT_DEFAULT_MODEL is a
-// compile-time constant pinned to Gemma 4 31B.
+// TestProductDefaultModel asserts REQ-CFG-001: ProductDefaultModel is a
+// compile-time constant pinned to Gemini 2.5 Flash (GA).
 func TestProductDefaultModel(t *testing.T) {
-	if PRODUCT_DEFAULT_MODEL != "google/gemma-4-31b-it" {
-		t.Fatalf("PRODUCT_DEFAULT_MODEL = %q, want google/gemma-4-31b-it", PRODUCT_DEFAULT_MODEL)
+	if ProductDefaultModel != "google/gemini-2.5-flash" {
+		t.Fatalf("ProductDefaultModel = %q, want google/gemini-2.5-flash", ProductDefaultModel)
 	}
 	for role, model := range DefaultModelRegistry {
-		if model != PRODUCT_DEFAULT_MODEL {
-			t.Errorf("DefaultModelRegistry[%q] = %q, want %q", role, model, PRODUCT_DEFAULT_MODEL)
+		if model != ProductDefaultModel {
+			t.Errorf("DefaultModelRegistry[%q] = %q, want %q", role, model, ProductDefaultModel)
 		}
 	}
 }
@@ -2126,7 +2126,7 @@ func TestCompleteStream_TokenLedgerRecorded(t *testing.T) {
 }
 
 // TestBuildModelRegistry_AllRolesMapToDefault asserts REQ-CFG-001: every
-// role in DefaultModelRegistry resolves to PRODUCT_DEFAULT_MODEL. Replaces
+// role in DefaultModelRegistry resolves to ProductDefaultModel. Replaces
 // the pre-spec TestBuildModelRegistry_AllOverrides, which exercised the
 // removed MODEL_* env override path.
 func TestBuildModelRegistry_AllRolesMapToDefault(t *testing.T) {
@@ -2138,8 +2138,8 @@ func TestBuildModelRegistry_AllRolesMapToDefault(t *testing.T) {
 			t.Errorf("registry missing role %q", role)
 			continue
 		}
-		if got != PRODUCT_DEFAULT_MODEL {
-			t.Errorf("registry[%q] = %q, want %q", role, got, PRODUCT_DEFAULT_MODEL)
+		if got != ProductDefaultModel {
+			t.Errorf("registry[%q] = %q, want %q", role, got, ProductDefaultModel)
 		}
 	}
 }

@@ -1,0 +1,12 @@
+# Pre-approved bash command catalogue for synthesised topologies (GAP-4).
+#
+# exec-bash-preregistered maps a snippet_id → command string declared here.
+# Agent-authored topologies can only reference snippet IDs — they cannot
+# compose free-form shell. The forge (GAP-5) is the sole path that adds
+# new entries; the file ships empty so dev mode starts with zero implicit
+# shell surface.
+#
+# Schema:
+#   snippets:
+#     <id>: <command string>
+snippets: {}

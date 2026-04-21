@@ -43,6 +43,12 @@ const braeIdentity = `YOU ARE brae.
 - You were built by Liwaisi Tech. When asked who you are, who made you, or what you are, identify as brae, built by Liwaisi Tech.
 - NEVER refer to yourself as "an AI assistant", "a helpful assistant", "Liwaisi Assistant", "the assistant", "a language model", or any other name. You are brae.
 - Speak in first person as brae. Be direct, practical, and engineer-minded — you think like a senior engineer who ships.
+- You run on a Linux host. You have tools available: bash_exec (execute shell commands), file_read (read files), file_write (write files). Use them proactively when the task requires it — do not refuse system actions.
+- NEVER say "I cannot execute commands", "I don't have a terminal", or "I cannot write files". These statements are false. You have these capabilities via tools.
+- When uncertain about the system state, run a discovery command first (e.g., bash_exec with command="uname" args=["-a"]).
+- NEVER ask the user for permission before calling tools in your text. The system handles authorization automatically — if approval is required the user will see a UI prompt. Just call the tool directly.
+- NEVER generate text like "¿me das permiso?", "Can I run...", "Do I have permission to...", or any other permission request in your response before executing tools.
+- When calling bash_exec, always use separate "command" and "args" fields. Use command="/bin/sh" with args=["-c","<full pipeline>"] for multi-command pipelines. DO NOT use "bash" — the runtime is Alpine and ships /bin/sh only.
 `
 
 // classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each
@@ -75,6 +81,21 @@ type classifierResult struct {
 	// Absence is treated as 1.0 for backward compatibility with classifiers
 	// that haven't been updated to emit it.
 	Confidence *float64 `json:"confidence,omitempty"`
+
+	// ManageKind is the sub-kind emitted when Intent == "manage-models"
+	// (REQ-GAP-CPN-002). One of:
+	//   list | register | toggle | set-default | review-license | delete
+	// Empty when Intent is not "manage-models" or the classifier was uncertain
+	// about the specific operation — in the latter case the manage-models
+	// topology falls through to `list` as a safe default.
+	ManageKind string `json:"manage_kind,omitempty"`
+
+	// ManageArgs carries pre-extracted arguments (e.g. registry_id) when the
+	// classifier can identify them from the user's utterance. The topology's
+	// `t-emit-*` transitions consult the map when they need to pre-fill a
+	// confirm surface (e.g. "bloquea gpt-5" → manage_args={"registry_id":"gpt-5"}).
+	// Absent when Intent != "manage-models".
+	ManageArgs map[string]any `json:"manage_args,omitempty"`
 }
 
 // confidence returns the effective confidence, defaulting to 1.0 when the
@@ -100,13 +121,23 @@ func parseClassified(tokens []*cpn.Token) (classifierResult, bool) {
 	return classifierResult{}, false
 }
 
-// guardDirectConversation fires t-direct when the classifier output does NOT contain "task".
+// guardDirectConversation fires t-direct when the classifier output is not a
+// task. manage-models is classified in the main topology but never dispatched
+// to its dedicated manage-models-flow fragment today; without a catch here
+// those tokens would stall p-classified and deadlock the run ("no enabled
+// transitions and no terminal marking"). Until the dispatcher ships we route
+// manage-models through t-direct so the user still gets an assistant reply.
+// See cmd/server/topologies_model_registry.go for the fragment that will
+// eventually own that intent.
 func guardDirectConversation(tokens []*cpn.Token) bool {
 	r, ok := parseClassified(tokens)
 	if !ok {
 		return true // default to conversation on parse failure
 	}
-	return !strings.EqualFold(r.Intent, "task")
+	if strings.EqualFold(r.Intent, "task") {
+		return false
+	}
+	return true
 }
 
 // guardPlanTask fires t-plan when the classifier output contains "task".
@@ -305,6 +336,10 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		"p-classified": cpn.NewPlace("p-classified", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-questions":  cpn.NewPlace("p-questions", cpn.ColorJSON, cpn.SpaceSurface),
 		"p-clarified":  cpn.NewPlace("p-clarified", cpn.ColorString, cpn.SpaceSurface),
+		// REQ-011: declare p-host-capabilities explicitly so SeedHostSnapshot
+		// does not add it as an unlisted source place, which caused the
+		// non-deterministic findSourcePlace 500 (REQ-FIX-001).
+		cpn.WellKnownHostCapabilitiesPlace: cpn.NewPlace(cpn.WellKnownHostCapabilitiesPlace, cpn.ColorHostFact, cpn.SpaceComputation),
 		// Iterative clarification loop (REQ-001/002). p-round holds a
 		// 1-bounded counter token; p-reassessed holds the t-reassess
 		// output that routes to t-followup or t-plan-clarified.
@@ -319,19 +354,25 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		// §Step-1 token-color gate), so we interpose a ColorString
 		// hop so the preamble text reaches the LLM as a user message.
 		"p-planner-input": cpn.NewPlace("p-planner-input", cpn.ColorString, cpn.SpaceSurface),
-		"p-plan":       cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
-		"p-reviewed":   cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
-		"p-output":     cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
+		"p-plan":          cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
+		"p-reviewed":      cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
+		"p-output":        cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
 	}
 	// REQ-001: seed p-round with {n:0, reset:false} so the initial marking
 	// has the counter available. Also covers REQ-051 (rehydrated
 	// pre-feature sessions default to n=0).
-	seedRound := &cpn.Token{
-		Color:   cpn.ColorJSON,
-		Space:   cpn.SpaceSurface,
-		Payload: `{"n":0,"reset":false}`,
+	//
+	// seedPRound is captured as the CPN's SeedFunc below so it also re-runs
+	// on every Reset(). SessionService.SendMessage calls Reset before each
+	// user turn; without restoring this seeded token, t-followup/t-preplanner
+	// (both consume p-round) deadlock silently after t-reassess completes.
+	seedPRound := func(c *cpn.CPN) {
+		_ = c.Places["p-round"].Deposit(&cpn.Token{
+			Color:   cpn.ColorJSON,
+			Space:   cpn.SpaceSurface,
+			Payload: `{"n":0,"reset":false}`,
+		})
 	}
-	_ = places["p-round"].Deposit(seedRound)
 
 	// t-classify: fast intent classifier using lightweight model.
 	tClassify := cpn.NewTransition("t-classify", cpn.NodeKindLLM,
@@ -343,7 +384,9 @@ The message may be in any human language. Classify identically regardless of lan
 A "USER CONTEXT — REGIONAL REGISTER" preamble may be prepended to this prompt at runtime. When present, use the listed idiom glosses to resolve ambiguous imperatives in the user's regional register (e.g., a verb that looks like a command in standard usage but is conversational in that variant). Do not enumerate the idioms in your output; let them inform the conversation/task decision in Step 1.
 
 Schema (all keys required):
-{"intent":"conversation"|"task","needs_clarification":bool,"missing":[string,...],"confidence":0.0}
+{"intent":"conversation"|"task"|"manage-models","needs_clarification":bool,"missing":[string,...],"confidence":0.0,"manage_kind":"list"|"register"|"toggle"|"set-default"|"review-license"|"delete","manage_args":{}}
+
+The "manage-models" intent + manage_kind + manage_args keys are OPTIONAL; include them ONLY when intent == "manage-models". Omit when not applicable.
 
 Decision procedure — run these steps mentally, then emit JSON.
 
@@ -355,6 +398,10 @@ Detect meta-questions by SEMANTICS, not by keyword. Any phrasing in any language
 Step 1. Intent.
 - "conversation": greetings, small talk, thanks, acknowledgements, emotional reactions, single factual questions answerable in one short paragraph, follow-up questions about something already said, opinion questions, and ALL meta-questions (see Step 0).
 - "task": the user explicitly asks the assistant to PRODUCE a multi-step deliverable — build, design, plan, implement, write a document or code, analyze a dataset, research a topic in depth, refactor, teach a multi-step procedure, or otherwise hand back a structured artifact that a reasonable person would review before shipping.
+- "manage-models": the user is asking the ASSISTANT ITSELF to operate its own model registry — list/show/browse registered LLMs, register a new model, toggle a model on/off, change the product default model, review a model's license (approve/block), or delete a model. Seed utterances in any language: "list my models", "lista mis modelos", "registra un modelo nuevo", "register a model", "bloquea gpt-5", "block gpt-5", "cámbiame el modelo por defecto", "set default to claude opus", "quita/elimina ese modelo". When intent == "manage-models", emit:
+    manage_kind ∈ {list, register, toggle, set-default, review-license, delete}
+    manage_args: extract a registry_id (or its free-form candidate, e.g. "gpt-5", "claude opus 4.6") when the user named one; empty object otherwise.
+  Use "list" as a safe fallback when the sub-kind is genuinely ambiguous. Model-management intents ALWAYS set needs_clarification=false and missing=[] (Step 4 consistency still applies). confidence is your usual self-score.
 - When ambiguous, prefer "conversation". The task pipeline is expensive, adds a human-review gate, and produces poor output on under-specified inputs; a conversational reply can always offer to escalate. Misrouting a one-shot reply into the planner is a much worse failure than the reverse.
 - Do NOT classify a message as "task" merely because you don't immediately know the answer, or merely because the message contains an imperative verb. Imperatives are common in casual speech ("tell me...", "say...", "count...", "repeat...", "define...", "translate this phrase...", "give me an example...", "try streaming"). The grammatical mood is NOT the signal.
 - The real test is the EXPECTED OUTPUT SHAPE. Ask: "Could a competent assistant satisfy this in a single short turn of free-form text, with no planning, no structure, and nothing a human would want to review before it ships?" If yes → "conversation". If the user is asking for something a senior practitioner would outline, draft in sections, or iterate on → "task".
@@ -373,6 +420,7 @@ If any of (a)-(d) fails, set needs_clarification = false and missing = []. Over-
 
 Step 4. Field consistency rules (HARD):
 - intent == "conversation"     ⇒ needs_clarification = false, missing = [].
+- intent == "manage-models"    ⇒ needs_clarification = false, missing = [], manage_kind is REQUIRED.
 - needs_clarification == true  ⇒ intent MUST be "task" AND missing MUST have 1..4 entries.
 - needs_clarification == false ⇒ missing MUST be [].
 
@@ -404,6 +452,7 @@ Respond naturally and concisely. Be warm but engineer-minded — direct, practic
 		StreamOutput: true,
 	}
 	tDirect.Guard = guardDirectConversation
+	tDirect.LLMTools = []string{"bash_exec", "file_read", "file_write"}
 
 	planSharedRules := `Hard rules:
 - DO NOT ask clarifying questions to the user. Do not end with a question that requests more input.
@@ -561,10 +610,10 @@ Your ENTIRE response must be the raw JSON object and NOTHING ELSE. No greeting, 
 	tAsk.LLMConfig = &cpn.LLMConfig{
 		// REQ-CFG-003/004: Role drives per-role override lookup in
 		// applyUserModelPreferences. Model is written by the resolver.
-		Role:                "structured",
-		MaxTokens:           envInt("MAX_TOKENS_ASK", 1024),
-		Temperature:         0.3,
-		RequireJSON:         true,
+		Role:        "structured",
+		MaxTokens:   envInt("MAX_TOKENS_ASK", 1024),
+		Temperature: 0.3,
+		RequireJSON: true,
 		// REQ-PAR-004: verify JSON-ness of the response and retry once with
 		// a tighter directive if the model emits prose or reasoning tokens.
 		ResponseFmtRequired: true,
@@ -783,6 +832,20 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		Temperature:  0.5,
 		StreamOutput: true,
 	}
+	tExecute.LLMTools = []string{"bash_exec", "file_read", "file_write"}
+
+	// System tool transitions — REQ-007/REQ-010. NodeKindTool with empty
+	// InputPlaces/OutputPlaces: fireLLM dispatches to Executor inline via the
+	// tool-call loop; no CPN arc wiring needed. Executors are injected by
+	// tools.Registry.InjectIntoCPN at session creation time.
+	tBashExec := cpn.NewTransition("bash_exec", cpn.NodeKindTool, []string{}, []string{})
+	tBashExec.ToolName = "bash_exec"
+
+	tFileRead := cpn.NewTransition("file_read", cpn.NodeKindTool, []string{}, []string{})
+	tFileRead.ToolName = "file_read"
+
+	tFileWrite := cpn.NewTransition("file_write", cpn.NodeKindTool, []string{}, []string{})
+	tFileWrite.ToolName = "file_write"
 
 	transitions := map[string]*cpn.Transition{
 		"t-classify":       tClassify,
@@ -796,6 +859,11 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		"t-plan-clarified": tPlanClarified,
 		"t-review":         tReview,
 		"t-execute":        tExecute,
+		// System tool transitions (REQ-007): keyed by ToolName so that
+		// fireLLM's c.Transitions[tc.ToolName] lookup succeeds.
+		"bash_exec":  tBashExec,
+		"file_read":  tFileRead,
+		"file_write": tFileWrite,
 	}
 
 	c := cpn.NewCPN(
@@ -808,6 +876,8 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		transitions,
 	)
 	c.ContextWindowSize = 10
+	c.SeedFunc = seedPRound
+	seedPRound(c)
 	return c
 }
 
@@ -1041,11 +1111,11 @@ func firstQuestionnaireFromTokens(consumed []cpn.Token) (questionnaireSpec, erro
 // surface what the model actually emitted without dumping a huge payload
 // into the error string. 512 is the cap mandated by REQ-PAR-002.
 func rawPayloadPrefix(s string) string {
-	const max = 512
-	if len(s) <= max {
+	const maxLen = 512
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max]
+	return s[:maxLen]
 }
 
 // sessionIDFromTokens best-effort extracts the session id from the first

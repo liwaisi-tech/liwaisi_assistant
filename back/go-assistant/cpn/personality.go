@@ -86,6 +86,16 @@ type Personality struct {
 	Tensions   [3]TensionRule   `json:"tensions"`
 	Version    int              `json:"version"`
 	UpdatedAt  time.Time        `json:"updated_at"`
+
+	// EnvironmentAwareness is an optional block appended to AsSystemPrompt().
+	// When non-empty it renders under the "## Environment awareness" header
+	// between the tension-resolution section and the closing `---` marker
+	// (PAT-003 in spec-architecture-brae-awakening-self-discovery). The
+	// header is fixed so downstream prompt assemblers can locate + prune
+	// the block by substring when token budgets are tight. Populated by
+	// session_service.go on turn ≥ 2 from the latest host_capability
+	// snapshot via awakens.EnvironmentAwarenessBlock().
+	EnvironmentAwareness string `json:"environment_awareness,omitempty"`
 }
 
 // allKinds is the canonical set of principle kinds.
@@ -137,6 +147,16 @@ func (p *Personality) AsSystemPrompt() string {
 	b.WriteString("\n## Tension Resolution\n")
 	for _, t := range p.Tensions {
 		fmt.Fprintf(&b, "- %s vs %s: %s → %s\n", t.Between[0], t.Between[1], t.Friction, t.Resolution)
+	}
+
+	// Environment awareness block (REQ-007 / PAT-003). When set by the
+	// session service on turn ≥ 2, it is rendered verbatim — the block
+	// already carries its own "## Environment awareness" header so we
+	// just ensure there is a blank line separator.
+	if trimmed := strings.TrimSpace(p.EnvironmentAwareness); trimmed != "" {
+		b.WriteByte('\n')
+		b.WriteString(trimmed)
+		b.WriteByte('\n')
 	}
 
 	b.WriteString("---\n")

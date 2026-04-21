@@ -77,12 +77,50 @@ func Validate(places map[string]*Place, transitions map[string]*Transition) erro
 
 		// REQ-018: Validate HITL transitions have proper configuration.
 		errs = append(errs, checkHITLConfig(tr)...)
+
+		// GAP-1: Validate NodeKindBash has a non-nil BashConfig with a
+		// command, and that every output place carries a shell-family
+		// color.
+		errs = append(errs, checkBashConfig(tr, places)...)
 	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 	return &ValidationErrors{Errors: errs}
+}
+
+// checkBashConfig enforces CON-001/CON-002 on NodeKindBash transitions.
+func checkBashConfig(t *Transition, places map[string]*Place) []error {
+	if t.Kind != NodeKindBash {
+		return nil
+	}
+	var errs []error
+	if t.BashConfig == nil {
+		errs = append(errs, fmt.Errorf("bash.missing_config: transition %s has nil BashConfig", t.ID))
+		return errs
+	}
+	if t.BashConfig.Command == "" {
+		errs = append(errs, fmt.Errorf("bash.missing_command: transition %s has empty BashConfig.Command", t.ID))
+	}
+	for _, pid := range t.OutputPlaces {
+		p, ok := places[pid]
+		if !ok {
+			continue // already reported by checkArcReferences
+		}
+		// ColorError is permitted on output places so topologies can route
+		// a bash transition's terminal state through its ErrorPlace (which
+		// MAY also be listed in OutputPlaces).
+		if p.Color == ColorError {
+			continue
+		}
+		if !IsShellColor(p.Color) {
+			errs = append(errs, fmt.Errorf(
+				"bash.invalid_output_color: transition %s output place %s has non-shell color %s",
+				t.ID, pid, p.Color))
+		}
+	}
+	return errs
 }
 
 // checkArcReferences verifies all place references in a transition exist.

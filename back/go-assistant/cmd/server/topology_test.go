@@ -113,6 +113,39 @@ func TestUnifiedTopology_HasAllPlacesAndTransitions(t *testing.T) {
 	}
 }
 
+// Regression: SessionService.SendMessage calls CPN.Reset() before every
+// user turn. Before SeedFunc existed, Reset wiped p-round (the iterative
+// clarification counter) and never restored it. Downstream transitions
+// t-followup / t-preplanner both consume p-round as a second input arc,
+// so their CanFire check returned false and the CPN deadlocked silently
+// after t-reassess completed — the frontend saw "Ejecutando → Inactivo"
+// with no assistant bubble. This test pins the Reset → seed contract.
+func TestUnifiedTopology_ResetPreservesPRoundSeed(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	round, ok := c.Places["p-round"]
+	if !ok {
+		t.Fatal("missing place p-round")
+	}
+	if got := round.Len(); got != 1 {
+		t.Fatalf("initial p-round Len = %d, want 1 (seeded)", got)
+	}
+
+	c.Reset()
+
+	if got := round.Len(); got != 1 {
+		t.Fatalf("post-Reset p-round Len = %d, want 1 (re-seeded)", got)
+	}
+	snaps, _ := round.Peek()
+	if len(snaps) == 0 {
+		t.Fatal("post-Reset p-round has no token")
+	}
+	payload, _ := snaps[0].Payload.(string)
+	if payload != `{"n":0,"reset":false}` {
+		t.Fatalf("post-Reset p-round payload = %q, want seeded {n:0}", payload)
+	}
+}
+
 // TestUnifiedTopology_ClassifierConfig asserts REQ-CFG-003/004: the
 // authored LLMConfig expresses intent via Role, NOT Model. The Model field
 // is stamped by applyUserModelPreferences at session-resolve time and MUST
@@ -517,6 +550,52 @@ func assertTReviewBuilderEmitsActions(t *testing.T, factoryName string, c *cpn.C
 	for _, needle := range []string{"hitl:approve", "hitl:revise", "hitl:reject"} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("%s: A2UI payload missing %q; body=%s", factoryName, needle, body)
+		}
+	}
+}
+
+// TestUnifiedTopology_ToolFlowEmitsSingleHITL guards REQ-002 / AC-001 of
+// spec-process-bugfix-tool-hitl-single-gate.md: a tool-bearing flow MUST
+// produce exactly one HITL transition — the HOST·HITL gate owned by the
+// host-tool channel — and MUST NOT wire a second t-review transition into
+// the pre-execution path of tools with RequiresHITL=true.
+//
+// The tool transitions (bash_exec, file_read, file_write) are NodeKindTool
+// with empty input/output places (they are dispatched inline by fireLLM).
+// t-review remains present — but only for the non-tool plan review path
+// (REQ-008 / AC-006) — and MUST NOT sit on any arc leading into a tool.
+func TestUnifiedTopology_ToolFlowEmitsSingleHITL(t *testing.T) {
+	c := unifiedTopologyFactory("test-session")
+
+	toolNames := []string{"bash_exec", "file_read", "file_write"}
+	for _, name := range toolNames {
+		tr, ok := c.Transitions[name]
+		if !ok {
+			t.Fatalf("missing tool transition %q", name)
+		}
+		if tr.Kind != cpn.NodeKindTool {
+			t.Errorf("tool %q kind = %q, want NodeKindTool", name, tr.Kind)
+		}
+		if len(tr.InputPlaces) != 0 {
+			t.Errorf("tool %q has %d InputPlaces, want 0 (fireLLM dispatches inline — wiring would introduce a second gate)",
+				name, len(tr.InputPlaces))
+		}
+		if len(tr.OutputPlaces) != 0 {
+			t.Errorf("tool %q has %d OutputPlaces, want 0", name, len(tr.OutputPlaces))
+		}
+	}
+
+	// t-review MUST remain — but only for the plan review path (REQ-008).
+	tReview, ok := c.Transitions["t-review"]
+	if !ok {
+		t.Fatal("t-review missing: non-tool plan review path regressed")
+	}
+	// Assert t-review does not list any tool place as input/output. The
+	// plan-review topology uses p-plan / p-reviewed; if any *_exec /
+	// file_* place shows up here, a tool flow has been grafted onto it.
+	for _, placeID := range append([]string{}, tReview.InputPlaces...) {
+		if placeID == "bash_exec" || placeID == "file_read" || placeID == "file_write" {
+			t.Errorf("t-review input %q is a tool transition — double-gate regression", placeID)
 		}
 	}
 }

@@ -52,6 +52,16 @@ type StreamChunk struct {
 
 	// Done indicates whether this is the final chunk in the stream.
 	Done bool
+
+	// RespondingModel, when set, identifies which model+adapter answered this
+	// turn. Populated only on the FINAL chunk of an LLM transition (Done=true)
+	// as "<registry_id> · <adapter>" (e.g. "anthropic/claude-opus-4-6 · openrouter").
+	// Earlier chunks leave it empty. Frontend reads it from the final
+	// stream_chunk and renders a RoundBadge below the assistant bubble
+	// (REQ-FE-005 / REQ-GAP-IND-001). Backward-compat: consumers that ignore
+	// the field keep working — older assistant messages render without the
+	// badge.
+	RespondingModel string `json:"responding_model,omitempty"`
 }
 
 // Message represents a single message in the session conversation history.
@@ -190,6 +200,23 @@ func (s *Session) RegisterHITL(transitionID string, ch chan Token) error {
 
 	if _, exists := s.hitlInject[transitionID]; exists {
 		return fmt.Errorf("register HITL %q: %w", transitionID, ErrHITLAlreadyRegistered)
+	}
+	s.hitlInject[transitionID] = ch
+	return nil
+}
+
+// RegisterToolHITL registers a HITL channel for an LLM transition that
+// gates tool execution. Unlike RegisterHITL, it does not validate the
+// transition Kind — LLM transitions (NodeKindLLM) host per-tool approval
+// channels on their HITLConfig.Channel. The channel must already be set on
+// t.HITLConfig.Channel by the caller before registration.
+// Thread-safe.
+func (s *Session) RegisterToolHITL(transitionID string, ch chan Token) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.hitlInject[transitionID]; exists {
+		return fmt.Errorf("register tool-HITL %q: %w", transitionID, ErrHITLAlreadyRegistered)
 	}
 	s.hitlInject[transitionID] = ch
 	return nil

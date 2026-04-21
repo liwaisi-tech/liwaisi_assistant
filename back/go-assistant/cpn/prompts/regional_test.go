@@ -98,4 +98,3 @@ func TestPreambleFor(t *testing.T) {
 		}
 	})
 }
-

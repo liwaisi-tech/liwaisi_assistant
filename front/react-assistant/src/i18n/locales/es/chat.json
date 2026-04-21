@@ -32,6 +32,7 @@
     "placeholder": "Escribe un mensaje...",
     "placeholderWaiting": "Revisa el plan de arriba...",
     "placeholderDisabled": "Esperando respuesta...",
+    "placeholderAwakening": "brae est\u00e1 despertando\u2026",
     "sendAriaLabel": "Enviar mensaje",
     "inputAriaLabel": "Entrada de mensaje",
     "hint": "Presiona Enter para enviar, Shift+Enter para nueva línea"
@@ -71,6 +72,11 @@
     "questionnaire": {
       "respondedAt": "Respondido a las {{time}}",
       "responded": "Respondido"
+    },
+    "hostApproval": {
+      "technicalDetails": "Detalles técnicos",
+      "obsolete": "Aprobación obsoleta",
+      "orphanedToast": "Esta aprobación ya fue resuelta"
     },
     "clarify": {
       "badge": {
@@ -114,5 +120,85 @@
     "title": "Sesión reanudada",
     "message": "Te reconectamos en un chat nuevo tras un reinicio del servidor. Tu borrador sigue aquí.",
     "dismiss": "Cerrar aviso"
+  },
+  "models": {
+    "list": {
+      "title": "Registro de modelos",
+      "subtitle": "Elige una acción. Solo los modelos con licencia aprobada pueden ser el predeterminado del producto.",
+      "loading": "Cargando registro de modelos\u2026",
+      "summary": {
+        "total": "{{count}} registrados",
+        "invokable": "{{count}} invocables",
+        "needs_review": "{{count}} en espera de revisión de licencia",
+        "default": "predeterminado: {{name}}"
+      },
+      "actions": {
+        "set_default": "Marcar como predeterminado",
+        "approve_commercial": "Aprobar uso comercial",
+        "approve_non_commercial": "Aprobar uso no comercial",
+        "block": "Bloquear",
+        "delete": "Eliminar",
+        "refresh": "Actualizar"
+      },
+      "badge": {
+        "default": "\u2605 Predeterminado",
+        "license_prefix": "Licencia: {{status}}"
+      },
+      "error": {
+        "title": "Error al administrar modelos"
+      }
+    },
+    "form": {
+      "title": "Registrar un modelo nuevo",
+      "intro": "Completa la información canónica. La licencia se revisará por separado.",
+      "submit": "Registrar",
+      "cancel": "Cancelar",
+      "fields": {
+        "registry_id": "registry_id (vendor/familia-versión)",
+        "vendor": "vendor",
+        "family": "familia",
+        "version": "versión",
+        "display_name": "nombre visible",
+        "hugging_face_id": "hugging_face_id (opcional)",
+        "context_length": "tamaño de contexto (tokens)",
+        "primary_route_adapter": "Adaptador de ruta principal",
+        "primary_route_model_id": "provider_model_id",
+        "enable_enrichment": "Enriquecer licencia desde Hugging Face (si hay hugging_face_id)"
+      }
+    },
+    "confirm": {
+      "title_delete": "¿Eliminar este modelo?",
+      "title_setdefault": "¿Marcar como predeterminado del producto?",
+      "title_license": "¿Aplicar esta decisión de licencia?",
+      "before_label": "Antes",
+      "after_label": "Después",
+      "irreversible_notice": "Esta acción no se puede deshacer."
+    },
+    "errors": {
+      "admin_only": "La administración de modelos es solo para administradores.",
+      "validation_failed_cap": "No pude validar el formulario tras 3 intentos. Puedes retomarlo cuando quieras."
+    },
+    "badge": {
+      "responding_model": "Respondiendo: {{model}}"
+    },
+    "license": {
+      "approved_commercial": "Comercial",
+      "approved_non_commercial": "No comercial",
+      "restricted": "Restringida",
+      "blocked": "Bloqueada",
+      "unreviewed": "Sin revisar",
+      "review_in_progress": "En revisión",
+      "unknown": "Desconocida"
+    },
+    "lifecycle": {
+      "discovered": "Detectado",
+      "pending_license_review": "Revisión pendiente",
+      "registered": "Registrado",
+      "active": "Activo",
+      "disabled": "Deshabilitado",
+      "deprecated": "Obsoleto",
+      "sunset": "En retiro",
+      "removed": "Retirado"
+    }
   }
 }
