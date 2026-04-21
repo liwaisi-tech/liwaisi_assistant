@@ -1189,11 +1189,34 @@ func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cp
 		// here; we treat that as "no preference" and fall through.
 		rec, _ = s.persist.Users.GetByID(ctx, userID)
 	}
+	// Per-session resolver cache: every transition in this topology resolves
+	// against the same user record and the same registry snapshot, so one
+	// GetInvokable per candidate and one GetProductDefault suffice — not
+	// once per transition (REQ-FIX-011 / AC-011).
+	cache := newResolveCache()
 	for _, t := range root.Transitions {
 		if t.Kind != cpn.NodeKindLLM || t.LLMConfig == nil {
 			continue
 		}
-		t.LLMConfig.Model = s.resolveModelWithGate(ctx, rec, t.LLMConfig.Role)
+		t.LLMConfig.Model = s.resolveModelWithGateCached(ctx, rec, t.LLMConfig.Role, cache)
+	}
+}
+
+// resolveCache memoises ModelRegistry lookups for a single session-build.
+// All fields are goroutine-unsafe — applyUserModelPreferences is single
+// threaded per session, so no sync is needed.
+type resolveCache struct {
+	invokable      map[string]bool                // candidate → passed REQ-GATE-001
+	roleDefault    map[string]string              // role → registry_id (empty string on not-found)
+	productDefault *cpn.ModelRegistryEntry
+	productErr     error
+	productDone    bool
+}
+
+func newResolveCache() *resolveCache {
+	return &resolveCache{
+		invokable:   make(map[string]bool),
+		roleDefault: make(map[string]string),
 	}
 }
 
@@ -1213,16 +1236,20 @@ func (s *SessionService) applyUserModelPreferences(ctx context.Context, root *cp
 // When the registry is NOT wired (tests, legacy bootstrap), behavior exactly
 // matches the pre-registry resolveModelForUser helper.
 func (s *SessionService) resolveModelWithGate(ctx context.Context, rec *persist.UserRecord, role string) string {
+	// Back-compat single-call shim for the test suite. Builds a fresh cache
+	// so legacy callers see pre-REQ-FIX-011 behaviour exactly.
+	return s.resolveModelWithGateCached(ctx, rec, role, newResolveCache())
+}
+
+func (s *SessionService) resolveModelWithGateCached(ctx context.Context, rec *persist.UserRecord, role string, cache *resolveCache) string {
 	if s.modelRegistry == nil {
-		// Legacy path. Parity with pre-registry behavior is what the existing
-		// session_service_model_prefs_test.go asserts — don't touch.
 		return resolveModelForUser(rec, role)
 	}
 
 	// Step 1 — per-role override
 	if rec != nil && role != "" {
 		if m, ok := rec.ModelOverrides[role]; ok && m != "" {
-			if s.validateInvokable(ctx, m, "user override", role) {
+			if s.validateInvokableCached(ctx, m, "user override", role, cache) {
 				return m
 			}
 		}
@@ -1230,48 +1257,65 @@ func (s *SessionService) resolveModelWithGate(ctx context.Context, rec *persist.
 
 	// Step 2 — global preferred
 	if rec != nil && rec.PreferredModel != "" {
-		if s.validateInvokable(ctx, rec.PreferredModel, "user preferred", role) {
+		if s.validateInvokableCached(ctx, rec.PreferredModel, "user preferred", role, cache) {
 			return rec.PreferredModel
 		}
 	}
 
 	// Step 3 — role default from registry
 	if role != "" {
-		if roleID, err := s.modelRegistry.GetRoleDefault(ctx, role); err == nil && roleID != "" {
-			if s.validateInvokable(ctx, roleID, "role default", role) {
-				return roleID
+		roleID, ok := cache.roleDefault[role]
+		if !ok {
+			if id, err := s.modelRegistry.GetRoleDefault(ctx, role); err == nil {
+				roleID = id
 			}
+			cache.roleDefault[role] = roleID
+		}
+		if roleID != "" && s.validateInvokableCached(ctx, roleID, "role default", role, cache) {
+			return roleID
 		}
 	}
 
 	// Step 4 — product default
-	def, err := s.modelRegistry.GetProductDefault(ctx)
-	if err != nil {
-		// Infrastructure failure — keep the session running on the hardcoded
-		// constant. Frontier case; the schema guarantees the row exists.
+	if !cache.productDone {
+		cache.productDefault, cache.productErr = s.modelRegistry.GetProductDefault(ctx)
+		cache.productDone = true
+	}
+	if cache.productErr != nil {
 		dm := s.defaultModel
 		if dm == "" {
 			dm = fallbackDefaultModel
 		}
 		s.logger.Error("model registry product default unreachable; using compile-time constant",
 			"role", role,
-			"err", err,
+			"err", cache.productErr,
 			"fallback_model", dm,
 		)
 		return dm
 	}
-	return def.RegistryID
+	return cache.productDefault.RegistryID
 }
 
 // validateInvokable returns true when the candidate passes REQ-GATE-001.
 // A false return means the caller should try the next level of the cascade;
 // a WARN has already been logged.
 func (s *SessionService) validateInvokable(ctx context.Context, candidate, source, role string) bool {
+	return s.validateInvokableCached(ctx, candidate, source, role, newResolveCache())
+}
+
+// validateInvokableCached is the memoised variant. The cache is shared
+// across every transition in one applyUserModelPreferences pass so
+// repeated candidates cost at most one registry hit (REQ-FIX-011).
+func (s *SessionService) validateInvokableCached(ctx context.Context, candidate, source, role string, cache *resolveCache) bool {
 	if s.modelRegistry == nil {
 		return true
 	}
+	if ok, cached := cache.invokable[candidate]; cached {
+		return ok
+	}
 	_, err := s.modelRegistry.GetInvokable(ctx, candidate)
 	if err == nil {
+		cache.invokable[candidate] = true
 		return true
 	}
 	var reason string
@@ -1297,6 +1341,7 @@ func (s *SessionService) validateInvokable(ctx context.Context, candidate, sourc
 		"candidate", candidate,
 		"reason", reason,
 	)
+	cache.invokable[candidate] = false
 	return false
 }
 

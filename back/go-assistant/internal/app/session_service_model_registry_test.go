@@ -46,8 +46,8 @@ func (s *stubRegistry) GetProductDefault(context.Context) (*cpn.ModelRegistryEnt
 func (s *stubRegistry) ListInvokable(context.Context) ([]*cpn.ModelRegistryEntry, error) {
 	return nil, nil
 }
-func (s *stubRegistry) ListAll(context.Context, cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, error) {
-	return nil, nil
+func (s *stubRegistry) ListAll(context.Context, cpn.ModelListFilter) ([]*cpn.ModelRegistryEntry, int, error) {
+	return nil, 0, nil
 }
 func (s *stubRegistry) Insert(context.Context, *cpn.ModelRegistryEntry) error {
 	return nil
@@ -221,5 +221,65 @@ func TestResolveModelWithGate_LegacyPath(t *testing.T) {
 	got := s.resolveModelWithGate(context.Background(), rec, "classifier")
 	if got != "legacy/model" {
 		t.Fatalf("legacy path returned %q, want legacy/model (no gate)", got)
+	}
+}
+
+// countingRegistry wraps stubRegistry and counts the methods that
+// resolveModelWithGateCached touches. Used to prove REQ-FIX-011's cache.
+type countingRegistry struct {
+	stubRegistry
+	getInvokableCalls   int
+	getRoleDefaultCalls int
+	getProductCalls     int
+}
+
+func (c *countingRegistry) GetInvokable(ctx context.Context, id string) (*cpn.ModelRegistryEntry, error) {
+	c.getInvokableCalls++
+	return c.stubRegistry.GetInvokable(ctx, id)
+}
+func (c *countingRegistry) GetRoleDefault(ctx context.Context, role string) (string, error) {
+	c.getRoleDefaultCalls++
+	return c.stubRegistry.GetRoleDefault(ctx, role)
+}
+func (c *countingRegistry) GetProductDefault(ctx context.Context) (*cpn.ModelRegistryEntry, error) {
+	c.getProductCalls++
+	return c.stubRegistry.GetProductDefault(ctx)
+}
+
+// TestResolveModelWithGate_CachesAcrossCalls covers REQ-FIX-011 (AC-011):
+// repeated resolution for the same (candidate, role) tuple in one session
+// build must hit the registry at most once — not once per transition.
+func TestResolveModelWithGate_CachesAcrossCalls(t *testing.T) {
+	logger, _ := newJSONLogger()
+	reg := &countingRegistry{
+		stubRegistry: stubRegistry{
+			invokable: map[string]*cpn.ModelRegistryEntry{
+				"anthropic/claude-haiku-4-5": invokableEntry("anthropic/claude-haiku-4-5"),
+				"anthropic/claude-opus-4-6":  invokableEntry("anthropic/claude-opus-4-6"),
+			},
+			roleDefaults:   map[string]string{"reasoning": "anthropic/claude-opus-4-6"},
+			productDefault: invokableEntry("anthropic/claude-haiku-4-5"),
+		},
+	}
+	s := &SessionService{logger: logger, modelRegistry: reg}
+	rec := &persist.UserRecord{PreferredModel: "anthropic/claude-haiku-4-5"}
+
+	cache := newResolveCache()
+	// Simulate 8 transitions across 2 roles — classic worker topology shape.
+	for range 8 {
+		_ = s.resolveModelWithGateCached(context.Background(), rec, "classifier", cache)
+		_ = s.resolveModelWithGateCached(context.Background(), rec, "reasoning", cache)
+	}
+
+	// Preferred candidate "claude-haiku" must resolve via cache after the
+	// first lookup; role default "reasoning" pulls "claude-opus" once more.
+	if reg.getInvokableCalls > 2 {
+		t.Fatalf("GetInvokable called %d times, want <= 2 (cache miss once per unique candidate)", reg.getInvokableCalls)
+	}
+	if reg.getRoleDefaultCalls > 1 {
+		t.Fatalf("GetRoleDefault called %d times, want <= 1 per unique role with hits cached", reg.getRoleDefaultCalls)
+	}
+	if reg.getProductCalls != 0 {
+		t.Fatalf("GetProductDefault called %d times, want 0 (preferred resolved first)", reg.getProductCalls)
 	}
 }
