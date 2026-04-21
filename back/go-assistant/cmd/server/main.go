@@ -64,6 +64,12 @@ func main() {
 		os.Exit(1)
 	}
 	toolReg := tools.NewRegistry(tools.WithLexicon(lex))
+	// Plumb the lexicon through to SessionService so the brae-awakens
+	// bootstrap prompt gets the deterministic 32-entry excerpt + few-shot
+	// anchors (spec-architecture-brae-awakening-toolbox-extension.md
+	// REQ-002, AC-003). Must be appended BEFORE the awakening factory wires
+	// up so Deps.Lexicon flows end-to-end.
+	serviceOpts = append(serviceOpts, app.WithLexicon(lex))
 	var configProvider *config.Provider
 
 	// ── GAP-4 Safe primitive catalogue ──────────────────────────────────
@@ -204,6 +210,9 @@ func main() {
 			// registry at session-creation time. Falls back to product default
 			// with a WARN log when the gate fails (REQ-OBS-004).
 			app.WithModelRegistry(store.ModelRegistry()),
+			// Spec awakening-toolbox-extension REQ-006/007: surface the
+			// toolbox aggregate to the personality injector on turn ≥ 2.
+			app.WithToolboxLister(toolReg),
 		)
 	}
 

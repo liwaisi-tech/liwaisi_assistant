@@ -1,5 +1,13 @@
 package awakens
 
+import (
+	"sort"
+	"strings"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
+)
+
 // SystemPromptPlan is the first-turn awakening directive handed to the LLM.
 // Per spec-architecture-brae-awakening-probe-fanout.md §3 REQ-001/REQ-009,
 // the LLM MUST emit an AwakeningProbePlan (JSON) enumerating the binaries it
@@ -148,3 +156,112 @@ func SelectSystemPrompt(role string) string {
 // their Provenance.PromptDigest. It lets operators trace a registered tool
 // back to the awakening flow.
 const PromptDigestMarker = "awakens/v0.1"
+
+// lexiconExcerptCap is the hard cap on the rendered LEXICON section
+// (spec-architecture-brae-awakening-toolbox-extension.md CON-001, 1.5 KiB).
+// Includes everything from the "LEXICON (" header through the final newline
+// of the KIND/DOMAIN listings. Anything beyond the cap is truncated from the
+// end of the listing (tags continue to be deterministically ordered so replays
+// remain byte-identical — REQ-012 / AC-012).
+const lexiconExcerptCap = 1536
+
+// lexiconTopN is the deterministic cap per spec §3 REQ-002 / §3 CON-001:
+// the 32 highest-priority entries from the lexicon.
+const lexiconTopN = 32
+
+// tagInstructions is the tagging header embedded in BuildSystemPromptPlan.
+// It is deliberately verbatim §4.2 of the spec so the LLM sees the same
+// wording the acceptance tests scan for (AC-003).
+const tagInstructions = `You are also responsible for tagging each tool you register.
+For every entry of tools_to_register, set:
+  - toolbox: one of system|developer|web|image|pdf|data|general
+  - hashtags: 2–5 short tokens from the controlled lexicon below.
+
+Always include AT LEAST one kind tag and one domain tag. Prefer fewer,
+sharper tags over many fuzzy ones.`
+
+// fewShotExamples reproduces the anchors in spec §4.2 verbatim. Keeping
+// them inside a const (rather than interpolating) is intentional — the
+// string is a stable artefact the audit pipeline fingerprints.
+const fewShotExamples = `Examples (few-shot anchors):
+  { "name": "pdf-to-text", "basis": "pdftotext",
+    "toolbox": "pdf",  "hashtags": ["tools","pdf","read","transform"] }
+  { "name": "curl-fetch", "basis": "curl",
+    "toolbox": "web",  "hashtags": ["tools","network","read","web"] }
+  { "name": "sqlite-query", "basis": "sqlite3",
+    "toolbox": "data", "hashtags": ["tools","data","read","query","sql"] }`
+
+// BuildSystemPromptPlan renders the awakening plan prompt with a
+// deterministic 32-entry lexicon excerpt and few-shot hashtag examples
+// appended to the base SystemPromptPlan skeleton (spec §3 REQ-002, §5 AC-003).
+//
+// The excerpt section is sourced from tools.SelectTopTags(lex, 32, nil) —
+// curation-driven at v0.1 with no runtime stats — so two calls with the
+// same lexicon produce byte-for-byte identical strings (REQ-012, AC-012).
+// The excerpt is capped at 1.5 KiB (CON-001); if rendering overflows, the
+// tail of the KIND/DOMAIN listings is truncated deterministically.
+//
+// When lex is nil, the function returns SystemPromptPlan verbatim for
+// backwards-compatibility with call sites that pre-date toolbox extension.
+func BuildSystemPromptPlan(lex cpn.Lexicon) string {
+	if lex == nil {
+		return SystemPromptPlan
+	}
+	excerpt := renderLexiconExcerpt(lex)
+	var b strings.Builder
+	b.Grow(len(SystemPromptPlan) + len(tagInstructions) + len(fewShotExamples) + len(excerpt) + 32)
+	b.WriteString(SystemPromptPlan)
+	b.WriteString("\n\n")
+	b.WriteString(tagInstructions)
+	b.WriteString("\n\n")
+	b.WriteString(excerpt)
+	b.WriteString("\n")
+	b.WriteString(fewShotExamples)
+	return b.String()
+}
+
+// renderLexiconExcerpt builds the `LEXICON (32 most useful entries):` block.
+// It groups tags by kind (`kind` vs `domain`), sorts each group alphabetically
+// for deterministic rendering, and truncates the rendered bytes to
+// lexiconExcerptCap. Truncation drops whole tags from the END of whichever
+// line overflows; partial tags never appear.
+func renderLexiconExcerpt(lex cpn.Lexicon) string {
+	top := tools.SelectTopTags(lex, lexiconTopN, nil)
+
+	var kinds, domains []string
+	for _, e := range top {
+		switch e.Kind {
+		case "kind":
+			kinds = append(kinds, e.Tag)
+		case "domain":
+			domains = append(domains, e.Tag)
+		}
+	}
+	// Deterministic alphabetical order inside each group so the rendered
+	// bytes never depend on SelectTopTags' priority sort for display (the
+	// priority sort still governs WHICH 32 tags are in the excerpt).
+	sort.Strings(kinds)
+	sort.Strings(domains)
+
+	const header = "LEXICON (32 most useful entries):"
+	kindLine := "  KIND tags  : " + strings.Join(kinds, ", ")
+	domainLine := "  DOMAIN tags: " + strings.Join(domains, ", ")
+
+	// Render, then enforce the 1.5 KiB cap. Truncate tags from the END of
+	// whichever line is longest first so both lines stay populated.
+	block := header + "\n" + kindLine + "\n" + domainLine
+	for len(block) > lexiconExcerptCap {
+		switch {
+		case len(domains) > 0 && (len(domains) >= len(kinds) || len(kinds) == 0):
+			domains = domains[:len(domains)-1]
+			domainLine = "  DOMAIN tags: " + strings.Join(domains, ", ")
+		case len(kinds) > 0:
+			kinds = kinds[:len(kinds)-1]
+			kindLine = "  KIND tags  : " + strings.Join(kinds, ", ")
+		default:
+			return block[:lexiconExcerptCap]
+		}
+		block = header + "\n" + kindLine + "\n" + domainLine
+	}
+	return block
+}

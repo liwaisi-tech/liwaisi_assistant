@@ -1,0 +1,85 @@
+# Golden fixture for SelectTopTags (spec-architecture-brae-awakening-toolbox-
+# extension.md REQ-002a, AC-011). The input lexicon is a deterministic subset
+# of the shipped 30 entries; synthetic tool counts / coverage / recency give
+# full coverage of the priority formula:
+#
+#   priority = 0.4*log1p(tool_count)
+#            + 0.3*coverage_jaccard
+#            + 0.2*recency_score
+#            + 0.1*human_curation_rank
+#
+# Tie-break: tag ascending. The expected_top_20 block is the byte-for-byte
+# ordering the test compares against.
+version: 1
+input:
+  # Same YAML order matters: curation_rank = (N - yaml_index) / N.
+  entries:
+    - { tag: tools,     kind: kind,   description: Generic indicator that the agent is requesting tooling. }
+    - { tag: read,      kind: kind,   description: Reads or fetches data without side effects. }
+    - { tag: write,     kind: kind,   description: Mutates state on disk, network, or external systems. }
+    - { tag: network,   kind: kind,   description: Performs network I/O. }
+    - { tag: compute,   kind: kind,   description: Performs computation without I/O. }
+    - { tag: transform, kind: kind,   description: Converts data from one shape to another. }
+    - { tag: search,    kind: kind,   description: Searches or queries a corpus for matches. }
+    - { tag: execute,   kind: kind,   description: Executes a command, binary, or script. }
+    - { tag: inspect,   kind: kind,   description: Inspects state without mutating it. }
+    - { tag: compose,   kind: kind,   description: Composes or assembles higher-level artefacts from parts. }
+    - { tag: pdf,       kind: domain, description: Operates on PDF documents. }
+    - { tag: image,     kind: domain, description: Operates on raster or vector images. }
+    - { tag: html,      kind: domain, description: Operates on HTML markup. }
+    - { tag: json,      kind: domain, description: Operates on JSON values. }
+    - { tag: git,       kind: domain, description: Interacts with git repositories. }
+    - { tag: shell,     kind: domain, description: Executes shell commands. }
+    - { tag: fs,        kind: domain, description: Operates on the local filesystem. }
+    - { tag: proc,      kind: domain, description: Operates on OS processes. }
+    - { tag: python,    kind: domain, description: Interacts with the Python runtime or ecosystem. }
+    - { tag: go,        kind: domain, description: Interacts with the Go toolchain or ecosystem. }
+
+stats:
+  # ToolCountByTag — drives the dominant term (0.4 * log1p).
+  tool_count:
+    shell: 20
+    fs: 15
+    tools: 12
+    read: 10
+    write: 8
+    pdf: 6
+    network: 5
+    git: 4
+    json: 3
+    html: 2
+  coverage:
+    shell: 0.9
+    tools: 0.8
+    read: 0.7
+    fs: 0.5
+    pdf: 0.4
+  recency:
+    shell: 1.0
+    git: 0.9
+    pdf: 0.8
+    tools: 0.5
+
+# Expected top-20 ordering (n=20). Generated and frozen by the test author;
+# any change to the formula or the input must be reflected here.
+expected_top_20:
+  - shell
+  - tools
+  - fs
+  - read
+  - pdf
+  - write
+  - git
+  - network
+  - json
+  - html
+  - compute
+  - transform
+  - search
+  - execute
+  - inspect
+  - compose
+  - image
+  - proc
+  - python
+  - go

@@ -87,6 +87,13 @@ type Deps struct {
 	// awakening surfaces a clear configuration failure instead of
 	// silently stalling.
 	Composer ComposerFunc
+	// Lexicon is the controlled-vocabulary port used by the awakening
+	// prompt builder (spec-architecture-brae-awakening-toolbox-extension.md
+	// REQ-002). When non-nil, the bootstrap LLM transition receives a
+	// prompt with an embedded 32-entry lexicon excerpt plus few-shot
+	// hashtag anchors. When nil, the legacy SystemPromptPlan constant is
+	// used — backwards-compat for callers that pre-date the extension.
+	Lexicon cpn.Lexicon
 }
 
 // TopologyFactory constructs the `brae-awakens` CPN. The factory is designed
@@ -117,8 +124,18 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 		PlaceAwakeningMessage + "-emitted": cpn.NewPlace(PlaceAwakeningMessage+"-emitted", cpn.ColorEvent, cpn.SpaceComputation),
 	}
 
+	// Resolve the awakening system prompt once per factory invocation so
+	// the seeded token + the LLM transition's SystemPrompt stay in sync.
+	// When a Lexicon is wired, the builder embeds the deterministic 32-
+	// entry excerpt and few-shot anchors; otherwise we fall back to the
+	// legacy constant for backwards-compat.
+	awakenPrompt := SystemPromptPlan
+	if deps.Lexicon != nil {
+		awakenPrompt = BuildSystemPromptPlan(deps.Lexicon)
+	}
+
 	transitions := map[string]*cpn.Transition{
-		TransitionAwakenLLMBootstrap:     newLLMBootstrapTransition(),
+		TransitionAwakenLLMBootstrap:     newLLMBootstrapTransition(awakenPrompt),
 		TransitionAwakenProbeCompose:     newProbeComposeTransition(sessionID, deps),
 		TransitionAwakenProbeInstantiate: newProbeInstantiateTransition(),
 		TransitionAwakenReport:           newReportTransition(),
@@ -138,30 +155,42 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 	)
 	c.ContextWindowSize = 8 // short awakening dialogue
 
-	c.SeedFunc = seedAwakenTrigger
-	seedAwakenTrigger(c)
+	seed := makeAwakenSeeder(awakenPrompt)
+	c.SeedFunc = seed
+	seed(c)
 	return c
 }
 
-// seedAwakenTrigger places a single start-token on p-awaken-trigger and the
-// system-prompt token on p-awaken-system-prompt so the bootstrap LLM
-// transition fires immediately on Run(). No other places are seeded —
-// the plan → compose → instantiate pipeline produces the downstream tokens.
+// makeAwakenSeeder returns the seed function that places a single start-
+// token on p-awaken-trigger and the system-prompt token on
+// p-awaken-system-prompt so the bootstrap LLM transition fires immediately
+// on Run(). The prompt string is closed over at factory time so a
+// Lexicon-aware prompt (REQ-002) survives the re-seed that CPN.Run() does
+// when it rewinds to the initial marking.
+func makeAwakenSeeder(prompt string) func(*cpn.CPN) {
+	return func(c *cpn.CPN) {
+		if trigger, ok := c.Places[PlaceAwakenTrigger]; ok {
+			_ = trigger.Deposit(&cpn.Token{
+				Color:   cpn.ColorString,
+				Space:   cpn.SpaceComputation,
+				Payload: "awaken",
+			})
+		}
+		if p, ok := c.Places[PlaceAwakenSystemPrompt]; ok {
+			_ = p.Deposit(&cpn.Token{
+				Color:   cpn.ColorString,
+				Space:   cpn.SpaceComputation,
+				Payload: prompt,
+			})
+		}
+	}
+}
+
+// seedAwakenTrigger is the legacy exported seeder retained for tests and
+// callers that expect the pre-Lexicon behaviour. New code should route
+// through TopologyFactory, which composes the Lexicon-aware prompt.
 func seedAwakenTrigger(c *cpn.CPN) {
-	if trigger, ok := c.Places[PlaceAwakenTrigger]; ok {
-		_ = trigger.Deposit(&cpn.Token{
-			Color:   cpn.ColorString,
-			Space:   cpn.SpaceComputation,
-			Payload: "awaken",
-		})
-	}
-	if prompt, ok := c.Places[PlaceAwakenSystemPrompt]; ok {
-		_ = prompt.Deposit(&cpn.Token{
-			Color:   cpn.ColorString,
-			Space:   cpn.SpaceComputation,
-			Payload: SystemPromptPlan,
-		})
-	}
+	makeAwakenSeeder(SystemPromptPlan)(c)
 }
 
 // newLLMBootstrapTransition is the first-turn LLM transition. Its inputs are
@@ -176,14 +205,17 @@ func seedAwakenTrigger(c *cpn.CPN) {
 // RequireJSON is enabled: the plan-emitting system prompt no longer
 // references tools, so the OpenRouter/Gemini restriction (can't combine
 // response_format=json_object with tools[]) no longer applies.
-func newLLMBootstrapTransition() *cpn.Transition {
+func newLLMBootstrapTransition(systemPrompt string) *cpn.Transition {
+	if systemPrompt == "" {
+		systemPrompt = SystemPromptPlan
+	}
 	t := cpn.NewTransition(
 		TransitionAwakenLLMBootstrap,
 		cpn.NodeKindLLM,
 		[]string{PlaceAwakenTrigger, PlaceAwakenSystemPrompt},
 		[]string{PlaceAwakenPlan},
 	)
-	t.SystemPrompt = SystemPromptPlan
+	t.SystemPrompt = systemPrompt
 	t.LLMConfig = &cpn.LLMConfig{
 		Role:        "awakening-plan",
 		MaxTokens:   2048,

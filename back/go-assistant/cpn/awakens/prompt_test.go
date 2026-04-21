@@ -1,9 +1,12 @@
 package awakens
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
 
 // TestPromptPlan_ContainsExample asserts the worked example is embedded in
@@ -134,5 +137,101 @@ func TestSelectSystemPrompt_Routes(t *testing.T) {
 			t.Errorf("SelectSystemPrompt(%q): got prompt of length %d, want length %d",
 				tc.role, len(got), len(tc.want))
 		}
+	}
+}
+
+// TestBuildSystemPromptPlan_EmbedsLexicon (AC-003) asserts the builder
+// emits the LEXICON header plus at least one kind and one domain tag.
+func TestBuildSystemPromptPlan_EmbedsLexicon(t *testing.T) {
+	t.Parallel()
+	lex, err := tools.LoadLexicon(context.Background())
+	if err != nil {
+		t.Fatalf("LoadLexicon: %v", err)
+	}
+	out := BuildSystemPromptPlan(lex)
+
+	if !strings.Contains(out, "LEXICON (32 most useful entries):") {
+		t.Error("builder output missing LEXICON header (AC-003)")
+	}
+	if !strings.Contains(out, "KIND tags") {
+		t.Error("builder output missing KIND tags listing")
+	}
+	if !strings.Contains(out, "DOMAIN tags") {
+		t.Error("builder output missing DOMAIN tags listing")
+	}
+	if !strings.Contains(out, "AT LEAST one kind tag") {
+		t.Error("builder output missing hashtag instruction header (spec §4.2)")
+	}
+	// Sanity: the base SystemPromptPlan skeleton MUST still be present.
+	if !strings.Contains(out, "brae-awakens") {
+		t.Error("builder output lost the SystemPromptPlan skeleton")
+	}
+}
+
+// TestBuildSystemPromptPlan_EmbedsFewShot asserts the spec §4.2 few-shot
+// anchors are rendered verbatim.
+func TestBuildSystemPromptPlan_EmbedsFewShot(t *testing.T) {
+	t.Parallel()
+	lex, err := tools.LoadLexicon(context.Background())
+	if err != nil {
+		t.Fatalf("LoadLexicon: %v", err)
+	}
+	out := BuildSystemPromptPlan(lex)
+
+	for _, anchor := range []string{"pdf-to-text", "curl-fetch", "sqlite-query"} {
+		if !strings.Contains(out, anchor) {
+			t.Errorf("few-shot anchor %q missing from builder output", anchor)
+		}
+	}
+}
+
+// TestBuildSystemPromptPlan_NilLex asserts backwards-compat: nil lexicon
+// returns the legacy SystemPromptPlan unchanged.
+func TestBuildSystemPromptPlan_NilLex(t *testing.T) {
+	t.Parallel()
+	if got := BuildSystemPromptPlan(nil); got != SystemPromptPlan {
+		t.Errorf("nil lex should return SystemPromptPlan verbatim (len got=%d want=%d)",
+			len(got), len(SystemPromptPlan))
+	}
+}
+
+// TestBuildSystemPromptPlan_Deterministic (AC-012) asserts two calls
+// against the same lexicon produce byte-identical output.
+func TestBuildSystemPromptPlan_Deterministic(t *testing.T) {
+	t.Parallel()
+	lex, err := tools.LoadLexicon(context.Background())
+	if err != nil {
+		t.Fatalf("LoadLexicon: %v", err)
+	}
+	a := BuildSystemPromptPlan(lex)
+	b := BuildSystemPromptPlan(lex)
+	if a != b {
+		t.Fatalf("non-deterministic output: a=%d bytes b=%d bytes (first diff search)",
+			len(a), len(b))
+	}
+}
+
+// TestBuildSystemPromptPlan_UnderBudget (CON-001) asserts the rendered
+// LEXICON section stays within the 1.5 KiB cap.
+func TestBuildSystemPromptPlan_UnderBudget(t *testing.T) {
+	t.Parallel()
+	lex, err := tools.LoadLexicon(context.Background())
+	if err != nil {
+		t.Fatalf("LoadLexicon: %v", err)
+	}
+	out := BuildSystemPromptPlan(lex)
+
+	start := strings.Index(out, "LEXICON (")
+	if start == -1 {
+		t.Fatal("LEXICON section not found")
+	}
+	// The section ends where the few-shot block begins.
+	end := strings.Index(out, "Examples (few-shot anchors):")
+	if end == -1 || end <= start {
+		t.Fatalf("could not locate few-shot boundary (start=%d end=%d)", start, end)
+	}
+	section := out[start:end]
+	if len(section) > 1536 {
+		t.Errorf("lexicon section %d bytes exceeds 1.5 KiB CON-001 cap", len(section))
 	}
 }

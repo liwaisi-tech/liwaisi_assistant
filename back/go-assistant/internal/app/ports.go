@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
@@ -23,4 +25,15 @@ type SessionToolRegistry interface {
 	// Resolve returns the live ToolEntry for a qualified name or false when
 	// the name is not registered.
 	Resolve(qualifiedName string) (*tools.ToolEntry, bool)
+}
+
+// ToolboxLister is the aggregate read-only view over registered tools
+// grouped by toolbox, consumed by the personality-catalogue injector on
+// turn ≥ 2 (spec-architecture-brae-awakening-toolbox-extension.md
+// REQ-006/REQ-007). Mirrors the driving-side port of the same name;
+// duplicated here so the app layer has a local interface and the
+// driving adapter does not import app. The concrete implementation is
+// *cpn/tools.Registry.
+type ToolboxLister interface {
+	Toolboxes(ctx context.Context) []tools.ToolboxManifest
 }

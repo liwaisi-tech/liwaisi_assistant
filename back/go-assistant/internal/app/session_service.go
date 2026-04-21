@@ -17,6 +17,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
 
 // fallbackDefaultModel is the compile-time safety net used only when the
@@ -119,6 +120,20 @@ type SessionService struct {
 	// than silently stalling. See spec-architecture-brae-awakening-probe-
 	// fanout.md §4.3–§4.4.
 	awakeningComposer awakens.ComposerFunc
+
+	// toolboxLister surfaces the toolbox aggregate for the turn ≥ 2
+	// "## Environment awareness" block (spec-architecture-brae-awakening-
+	// toolbox-extension.md REQ-006 / REQ-007). When nil OR the aggregate
+	// is empty the legacy EnvironmentAwarenessBlock is rendered instead
+	// (REQ-010 / AC-006 fallback preservation).
+	toolboxLister ToolboxLister
+
+	// lexicon is the controlled-vocabulary port the awakening prompt
+	// builder consumes (spec-architecture-brae-awakening-toolbox-
+	// extension.md REQ-002, AC-003). Optional: nil preserves the legacy
+	// SystemPromptPlan constant so tests and call sites pre-dating the
+	// extension keep working unchanged.
+	lexicon cpn.Lexicon
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -223,6 +238,21 @@ func WithTopologyHITLRouter(router cpn.TopologyHITLRouter) SessionServiceOption 
 // every created CPN inherits it so MutateTopology calls are persisted.
 func WithMutationLog(log cpn.MutationAuditLog) SessionServiceOption {
 	return func(s *SessionService) { s.mutationLog = log }
+}
+
+// WithToolboxLister wires the toolbox aggregate used by the personality
+// catalogue on turn ≥ 2 (spec-architecture-brae-awakening-toolbox-
+// extension.md REQ-006/007). When unset, the legacy
+// EnvironmentAwarenessBlock render path is preserved.
+func WithToolboxLister(l ToolboxLister) SessionServiceOption {
+	return func(s *SessionService) { s.toolboxLister = l }
+}
+
+// WithLexicon wires the controlled-vocabulary port consumed by the awakening
+// prompt builder (spec-architecture-brae-awakening-toolbox-extension.md
+// REQ-002, AC-003). Nil keeps the legacy SystemPromptPlan constant.
+func WithLexicon(lex cpn.Lexicon) SessionServiceOption {
+	return func(s *SessionService) { s.lexicon = lex }
 }
 
 // NewSessionService creates a SessionService with the given dependencies.
@@ -2100,6 +2130,12 @@ func errorsIsHostSnapshotNotFound(err error) bool {
 // to inject into later-turn system prompts (REQ-007). Reads the latest
 // host_capability_snapshots row for the resolved host_id; returns "" on
 // any error so injection degrades silently.
+//
+// When a ToolboxLister is wired AND the registry returns ≥ 1 toolbox, the
+// block is rendered by awakens.BuildToolboxCatalogue so it carries the
+// `### Toolboxes` subsection (spec-architecture-brae-awakening-toolbox-
+// extension.md REQ-006/007, AC-004). Otherwise the legacy block path is
+// preserved (REQ-010 / AC-006 fallback).
 func (s *SessionService) environmentAwarenessBlock(ctx context.Context) string {
 	if s.hostCapabilityRepo == nil {
 		return ""
@@ -2109,5 +2145,102 @@ func (s *SessionService) environmentAwarenessBlock(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
-	return awakens.EnvironmentAwarenessBlock(snap)
+
+	// Fallback path: no lister wired → render the legacy block.
+	if s.toolboxLister == nil {
+		return awakens.EnvironmentAwarenessBlock(snap)
+	}
+
+	boxes := s.toolboxLister.Toolboxes(ctx)
+	if len(boxes) == 0 {
+		// Empty aggregate → preserve backwards-compat rendering.
+		return awakens.EnvironmentAwarenessBlock(snap)
+	}
+
+	osLine, shellLine, present, absent := splitSnapshotForCatalogue(snap)
+	// Lexicon excerpt feeds the personality digest (REQ-009) so the digest
+	// changes when the lexicon does. When no lexicon is wired, we pass nil
+	// and the digest simply excludes lexicon bytes.
+	var lexiconExcerpt []byte
+	if s.lexicon != nil {
+		lexiconExcerpt = renderLexiconExcerptBytes(s.lexicon)
+	}
+	const catalogueCap = 4096 // CON-002
+	block, _, _, buildErr := awakens.BuildToolboxCatalogue(
+		osLine, shellLine, present, absent, boxes, lexiconExcerpt, catalogueCap,
+	)
+	if buildErr != nil || block == "" {
+		return awakens.EnvironmentAwarenessBlock(snap)
+	}
+	return block
+}
+
+// renderLexiconExcerptBytes serialises the top-32 lexicon tags into a stable
+// byte sequence so the personality digest (REQ-009) reflects lexicon drift.
+// Output format is "<tag>:<kind>\n" per entry — implementation-internal; only
+// consumed by sha256, never surfaced to the agent.
+func renderLexiconExcerptBytes(lex cpn.Lexicon) []byte {
+	entries := tools.SelectTopTags(lex, 32, nil)
+	if len(entries) == 0 {
+		return nil
+	}
+	var b []byte
+	for _, e := range entries {
+		b = append(b, e.Tag...)
+		b = append(b, ':')
+		b = append(b, e.Kind...)
+		b = append(b, '\n')
+	}
+	return b
+}
+
+// splitSnapshotForCatalogue destructures the stored host-capability
+// snapshot into the inputs BuildToolboxCatalogue expects (os/shell
+// sentences, sorted present/absent binary lists). Returns zero values
+// for an empty snapshot so the caller can short-circuit.
+func splitSnapshotForCatalogue(snap persist.HostCapabilitySnapshot) (osLine, shellLine string, present, absent []string) {
+	if snap.HostID == "" && snap.Identity.User == "" && snap.Kernel.OS == "" {
+		return "", "", nil, nil
+	}
+	osName := snap.Kernel.OS
+	if v, ok := snap.Kernel.OSRelease["NAME"]; ok && v != "" {
+		osName = v
+	}
+	osLine = "OS: " + osName
+	if ver := snap.Kernel.OSRelease["VERSION_ID"]; ver != "" {
+		osLine += " " + ver
+	}
+	if snap.Kernel.Arch != "" {
+		osLine += " (" + snap.Kernel.Arch + ")"
+	}
+	if snap.Kernel.Kernel != "" {
+		osLine += ", kernel " + snap.Kernel.Kernel
+	}
+	osLine += "."
+
+	if snap.Identity.Shell != "" {
+		shellLine = "Shell: " + snap.Identity.Shell + "."
+	}
+
+	for _, bp := range snap.Binaries {
+		if bp.Present {
+			present = append(present, bp.Name)
+		} else {
+			absent = append(absent, bp.Name)
+		}
+	}
+	sortStringsAsc(present)
+	sortStringsAsc(absent)
+	return osLine, shellLine, present, absent
+}
+
+// sortStringsAsc is an inline insertion sort for the tiny binary-name
+// lists (≤ ~40 items) produced by host discovery, avoiding a dedicated
+// "sort" import just for two call sites.
+func sortStringsAsc(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
 }

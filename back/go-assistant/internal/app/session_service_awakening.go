@@ -112,6 +112,10 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		// rather than stalling. The Composer Engineer will adapt
 		// fanout.Compose into a ComposerFunc closure here.
 		Composer: s.awakeningComposer,
+		// Lexicon is wired via SessionService.lexicon (optional). When non-
+		// nil, the awakening prompt builder embeds the 32-entry excerpt
+		// + few-shot anchors per spec REQ-002 / AC-003.
+		Lexicon: s.lexicon,
 	}
 	if s.hostRuntime != nil {
 		deps.HostAdapter = s.hostRuntime.Adapter

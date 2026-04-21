@@ -67,10 +67,23 @@ type AwakeningCapability struct {
 }
 
 // AwakeningToolRegister is one tool-forge registration request.
+//
+// Toolbox and Hashtags are additive per spec-architecture-brae-awakening-
+// toolbox-extension.md REQ-001. Both are optional — empty values are valid
+// (REQ-004); invalid hashtag tokens are silently dropped at registration
+// time, not rejected here (REQ-007 cross-ref in the taxonomy spec).
 type AwakeningToolRegister struct {
-	Name  string `json:"name"`
-	Basis string `json:"basis"`
+	Name     string   `json:"name"`
+	Basis    string   `json:"basis"`
+	Toolbox  string   `json:"toolbox,omitempty"`
+	Hashtags []string `json:"hashtags,omitempty"`
 }
+
+// MaxHashtagsPerAwakeningTool caps hashtags per registered tool per REQ-011
+// (spec-architecture-brae-awakening-toolbox-extension.md). When the LLM emits
+// more, the normaliser deterministically keeps the first 6 after ascending
+// sort and emits one personality.tooltags.truncated event per affected tool.
+const MaxHashtagsPerAwakeningTool = 6
 
 // AwakeningProbe is a single probe_trace entry.
 type AwakeningProbe struct {
