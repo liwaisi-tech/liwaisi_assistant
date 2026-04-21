@@ -517,32 +517,62 @@ func (r *ModelRegistryRepository) Delete(ctx context.Context, registryID string)
 	if registryID == "" {
 		return cpn.ErrInvalidInput
 	}
-	// Service-layer guard: check the singleton pointer up-front so the caller
-	// gets a typed error instead of a foreign-key violation string.
-	var isDefault bool
-	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS (
-			SELECT 1 FROM registry_config rc
-			JOIN models m ON m.id = rc.product_default_model_id
-			WHERE rc.id = 1 AND m.registry_id = $1
-		 )`, registryID,
-	).Scan(&isDefault)
+	// Wrap default-check + DELETE in a transaction with FOR UPDATE on the
+	// target row so a concurrent SetProductDefault can't swap the pointer
+	// between our check and our delete (REQ-FIX-006 / AC-006).
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("postgres model registry delete begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback best-effort on deferred cleanup
+
+	var id string
+	if err := tx.QueryRow(ctx,
+		`SELECT id FROM models WHERE registry_id = $1 FOR UPDATE`, registryID,
+	).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return cpn.ErrModelNotFound
+		}
+		return fmt.Errorf("postgres model registry delete lock target: %w", err)
+	}
+
+	var isDefault bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM registry_config
+			WHERE id = 1 AND product_default_model_id = $1
+		 )`, id,
+	).Scan(&isDefault); err != nil {
 		return fmt.Errorf("postgres model registry delete default check: %w", err)
 	}
 	if isDefault {
 		return cpn.ErrCannotDeleteDefault
 	}
 
-	tag, err := r.pool.Exec(ctx, `DELETE FROM models WHERE registry_id = $1`, registryID)
+	tag, err := tx.Exec(ctx, `DELETE FROM models WHERE id = $1`, id)
 	if err != nil {
-		// FK RESTRICT from model_role_defaults — the caller must rebind the
-		// affected role(s) first. Surface as a wrapped error for now; a
-		// dedicated sentinel can follow if the UX needs it.
+		// Either FK RESTRICT from model_role_defaults (typed as ErrModelInUse)
+		// or, under a lost race, FK RESTRICT from registry_config itself —
+		// treat that as ErrCannotDeleteDefault for parity with AC-006.
+		if isForeignKeyViolation(err) {
+			var pgErr *pgconn.PgError
+			_ = errors.As(err, &pgErr)
+			if pgErr != nil && pgErr.ConstraintName != "" &&
+				strings.Contains(pgErr.ConstraintName, "registry_config") {
+				return cpn.ErrCannotDeleteDefault
+			}
+			return cpn.ErrModelInUse
+		}
 		return fmt.Errorf("postgres model registry delete: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		// Row disappeared between our FOR UPDATE and the DELETE — shouldn't
+		// happen under the tx but surface the truth if it does.
 		return cpn.ErrModelNotFound
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres model registry delete commit: %w", err)
 	}
 	return nil
 }
