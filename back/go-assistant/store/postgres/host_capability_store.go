@@ -58,6 +58,21 @@ func (r *HostCapabilityRepository) SetCacheTTL(d time.Duration) {
 	r.cache = make(map[string]hostCapCacheEntry)
 }
 
+// FlushHost invalidates the in-memory cache entry for hostID so the next
+// LatestForHost re-reads from Postgres. Persisted rows are append-only
+// (REQ-011) and remain as the audit trail — this only resets the REQ-013
+// 60 s read cache, which is what admin-driven awakening-cache flush
+// (REQ-305c) needs.
+func (r *HostCapabilityRepository) FlushHost(_ context.Context, hostID string) error {
+	if hostID == "" {
+		return persist.ErrInvalidInput
+	}
+	r.cacheMu.Lock()
+	delete(r.cache, hostID)
+	r.cacheMu.Unlock()
+	return nil
+}
+
 // Save inserts a new row. The adapter ignores s.ID (the DB generates a UUID
 // via gen_random_uuid()) and stamps CapturedAt = NOW() if unset.
 func (r *HostCapabilityRepository) Save(ctx context.Context, s persist.HostCapabilitySnapshot) error {

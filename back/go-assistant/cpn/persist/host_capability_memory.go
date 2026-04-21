@@ -29,6 +29,16 @@ func (r *MemoryHostCapabilityRepository) Reset() {
 	r.byHost = make(map[string][]HostCapabilitySnapshot)
 }
 
+// FlushHost drops all snapshots for hostID so LatestForHost reports
+// ErrHostSnapshotNotFound. Implements the awakens cache-flush contract used
+// by admin-driven invalidation (REQ-305c).
+func (r *MemoryHostCapabilityRepository) FlushHost(_ context.Context, hostID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byHost, hostID)
+	return nil
+}
+
 // Save appends a snapshot under s.HostID. The caller is expected to supply an
 // ID; if empty, a timestamp-derived placeholder is used so tests don't need
 // to generate UUIDs.

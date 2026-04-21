@@ -57,3 +57,25 @@ func LookupCachedSnapshot(ctx context.Context, repo persist.HostCapabilityReposi
 	// we record the age so the caller can decide.
 	return snap, true, nil
 }
+
+// HostCapabilityCacheFlusher is an optional capability repositories may
+// implement so admins can invalidate the awakening cache for a single host
+// (REQ-305c). Repositories that do not implement it are no-ops at flush time.
+type HostCapabilityCacheFlusher interface {
+	FlushHost(ctx context.Context, hostID string) error
+}
+
+// FlushAwakeningCache invalidates any cached snapshot for hostID so the next
+// awakening run MUST re-bootstrap (REQ-305c manual admin flush). When repo
+// does not implement HostCapabilityCacheFlusher the call is a successful
+// no-op — in-process caches are the only thing a flush can target; persisted
+// rows remain as the audit trail.
+func FlushAwakeningCache(ctx context.Context, repo persist.HostCapabilityRepository, hostID string) error {
+	if repo == nil || hostID == "" {
+		return nil
+	}
+	if f, ok := repo.(HostCapabilityCacheFlusher); ok {
+		return f.FlushHost(ctx, hostID)
+	}
+	return nil
+}

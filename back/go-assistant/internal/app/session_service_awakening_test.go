@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,6 +76,116 @@ func TestRunAwakening_CacheHitShortCircuits(t *testing.T) {
 	}
 	if len(envelope.Components) == 0 {
 		t.Error("expected non-empty envelope components on cache hit")
+	}
+}
+
+// AC-004 — Given a cache hit within 24 h, When awakening fires, Then no LLM
+// call is made AND a first-turn A2UI card is still emitted (SC-03 REQ-303 /
+// REQ-304). Captures slog output to prove `awakening.cache.hit` and
+// `awakening.emitted` events both fire on the re-render path.
+func TestRunAwakening_CacheHitReRenderPath_AC004(t *testing.T) {
+	restore := stubHostIDResolver(t, "machine-ac004")
+	defer restore()
+
+	repo := persist.NewMemoryHostCapabilityRepository()
+	cached := persist.HostCapabilitySnapshot{
+		ID:         "snap-ac004",
+		HostID:     "machine-ac004",
+		CapturedAt: time.Now().Add(-2 * time.Hour),
+		Source:     awakens.SourceAwakening,
+		Kernel:     persist.HostKernel{OS: "linux", Arch: "amd64"},
+		Identity:   persist.HostIdentity{Shell: "/bin/zsh"},
+		Binaries: []persist.BinaryProbe{
+			{Name: "git", Present: true, Version: "2.42.0"},
+			{Name: "docker", Present: false},
+		},
+	}
+	if err := repo.Save(context.Background(), cached); err != nil {
+		t.Fatalf("seed repo: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	var llmCalls atomic.Int32
+	llm := &mockLLMClient{
+		completeFunc: func(_ context.Context, _ *cpn.LLMRequest) (cpn.LLMResponse, error) {
+			llmCalls.Add(1)
+			return cpn.LLMResponse{Content: "should-not-be-called"}, nil
+		},
+	}
+
+	svc := &SessionService{
+		logger:             logger,
+		hostCapabilityRepo: repo,
+		llm:                llm,
+		awakensFactory: func(string, awakens.Deps) *cpn.CPN {
+			t.Fatal("factory must not be invoked on cache hit")
+			return nil
+		},
+	}
+
+	snap, envelope, source, err := svc.runAwakening(context.Background(), "sess-ac004", "user-ac004")
+	if err != nil {
+		t.Fatalf("runAwakening: %v", err)
+	}
+	if got := llmCalls.Load(); got != 0 {
+		t.Errorf("LLM must not be called on cache hit; got %d calls", got)
+	}
+	if source != awakens.SourceAwakening {
+		t.Errorf("source = %q; want %q", source, awakens.SourceAwakening)
+	}
+	if snap.ID != "snap-ac004" {
+		t.Errorf("snapshot.ID = %q; want snap-ac004", snap.ID)
+	}
+
+	if len(envelope.Components) == 0 {
+		t.Fatal("cache hit MUST still emit a first-turn A2UI envelope (REQ-303)")
+	}
+	raw, err := envelope.Marshal()
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if !strings.Contains(string(raw), "git") {
+		t.Errorf("envelope must surface cached tool 'git'; got %s", raw)
+	}
+
+	logs := buf.String()
+	if !strings.Contains(logs, "brae.awakening.cache.hit") {
+		t.Errorf("missing awakening.cache.hit slog event (REQ-304); logs=%s", logs)
+	}
+	if !strings.Contains(logs, "brae.awakening.emitted") {
+		t.Errorf("missing awakening.emitted slog event on re-render path; logs=%s", logs)
+	}
+}
+
+// Manual flush (REQ-305c): FlushAwakeningCache wipes the repo cache so the
+// next LookupCachedSnapshot reports a miss, forcing a fresh bootstrap.
+func TestFlushAwakeningCache_ForcesMiss(t *testing.T) {
+	t.Parallel()
+	repo := persist.NewMemoryHostCapabilityRepository()
+	hostID := "machine-flush"
+	snap := persist.HostCapabilitySnapshot{
+		ID:         "snap-flush",
+		HostID:     hostID,
+		CapturedAt: time.Now(),
+		Source:     awakens.SourceAwakening,
+	}
+	if err := repo.Save(context.Background(), snap); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, fresh, err := awakens.LookupCachedSnapshot(context.Background(), repo, hostID, 0, nil); err != nil || !fresh {
+		t.Fatalf("pre-flush: want fresh cache hit; err=%v fresh=%v", err, fresh)
+	}
+
+	if err := awakens.FlushAwakeningCache(context.Background(), repo, hostID); err != nil {
+		t.Fatalf("FlushAwakeningCache: %v", err)
+	}
+
+	_, fresh, err := awakens.LookupCachedSnapshot(context.Background(), repo, hostID, 0, nil)
+	if !errors.Is(err, awakens.ErrCacheMiss) {
+		t.Fatalf("post-flush: want ErrCacheMiss; got err=%v fresh=%v", err, fresh)
 	}
 }
 
