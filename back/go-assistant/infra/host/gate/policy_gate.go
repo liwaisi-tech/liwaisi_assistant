@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,7 +67,12 @@ type SandboxCapability interface {
 
 // staticSandboxCapability is a no-dependency implementation that probes
 // $PATH lazily on first query and caches the answer.
+//
+// Safe for concurrent use: PolicyHostGate.Check is documented as unbounded
+// concurrent (see struct doc); the cache MUST NOT race. Reads dominate once
+// the set of runtimes is warm, so an RWMutex is the right trade-off.
 type staticSandboxCapability struct {
+	mu    sync.RWMutex
 	cache map[string]bool
 }
 
@@ -80,12 +86,19 @@ func (s *staticSandboxCapability) Available(runtime string) bool {
 	if runtime == "" {
 		return false
 	}
-	if v, ok := s.cache[runtime]; ok {
+	s.mu.RLock()
+	v, ok := s.cache[runtime]
+	s.mu.RUnlock()
+	if ok {
 		return v
 	}
+	// Probe outside the lock — exec.LookPath hits the filesystem and is
+	// safe to repeat if two callers race on the same unseen runtime.
 	_, err := exec.LookPath(runtime)
 	avail := err == nil
+	s.mu.Lock()
 	s.cache[runtime] = avail
+	s.mu.Unlock()
 	return avail
 }
 
