@@ -193,6 +193,14 @@ func (e *Emitter) SLOBreached(ctx context.Context, stage string, latency, slo ti
 	})
 }
 
+// Mode → awakening.mode.{fanout,legacy} (SC-16). Emitted once per run so
+// operators can see which path ran when BRAE_AWAKENING_MODE is set.
+func (e *Emitter) Mode(ctx context.Context, mode string) {
+	e.emit(ctx, "mode."+mode, []slog.Attr{
+		slog.String("mode", mode),
+	})
+}
+
 // CacheHit → awakening.cache.hit (needed by SC-03).
 func (e *Emitter) CacheHit(ctx context.Context, age time.Duration) {
 	e.emit(ctx, "cache.hit", []slog.Attr{

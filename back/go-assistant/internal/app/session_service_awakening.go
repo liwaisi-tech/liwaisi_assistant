@@ -114,6 +114,16 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: LLM client not configured")
 	}
 
+	// SC-16: BRAE_AWAKENING_MODE selects between the default fanout topology
+	// and the legacy single-turn quarantine escape hatch. Emit the mode event
+	// before any downstream wiring so operators see which path ran even when
+	// subsequent stages fail.
+	awakeningMode := awakens.ReadAwakeningMode(s.logger)
+	emitter.Mode(ctx, string(awakeningMode))
+	if awakeningMode == awakens.ModeLegacy {
+		return s.runAwakeningLegacy(ctx, sessionID, hostID, emitter)
+	}
+
 	// SC-10 / SEC-004: every probe subprocess must run through bwrap or
 	// firejail. Detect up front so a missing wrapper fails fast with a
 	// stable error_class instead of 16 parallel probe-level failures.
@@ -211,6 +221,85 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		return zero, awakens.A2UIMessage{}, "", err
 	}
 	s.logger.Info("awakening: complete",
+		slog.String("session_id", sessionID),
+		slog.String("host_id", hostID),
+		slog.String("source", awakens.SourceAwakening),
+	)
+	return snap, envelope, awakens.SourceAwakening, nil
+}
+
+// runAwakeningLegacy is the SC-16 quarantine escape hatch: a minimal single-
+// turn LLM path that projects the same AwakeningReport shape without
+// probe-fanout. Reuses the SC-15 FallbackChain and SC-08 emitter. No sandbox
+// detection — legacy has no probes, so SC-10's bwrap/firejail requirement
+// does not apply.
+func (s *SessionService) runAwakeningLegacy(ctx context.Context, sessionID, hostID string, emitter *awakens.Emitter) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
+	var zero persist.HostCapabilitySnapshot
+
+	deps := awakens.Deps{
+		Repository: s.hostCapabilityRepo,
+		HostID:     hostID,
+		Source:     awakens.SourceAwakening,
+		Clock:      awakens.SystemClock,
+		Lexicon:    s.lexicon,
+		Emitter:    emitter,
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, awakeningDeadline)
+	defer cancel()
+	runCtx = awakens.WithToolRegistry(runCtx, s.toolRegistry)
+
+	if s.awakeningMode != nil {
+		s.awakeningMode.Begin(sessionID)
+		defer s.awakeningMode.End(sessionID)
+	}
+
+	var root *cpn.CPN
+	chain := awakens.DefaultFallbackChain()
+	runErr := chain.Run(runCtx, emitter, func(attemptCtx context.Context, model string) error {
+		root = awakens.LegacyTopologyFactory(sessionID, deps)
+		if root == nil {
+			return errors.New("awakening: legacy factory returned nil topology")
+		}
+		root.LLMClient = s.llm
+		root.Cost = s.cost
+		root.HostRuntime = s.hostRuntime
+		if s.toolRegistry != nil {
+			s.toolRegistry.InjectIntoCPN(root)
+			root.ToolRegistry = s.toolRegistry
+		}
+		for _, tr := range root.Transitions {
+			if tr == nil || tr.Kind != cpn.NodeKindLLM {
+				continue
+			}
+			if tr.LLMConfig == nil {
+				tr.LLMConfig = &cpn.LLMConfig{}
+			}
+			tr.LLMConfig.Model = model
+		}
+		return root.Run(attemptCtx)
+	})
+	if runErr != nil {
+		emitter.Failed(ctx, "cpn.run", classifyAwakeningError(runErr), runErr.Error())
+		return zero, awakens.A2UIMessage{}, "", fmt.Errorf("awakening: %w", runErr)
+	}
+	if root == nil {
+		return zero, awakens.A2UIMessage{}, "", errors.New("awakening: legacy factory returned nil topology")
+	}
+
+	envelope, ok := extractEmittedMessage(root)
+	if !ok {
+		err := errors.New("awakening: legacy CPN completed but emitted no A2UI envelope")
+		emitter.Failed(ctx, "extract.envelope", "empty", err.Error())
+		return zero, awakens.A2UIMessage{}, "", err
+	}
+	snap, ok := extractAwakeningSnapshot(root)
+	if !ok {
+		err := errors.New("awakening: legacy CPN completed but deposited no snapshot")
+		emitter.Failed(ctx, "extract.snapshot", "empty", err.Error())
+		return zero, awakens.A2UIMessage{}, "", err
+	}
+	s.logger.Info("awakening: complete (legacy mode)",
 		slog.String("session_id", sessionID),
 		slog.String("host_id", hostID),
 		slog.String("source", awakens.SourceAwakening),
