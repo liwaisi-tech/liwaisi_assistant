@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: liwaisi-e2e-postgres
+    environment:
+      POSTGRES_DB: liwaisi_e2e
+      POSTGRES_USER: liwaisi_e2e
+      POSTGRES_PASSWORD: liwaisi_e2e
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liwaisi_e2e -d liwaisi_e2e"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

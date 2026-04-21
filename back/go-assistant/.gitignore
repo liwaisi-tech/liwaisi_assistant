@@ -6,6 +6,9 @@ bin/
 coverage.out
 coverage.html
 
+# Benchmark artifacts (baseline is tracked; per-run output is not)
+/bench/last.txt
+
 # Environment files
 .env
 *.env

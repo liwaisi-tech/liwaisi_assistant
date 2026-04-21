@@ -16,7 +16,7 @@ LDFLAGS     := -s -w \
 
 .DEFAULT_GOAL := help
 
-.PHONY: build build-server test test-coverage test-integration lint fmt clean deps run help
+.PHONY: build build-server test test-coverage test-integration e2e bench bench-gate lint fmt clean deps run help
 
 ## build: Build the CLI binary
 build:
@@ -42,6 +42,20 @@ test-coverage:
 ## test-integration: Run integration tests (requires OPENROUTER_API_KEY)
 test-integration:
 	$(GO) test $(GO_FLAGS) -tags integration -timeout 300s -count=1 -v ./integration/
+
+## e2e: Run SC-17 end-to-end harness (requires docker + docker compose)
+e2e:
+	$(GO) test -tags=e2e -timeout 300s -count=1 -v ./integration/...
+
+## bench: Run SC-17 latency benchmarks and capture output
+bench:
+	@mkdir -p bench
+	$(GO) test -bench='BenchmarkProbeFanoutCompose|BenchmarkAwakeningE2E' -run=^$$ -benchmem -benchtime=5x \
+		./cpn/awakens/fanout/... ./internal/app/... | tee bench/last.txt
+
+## bench-gate: Compare latest bench run against committed baseline (>10%% fails)
+bench-gate: bench
+	./scripts/benchstat_gate.sh bench/awakening_baseline.txt bench/last.txt
 
 ## lint: Run golangci-lint
 lint:
