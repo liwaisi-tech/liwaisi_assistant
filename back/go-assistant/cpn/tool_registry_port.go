@@ -35,6 +35,11 @@ type ToolManifest struct {
 	Provenance   ProvenanceSnapshot `json:"provenance"`
 	RegisteredBy string             `json:"registered_by"`
 
+	// Kind classifies the manifest source. Empty for historical builtin/
+	// agent-authored manifests; "synthesized" marks outputs of the SC-12
+	// tool-synthesis sub-CPN (REQ-1201).
+	Kind string `json:"kind,omitempty"`
+
 	// Toolbox is the named domain grouping (spec-architecture-brae-toolbox-
 	// taxonomy.md REQ-002). Empty defaults to Namespace at registration time.
 	Toolbox string `json:"toolbox,omitempty"`

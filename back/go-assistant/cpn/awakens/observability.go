@@ -233,6 +233,33 @@ func (e *Emitter) HelpFailed(ctx context.Context, binary, stage, reason string) 
 	})
 }
 
+// SynthesisStarted → awakening.synthesis.started (SC-12 REQ-1205
+// observability). Emitted once per schema as the synthesis branch begins.
+func (e *Emitter) SynthesisStarted(ctx context.Context, binary string) {
+	e.emit(ctx, "synthesis.started", []slog.Attr{
+		slog.String("binary", binary),
+	})
+}
+
+// SynthesisCompleted → awakening.synthesis.completed (SC-12). Emitted once
+// per binary whose ToolManifest was materialised and staged.
+func (e *Emitter) SynthesisCompleted(ctx context.Context, binary, provenanceSHA256 string) {
+	e.emit(ctx, "synthesis.completed", []slog.Attr{
+		slog.String("binary", binary),
+		slog.String("provenance_sha256", provenanceSHA256),
+	})
+}
+
+// SynthesisFailed → awakening.synthesis.failed (SC-12 REQ-1205). Synthesis
+// failures are non-fatal; this event records the drop without aborting
+// sibling branches.
+func (e *Emitter) SynthesisFailed(ctx context.Context, binary, reason string) {
+	e.emit(ctx, "synthesis.failed", []slog.Attr{
+		slog.String("binary", binary),
+		slog.String("reason", reason),
+	})
+}
+
 // CacheHit → awakening.cache.hit (needed by SC-03).
 func (e *Emitter) CacheHit(ctx context.Context, age time.Duration) {
 	e.emit(ctx, "cache.hit", []slog.Attr{
