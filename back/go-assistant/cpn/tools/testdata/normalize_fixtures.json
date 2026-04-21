@@ -1,0 +1,28 @@
+{
+  "description": "REQ-NORM-001 canonical normalization fixtures. Each case exercises one or more of the five ordered steps defined in spec-architecture-brae-toolbox-taxonomy.md §3.",
+  "cases": [
+    {"name": "plain_lower",                "in": ["pdf"],                           "out": ["pdf"]},
+    {"name": "leading_hash",               "in": ["#pdf"],                          "out": ["pdf"]},
+    {"name": "leading_hash_upper",         "in": ["#PDF"],                          "out": ["pdf"]},
+    {"name": "surrounding_whitespace",     "in": ["  read  "],                      "out": ["read"]},
+    {"name": "mixed_case",                 "in": ["PDF"],                           "out": ["pdf"]},
+    {"name": "hyphen_allowed",             "in": ["web-scrape"],                    "out": ["web-scrape"]},
+    {"name": "underscore_rejected",        "in": ["web_scrape"],                    "out": []},
+    {"name": "bang_rejected",              "in": ["pdf!"],                          "out": []},
+    {"name": "digit_leading_rejected",     "in": ["1pdf"],                          "out": []},
+    {"name": "single_letter_allowed",      "in": ["a"],                             "out": ["a"]},
+    {"name": "max_length_32",              "in": ["a2345678901234567890123456789012"], "out": ["a2345678901234567890123456789012"]},
+    {"name": "over_length_33",             "in": ["a23456789012345678901234567890123"], "out": []},
+    {"name": "unicode_rejected",           "in": ["pdfé"],                          "out": []},
+    {"name": "empty_string_rejected",      "in": [""],                              "out": []},
+    {"name": "whitespace_only_rejected",   "in": ["   "],                           "out": []},
+    {"name": "hash_only_rejected",         "in": ["#"],                             "out": []},
+    {"name": "dedup_case_variants",        "in": ["pdf", "PDF", "Pdf"],             "out": ["pdf"]},
+    {"name": "dedup_mixed_hash_casing",    "in": ["#PDF", "pdf", " PDF "],          "out": ["pdf"]},
+    {"name": "preserve_first_seen_order",  "in": ["tools", "read", "pdf"],          "out": ["tools", "read", "pdf"]},
+    {"name": "drop_invalid_keep_valid",    "in": ["tools", "bad_tag", "read"],      "out": ["tools", "read"]},
+    {"name": "multi_hash_rejected",        "in": ["##pdf"],                         "out": []},
+    {"name": "trailing_hyphen_allowed",    "in": ["pdf-"],                          "out": ["pdf-"]},
+    {"name": "leading_hyphen_rejected",    "in": ["-pdf"],                          "out": []}
+  ]
+}

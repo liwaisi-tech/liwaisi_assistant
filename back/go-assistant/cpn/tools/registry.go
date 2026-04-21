@@ -75,6 +75,14 @@ type ToolEntry struct {
 	Deprecated        bool
 	DeprecatedAt      time.Time
 	DeprecationReason string
+
+	// Toolbox is the named domain grouping (taxonomy spec REQ-002). Set by
+	// the registry at insertion time: manifest value if non-empty, else
+	// Namespace.
+	Toolbox string
+	// Hashtags is the normalised, deduped, lexicon-filtered capability set
+	// (REQ-001, REQ-NORM-001, REQ-007).
+	Hashtags []string
 }
 
 // QualifiedName returns "namespace/name@version" when Version is set, else
@@ -124,10 +132,34 @@ type Registry struct {
 	byAnchor    map[string][]*ToolEntry // anchor → versions, desc semver
 	byQualified map[string]*ToolEntry   // ns/name@ver OR ns/name
 
+	// byHashtag indexes entries by normalised hashtag → (qualified name →
+	// latest non-deprecated entry) per spec REQ-003. Mutations happen under
+	// r.mu together with byAnchor/byQualified (PAT-001).
+	byHashtag map[string]map[string]*ToolEntry
+	// byToolbox mirrors byHashtag but keyed on the toolbox slot.
+	byToolbox map[string]map[string]*ToolEntry
+
+	// lex is the optional controlled-vocabulary port (REQ-006). When nil the
+	// registry skips drift detection and persists every hashtag verbatim
+	// (legacy behaviour preserved).
+	lex cpn.Lexicon
+
 	sealed bool
 	repo   persist.ToolRegistryRepository
 
 	emit func(e ToolRegistryEvent)
+}
+
+// RegistryOption configures a Registry at construction time.
+type RegistryOption func(*Registry)
+
+// WithLexicon injects a controlled-vocabulary port. When set, RegisterEntry
+// / RegisterManifest filter hashtags through the lexicon and emit
+// lexicon.entry.dropped events for unknown tokens (REQ-007).
+func WithLexicon(lex cpn.Lexicon) RegistryOption {
+	return func(r *Registry) {
+		r.lex = lex
+	}
 }
 
 // ToolRegistryEvent is emitted for tool-registry mutations.
@@ -139,12 +171,22 @@ type ToolRegistryEvent struct {
 	Timestamp     time.Time
 }
 
-// NewRegistry creates an empty Registry.
-func NewRegistry() *Registry {
-	return &Registry{
+// NewRegistry creates an empty Registry. Variadic options (WithLexicon, …)
+// are backward-compatible: every existing call site continues to compile
+// unchanged.
+func NewRegistry(opts ...RegistryOption) *Registry {
+	r := &Registry{
 		byAnchor:    make(map[string][]*ToolEntry),
 		byQualified: make(map[string]*ToolEntry),
+		byHashtag:   make(map[string]map[string]*ToolEntry),
+		byToolbox:   make(map[string]map[string]*ToolEntry),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 // OnEvent installs an event listener. Passing nil clears the listener.
@@ -462,11 +504,46 @@ func (r *Registry) RegisterEntry(ctx context.Context, entry *ToolEntry) error {
 		}
 	}
 
+	// ── Taxonomy defaults & validation (spec REQ-002, REQ-011) ────────────
+	// Default Toolbox to Namespace when not explicitly set (REQ-002, AC-010).
+	if entry.Toolbox == "" {
+		entry.Toolbox = entry.Namespace
+	}
+	// Strict validation surfaces user-supplied formatting errors (AC-005/006).
+	normalised, err := ValidateExplicit(entry.Hashtags)
+	if err != nil {
+		return wrapErr(ErrInvalidInput, "hashtags", err)
+	}
+	// Lexicon drift: filter unknown tokens, remember the dropped set so we
+	// can emit lexicon.entry.dropped after successful registration (REQ-007).
+	var droppedTags []string
+	r.mu.RLock()
+	lex := r.lex
+	r.mu.RUnlock()
+	if lex != nil && len(normalised) > 0 {
+		kept := make([]string, 0, len(normalised))
+		for _, tag := range normalised {
+			if lex.IsKnown(tag) {
+				kept = append(kept, tag)
+				continue
+			}
+			droppedTags = append(droppedTags, tag)
+		}
+		normalised = kept
+	}
+	entry.Hashtags = normalised
+
 	r.mu.Lock()
 	qn := entry.QualifiedName()
 	if _, exists := r.byQualified[qn]; exists {
 		r.mu.Unlock()
 		return wrapErr(ErrDuplicate, qn, nil)
+	}
+	// Detect cross-version toolbox conflict at the same anchor (BEH-002).
+	var toolboxConflict string
+	if prior := pickLatestNonDeprecated(r.byAnchor[entry.Anchor()]); prior != nil && prior.Toolbox != entry.Toolbox {
+		toolboxConflict = fmt.Sprintf("previous version assigned to toolbox=%s; latest assigned to toolbox=%s",
+			prior.Toolbox, entry.Toolbox)
 	}
 	repo := r.repo
 	r.mu.Unlock()
@@ -497,6 +574,26 @@ func (r *Registry) RegisterEntry(ctx context.Context, entry *ToolEntry) error {
 			Entry:         entry,
 			Timestamp:     time.Now().UTC(),
 		})
+		if len(droppedTags) > 0 {
+			// SEC-003: carry only qualified name + the dropped tokens; do
+			// NOT include HelpText or Provenance.
+			listener(ToolRegistryEvent{
+				Type:          "lexicon.entry.dropped",
+				QualifiedName: qn,
+				Entry:         entry,
+				Reason:        "unknown hashtags: " + strings.Join(droppedTags, ", "),
+				Timestamp:     time.Now().UTC(),
+			})
+		}
+		if toolboxConflict != "" {
+			listener(ToolRegistryEvent{
+				Type:          "toolbox.conflict.detected",
+				QualifiedName: qn,
+				Entry:         entry,
+				Reason:        toolboxConflict,
+				Timestamp:     time.Now().UTC(),
+			})
+		}
 	}
 	return nil
 }
@@ -533,6 +630,7 @@ func (r *Registry) Deprecate(ctx context.Context, qualifiedName, reason string) 
 	entry.Deprecated = true
 	entry.DeprecatedAt = time.Now().UTC()
 	entry.DeprecationReason = reason
+	r.reindexAnchorTaxonomyLocked(entry.Anchor())
 	listener := r.emit
 	r.mu.Unlock()
 
@@ -777,6 +875,8 @@ func (r *Registry) RegisterManifest(ctx context.Context, m cpn.ToolManifest) (cp
 			SourceSHA256:   m.Provenance.SourceSHA256,
 		},
 		RegisteredBy: m.RegisteredBy,
+		Toolbox:      m.Toolbox,
+		Hashtags:     m.Hashtags,
 	}
 	if err := r.RegisterEntry(ctx, entry); err != nil {
 		return cpn.ToolManifestResult{}, err
@@ -794,10 +894,68 @@ func (r *Registry) insertLocked(entry *ToolEntry) {
 	if entry.Version == "" {
 		entry.Version = "0.1.0"
 	}
+	// Taxonomy defaults also apply on the Bootstrap path where entries may
+	// come from persistence without the TaxoDefaults having been stamped.
+	if entry.Toolbox == "" {
+		entry.Toolbox = entry.Namespace
+	}
 	qn := entry.QualifiedName()
 	anchor := entry.Anchor()
 	r.byQualified[qn] = entry
 	r.byAnchor[anchor] = appendSortedDesc(r.byAnchor[anchor], entry)
+	r.reindexAnchorTaxonomyLocked(anchor)
+}
+
+// reindexAnchorTaxonomyLocked rebuilds the byHashtag/byToolbox slots for the
+// given anchor. "Latest non-deprecated" semantics per REQ-003: index only
+// the single latest non-deprecated entry at this anchor, and first remove
+// stale references to older versions of the same qualified names.
+func (r *Registry) reindexAnchorTaxonomyLocked(anchor string) {
+	entries := r.byAnchor[anchor]
+	// Remove any existing references to entries at this anchor — we rebuild
+	// from scratch. Match by anchor so deprecated/older versions are purged.
+	for tag, set := range r.byHashtag {
+		for qn, e := range set {
+			if e.Anchor() == anchor {
+				delete(set, qn)
+			}
+		}
+		if len(set) == 0 {
+			delete(r.byHashtag, tag)
+		}
+	}
+	for tb, set := range r.byToolbox {
+		for qn, e := range set {
+			if e.Anchor() == anchor {
+				delete(set, qn)
+			}
+		}
+		if len(set) == 0 {
+			delete(r.byToolbox, tb)
+		}
+	}
+	latest := pickLatestNonDeprecated(entries)
+	if latest == nil {
+		return
+	}
+	qn := latest.QualifiedName()
+	for _, tag := range latest.Hashtags {
+		set, ok := r.byHashtag[tag]
+		if !ok {
+			set = make(map[string]*ToolEntry)
+			r.byHashtag[tag] = set
+		}
+		set[qn] = latest
+	}
+	if latest.Toolbox != "" {
+		key := strings.ToLower(latest.Toolbox)
+		set, ok := r.byToolbox[key]
+		if !ok {
+			set = make(map[string]*ToolEntry)
+			r.byToolbox[key] = set
+		}
+		set[qn] = latest
+	}
 }
 
 func (r *Registry) removeLocked(entry *ToolEntry) {
@@ -816,6 +974,7 @@ func (r *Registry) removeLocked(entry *ToolEntry) {
 	} else {
 		r.byAnchor[anchor] = kept
 	}
+	r.reindexAnchorTaxonomyLocked(anchor)
 }
 
 func appendSortedDesc(list []*ToolEntry, entry *ToolEntry) []*ToolEntry {
@@ -853,6 +1012,8 @@ func toPersistEntry(e *ToolEntry) persist.ToolRegistryEntry {
 		Deprecated:        e.Deprecated,
 		DeprecatedAt:      e.DeprecatedAt,
 		DeprecationReason: e.DeprecationReason,
+		Toolbox:           e.Toolbox,
+		Hashtags:          append([]string(nil), e.Hashtags...),
 	}
 }
 
@@ -882,6 +1043,8 @@ func fromPersistEntry(row persist.ToolRegistryEntry) *ToolEntry {
 		Deprecated:        row.Deprecated,
 		DeprecatedAt:      row.DeprecatedAt,
 		DeprecationReason: row.DeprecationReason,
+		Toolbox:           row.Toolbox,
+		Hashtags:          append([]string(nil), row.Hashtags...),
 	}
 }
 
@@ -896,6 +1059,131 @@ func validateJSONSchema(raw json.RawMessage) error {
 		return fmt.Errorf("schema must be a JSON object: %w", err)
 	}
 	return nil
+}
+
+// ── Taxonomy query API (spec REQ-003/REQ-004) ─────────────────────────────
+
+// ListByHashtag returns the latest non-deprecated entries whose persisted
+// hashtag set contains tag (after normalisation). Results are sorted by
+// QualifiedName for deterministic output.
+func (r *Registry) ListByHashtag(_ context.Context, tag string) []*ToolEntry {
+	norm, ok := NormalizeHashtag(tag)
+	if !ok {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	set, ok := r.byHashtag[norm]
+	if !ok {
+		return nil
+	}
+	out := make([]*ToolEntry, 0, len(set))
+	for _, e := range set {
+		if e == nil || e.Deprecated {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].QualifiedName() < out[j].QualifiedName()
+	})
+	return out
+}
+
+// ListByToolbox returns the latest non-deprecated entries whose Toolbox
+// matches toolbox case-insensitively (ASCII). Results are sorted by
+// QualifiedName.
+func (r *Registry) ListByToolbox(_ context.Context, toolbox string) []*ToolEntry {
+	if toolbox == "" {
+		return nil
+	}
+	key := strings.ToLower(toolbox)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	set, ok := r.byToolbox[key]
+	if !ok {
+		return nil
+	}
+	out := make([]*ToolEntry, 0, len(set))
+	for _, e := range set {
+		if e == nil || e.Deprecated {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].QualifiedName() < out[j].QualifiedName()
+	})
+	return out
+}
+
+// Toolboxes returns one ToolboxManifest per distinct toolbox currently
+// populated by non-deprecated entries. Order is deterministic (sorted by
+// Namespace). Title/Summary come from toolboxes.yaml; Hashtags is the
+// sorted deduped union across the toolbox's entries.
+func (r *Registry) Toolboxes(_ context.Context) []ToolboxManifest {
+	r.mu.RLock()
+	// Group entries by toolbox (canonical lower-case key), carry one Namespace
+	// representative per group (first seen wins after normalisation — entries
+	// within one toolbox share a namespace in typical use; ties are broken
+	// alphabetically when we materialise).
+	type bucket struct {
+		namespace string
+		hashtags  map[string]struct{}
+		count     int
+		latest    time.Time
+	}
+	buckets := make(map[string]*bucket)
+	for _, entries := range r.byAnchor {
+		latest := pickLatestNonDeprecated(entries)
+		if latest == nil {
+			continue
+		}
+		ns := latest.Toolbox
+		if ns == "" {
+			ns = latest.Namespace
+		}
+		key := strings.ToLower(ns)
+		b, ok := buckets[key]
+		if !ok {
+			b = &bucket{namespace: ns, hashtags: make(map[string]struct{})}
+			buckets[key] = b
+		}
+		// Keep the lexicographically smallest namespace spelling as the
+		// canonical form — deterministic given shuffled inserts.
+		if ns < b.namespace {
+			b.namespace = ns
+		}
+		for _, h := range latest.Hashtags {
+			b.hashtags[h] = struct{}{}
+		}
+		b.count++
+		if latest.RegisteredAt.After(b.latest) {
+			b.latest = latest.RegisteredAt
+		}
+	}
+	r.mu.RUnlock()
+
+	out := make([]ToolboxManifest, 0, len(buckets))
+	for _, b := range buckets {
+		tags := make([]string, 0, len(b.hashtags))
+		for h := range b.hashtags {
+			tags = append(tags, h)
+		}
+		sort.Strings(tags)
+		out = append(out, ToolboxManifest{
+			Namespace:          b.namespace,
+			Title:              toolboxTitleFor(b.namespace),
+			Summary:            toolboxSummaryFor(b.namespace),
+			Hashtags:           tags,
+			ToolCount:          b.count,
+			LatestRegisteredAt: b.latest,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Namespace < out[j].Namespace
+	})
+	return out
 }
 
 func isPersistDuplicate(err error) bool {

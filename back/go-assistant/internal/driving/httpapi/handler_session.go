@@ -72,6 +72,7 @@ type Handlers struct {
 	UserRepo        persist.UserRepository
 	PersonalityRepo persist.PersonalityRepository
 	ToolRegistry    ToolRegistryPort
+	ToolboxLister   ToolboxLister
 	WaitlistRepo    persist.WaitlistRepository
 	RateLimitCfg    *RateLimitConfig
 	ConfigProvider  *config.Provider

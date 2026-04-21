@@ -106,6 +106,49 @@ func TestToolRegistryStore_GetAndList(t *testing.T) {
 	}
 }
 
+// TestToolRegistryStore_TaxonomyRoundTrip verifies REQ-009: hashtags and
+// toolbox survive insert→fetch round-trip with values preserved, and that
+// legacy rows read back with the NOT NULL defaults ({}, "").
+func TestToolRegistryStore_TaxonomyRoundTrip(t *testing.T) {
+	s, ctx := setupToolRegistryStore(t)
+
+	taxed := newToolEntryFixture("brae", "http-get", "1.0.0", "agent-authored")
+	taxed.Toolbox = "http"
+	taxed.Hashtags = []string{"kind-fetch", "domain-web"}
+	if err := s.Upsert(ctx, taxed); err != nil {
+		t.Fatalf("upsert taxed: %v", err)
+	}
+
+	bare := newToolEntryFixture("brae", "echo", "1.0.0", "agent-authored")
+	if err := s.Upsert(ctx, bare); err != nil {
+		t.Fatalf("upsert bare: %v", err)
+	}
+
+	gotTaxed, err := s.Get(ctx, "brae/http-get@1.0.0")
+	if err != nil {
+		t.Fatalf("get taxed: %v", err)
+	}
+	if gotTaxed.Toolbox != "http" {
+		t.Fatalf("toolbox = %q want http", gotTaxed.Toolbox)
+	}
+	if len(gotTaxed.Hashtags) != 2 ||
+		gotTaxed.Hashtags[0] != "kind-fetch" ||
+		gotTaxed.Hashtags[1] != "domain-web" {
+		t.Fatalf("hashtags = %v want [kind-fetch domain-web]", gotTaxed.Hashtags)
+	}
+
+	gotBare, err := s.Get(ctx, "brae/echo@1.0.0")
+	if err != nil {
+		t.Fatalf("get bare: %v", err)
+	}
+	if gotBare.Toolbox != "" {
+		t.Fatalf("bare toolbox = %q want empty", gotBare.Toolbox)
+	}
+	if len(gotBare.Hashtags) != 0 {
+		t.Fatalf("bare hashtags = %v want empty", gotBare.Hashtags)
+	}
+}
+
 func TestToolRegistryStore_Delete(t *testing.T) {
 	s, ctx := setupToolRegistryStore(t)
 	_ = s.Upsert(ctx, newToolEntryFixture("brae", "tmp", "1.0.0", "agent-authored"))

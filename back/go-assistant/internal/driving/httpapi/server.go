@@ -163,6 +163,15 @@ func WithToolRegistry(registry ToolRegistryPort) ServerOption {
 	}
 }
 
+// WithToolboxLister injects the toolbox-aggregate view for the
+// GET /api/v1/admin/toolboxes endpoint (REQ-010). When nil the endpoint
+// returns 503.
+func WithToolboxLister(l ToolboxLister) ServerOption {
+	return func(h *Handlers) {
+		h.ToolboxLister = l
+	}
+}
+
 // WithWaitlistRepo injects the waitlist repository for the public waitlist endpoint.
 func WithWaitlistRepo(repo persist.WaitlistRepository) ServerOption {
 	return func(h *Handlers) {

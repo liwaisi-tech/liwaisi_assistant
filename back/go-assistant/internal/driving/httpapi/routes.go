@@ -70,6 +70,7 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 		// param because Go 1.22+ ServeMux only allows the {name...}
 		// wildcard at the end of the path pattern.
 		mux.Handle("GET /api/v1/admin/tools", adminAuth(http.HandlerFunc(h.HandleAdminListTools)))
+		mux.Handle("GET /api/v1/admin/toolboxes", adminAuth(http.HandlerFunc(h.HandleAdminListToolboxes)))
 		mux.Handle("POST /api/v1/admin/tools/deprecate", adminAuth(http.HandlerFunc(h.HandleAdminDeprecateTool)))
 		mux.Handle("GET /api/v1/admin/tools/{qn...}", adminAuth(http.HandlerFunc(h.HandleAdminGetTool)))
 		mux.Handle("DELETE /api/v1/admin/tools/{qn...}", adminAuth(http.HandlerFunc(h.HandleAdminDeleteTool)))

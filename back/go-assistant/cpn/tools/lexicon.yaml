@@ -1,0 +1,98 @@
+version: 1
+# Seed lexicon for the brae toolbox taxonomy (spec-architecture-brae-toolbox-taxonomy.md §4.5).
+# Tokens are pre-normalised per REQ-NORM-001: lower-case, no leading '#', [a-z][a-z0-9-]{0,31}.
+# Kind MUST be exactly "kind" or "domain". Keep total entries ≤ 256 (CON-003, SEC-004).
+entries:
+  # ── Kind tags (behavioural classification) ──
+  - tag: tools
+    kind: kind
+    description: Generic indicator that the agent is requesting tooling.
+  - tag: read
+    kind: kind
+    description: Reads or fetches data without side effects.
+  - tag: write
+    kind: kind
+    description: Mutates state on disk, network, or external systems.
+  - tag: network
+    kind: kind
+    description: Performs network I/O.
+  - tag: compute
+    kind: kind
+    description: Performs computation without I/O.
+  - tag: transform
+    kind: kind
+    description: Converts data from one shape to another.
+  - tag: helptext
+    kind: kind
+    description: Emits help text describing a command or tool.
+  - tag: manpage
+    kind: kind
+    description: Emits manual-page documentation.
+  - tag: search
+    kind: kind
+    description: Searches or queries a corpus for matches.
+  - tag: compose
+    kind: kind
+    description: Composes or assembles higher-level artefacts from parts.
+  - tag: execute
+    kind: kind
+    description: Executes a command, binary, or script.
+  - tag: inspect
+    kind: kind
+    description: Inspects state without mutating it.
+
+  # ── Domain tags (subject area) ──
+  - tag: pdf
+    kind: domain
+    description: Operates on PDF documents.
+  - tag: image
+    kind: domain
+    description: Operates on raster or vector images.
+  - tag: html
+    kind: domain
+    description: Operates on HTML markup.
+  - tag: json
+    kind: domain
+    description: Operates on JSON values.
+  - tag: git
+    kind: domain
+    description: Interacts with git repositories.
+  - tag: shell
+    kind: domain
+    description: Executes shell commands.
+  - tag: fs
+    kind: domain
+    description: Operates on the local filesystem.
+  - tag: proc
+    kind: domain
+    description: Operates on OS processes.
+  - tag: python
+    kind: domain
+    description: Interacts with the Python runtime or ecosystem.
+  - tag: go
+    kind: domain
+    description: Interacts with the Go toolchain or ecosystem.
+  - tag: nodejs
+    kind: domain
+    description: Interacts with the Node.js runtime or ecosystem.
+  - tag: curl
+    kind: domain
+    description: Performs HTTP requests via curl-style semantics.
+  - tag: grep
+    kind: domain
+    description: Text pattern matching on streams or files.
+  - tag: sed
+    kind: domain
+    description: Stream editing and text substitution.
+  - tag: awk
+    kind: domain
+    description: Record-oriented text processing.
+  - tag: docker
+    kind: domain
+    description: Interacts with Docker containers and images.
+  - tag: kubectl
+    kind: domain
+    description: Interacts with Kubernetes clusters.
+  - tag: ssh
+    kind: domain
+    description: Opens or executes over SSH connections.

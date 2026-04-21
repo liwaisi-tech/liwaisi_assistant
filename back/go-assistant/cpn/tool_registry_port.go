@@ -34,6 +34,14 @@ type ToolManifest struct {
 	Origin       string             `json:"origin"`
 	Provenance   ProvenanceSnapshot `json:"provenance"`
 	RegisteredBy string             `json:"registered_by"`
+
+	// Toolbox is the named domain grouping (spec-architecture-brae-toolbox-
+	// taxonomy.md REQ-002). Empty defaults to Namespace at registration time.
+	Toolbox string `json:"toolbox,omitempty"`
+	// Hashtags is the controlled-vocabulary capability set (REQ-001). Tokens
+	// MUST be pre-normalised (REQ-NORM-001); unknown tokens are dropped at
+	// registration and surface as a lexicon.entry.dropped event (REQ-007).
+	Hashtags []string `json:"hashtags,omitempty"`
 }
 
 // ProvenanceSnapshot is the cpn-package mirror of persist.Provenance. Split
@@ -71,6 +79,10 @@ type RegisterToolConfig struct {
 	Origin       string
 	Provenance   ProvenanceSnapshot
 	RegisteredBy string
+
+	// Toolbox + Hashtags mirror ToolManifest (taxonomy spec REQ-001/002).
+	Toolbox  string
+	Hashtags []string
 }
 
 // ToManifest converts the transition config into the runtime manifest.
@@ -90,6 +102,8 @@ func (c *RegisterToolConfig) ToManifest() ToolManifest {
 		Origin:       c.Origin,
 		Provenance:   c.Provenance,
 		RegisteredBy: c.RegisteredBy,
+		Toolbox:      c.Toolbox,
+		Hashtags:     c.Hashtags,
 	}
 }
 

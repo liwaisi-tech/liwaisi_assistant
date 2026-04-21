@@ -1,0 +1,23 @@
+version: 1
+# Toolbox aggregate metadata (spec-architecture-brae-toolbox-taxonomy.md §4.3).
+# Title/Summary are fallback-default only when Registry.Toolboxes() observes a
+# namespace not listed here, Title = Capitalised(Namespace) and Summary = "".
+entries:
+  - namespace: system
+    title: System
+    summary: POSIX shell, filesystem, and process tooling.
+  - namespace: developer
+    title: Developer
+    summary: Source control, build, and language-toolchain utilities.
+  - namespace: web
+    title: Web
+    summary: HTTP clients and HTML/DOM processing utilities.
+  - namespace: image
+    title: Image
+    summary: Raster and vector image inspection and transformation.
+  - namespace: pdf
+    title: PDF
+    summary: PDF document reading, extraction, and transformation.
+  - namespace: general
+    title: General
+    summary: General-purpose tools not tied to a single domain.

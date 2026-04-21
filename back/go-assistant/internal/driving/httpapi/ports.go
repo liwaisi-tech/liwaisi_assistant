@@ -48,6 +48,15 @@ type ToolRegistryPort interface {
 	ListFiltered(ctx context.Context, f tools.ToolFilter) []*tools.ToolEntry
 }
 
+// ToolboxLister is the read-only aggregate view over registered tools grouped
+// into toolboxes (spec-architecture-brae-toolbox-taxonomy.md REQ-010). The
+// concrete implementation is *cpn/tools.Registry once Engineer B lands
+// Toolboxes(); until then the option is unset and GET /admin/toolboxes
+// returns 503.
+type ToolboxLister interface {
+	Toolboxes(ctx context.Context) []tools.ToolboxManifest
+}
+
 // SkillManifestPort is the skill-manifest boundary used by the admin skills
 // HTTP handlers (GAP-8). The concrete implementation is *app.SkillManifestService.
 type SkillManifestPort interface {

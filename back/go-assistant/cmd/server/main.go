@@ -54,7 +54,16 @@ func main() {
 	var serviceOpts []app.SessionServiceOption
 	var store *storepostgres.Store
 	registry := newServerFuncRegistry()
-	toolReg := tools.NewRegistry()
+
+	// Load the controlled-vocabulary lexicon (spec-architecture-brae-toolbox-
+	// taxonomy.md REQ-006, REQ-LEX-001). BRAE_LEXICON_PATH overrides the
+	// embedded default; invalid overrides fail-fast here per AC-013.
+	lex, err := tools.LoadLexicon(context.Background())
+	if err != nil {
+		logger.Error("load lexicon failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	toolReg := tools.NewRegistry(tools.WithLexicon(lex))
 	var configProvider *config.Provider
 
 	// ── GAP-4 Safe primitive catalogue ──────────────────────────────────
@@ -436,6 +445,7 @@ func main() {
 			httpapi.WithUserRepo(store.Users()),
 			httpapi.WithPersonalityRepo(store.Personalities()),
 			httpapi.WithToolRegistry(toolReg),
+			httpapi.WithToolboxLister(toolReg),
 			httpapi.WithWaitlistRepo(store.Waitlist()),
 			httpapi.WithModelRegistry(store.ModelRegistry()),
 		)

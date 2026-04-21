@@ -32,7 +32,8 @@ const toolSelectColumns = `
 	help_text, man_page, binary_path, binary_sha256,
 	origin, provenance,
 	registered_at, registered_by,
-	deprecated, deprecated_at, deprecation_reason
+	deprecated, deprecated_at, deprecation_reason,
+	hashtags, toolbox
 `
 
 func scanToolEntry(row interface {
@@ -51,6 +52,7 @@ func scanToolEntry(row interface {
 		&e.Origin, &provenance,
 		&e.RegisteredAt, &e.RegisteredBy,
 		&e.Deprecated, &deprecatedAt, &deprecationRz,
+		&e.Hashtags, &e.Toolbox,
 	)
 	if err != nil {
 		return persist.ToolRegistryEntry{}, err
@@ -98,6 +100,14 @@ func (s *ToolRegistryStore) Upsert(ctx context.Context, e persist.ToolRegistryEn
 		deprecationReason = e.DeprecationReason
 	}
 
+	// hashtags/toolbox default to safe-to-store zero values. The column is
+	// NOT NULL with a DEFAULT, but we still pass an explicit empty slice/
+	// string so the driver can't send NULL for an unset field.
+	hashtags := e.Hashtags
+	if hashtags == nil {
+		hashtags = []string{}
+	}
+
 	if e.ID == "" {
 		// Let Postgres generate the UUID and read it back.
 		row := s.pool.QueryRow(ctx,
@@ -106,19 +116,22 @@ func (s *ToolRegistryStore) Upsert(ctx context.Context, e persist.ToolRegistryEn
 				help_text, man_page, binary_path, binary_sha256,
 				origin, provenance,
 				registered_at, registered_by,
-				deprecated, deprecated_at, deprecation_reason
+				deprecated, deprecated_at, deprecation_reason,
+				hashtags, toolbox
 			 ) VALUES (
 				$1,$2,$3,$4,
 				$5,$6,$7,$8,
 				$9,$10,
 				$11,$12,
-				$13,$14,$15
+				$13,$14,$15,
+				$16,$17
 			 ) RETURNING id`,
 			e.Namespace, e.Name, e.Version, schema,
 			e.HelpText, e.ManPage, e.BinaryPath, e.BinarySHA256,
 			e.Origin, provenance,
 			e.RegisteredAt, e.RegisteredBy,
 			e.Deprecated, deprecatedAt, deprecationReason,
+			hashtags, e.Toolbox,
 		)
 		if err := row.Scan(&e.ID); err != nil {
 			if isToolDuplicate(err) {
@@ -135,19 +148,22 @@ func (s *ToolRegistryStore) Upsert(ctx context.Context, e persist.ToolRegistryEn
 			help_text, man_page, binary_path, binary_sha256,
 			origin, provenance,
 			registered_at, registered_by,
-			deprecated, deprecated_at, deprecation_reason
+			deprecated, deprecated_at, deprecation_reason,
+			hashtags, toolbox
 		 ) VALUES (
 			$1,$2,$3,$4,$5,
 			$6,$7,$8,$9,
 			$10,$11,
 			$12,$13,
-			$14,$15,$16
+			$14,$15,$16,
+			$17,$18
 		 )`,
 		e.ID, e.Namespace, e.Name, e.Version, schema,
 		e.HelpText, e.ManPage, e.BinaryPath, e.BinarySHA256,
 		e.Origin, provenance,
 		e.RegisteredAt, e.RegisteredBy,
 		e.Deprecated, deprecatedAt, deprecationReason,
+		hashtags, e.Toolbox,
 	)
 	if err != nil {
 		if isToolDuplicate(err) {

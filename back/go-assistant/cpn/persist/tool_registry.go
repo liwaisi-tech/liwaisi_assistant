@@ -38,6 +38,14 @@ type ToolRegistryEntry struct {
 	Deprecated        bool            `json:"deprecated"`
 	DeprecatedAt      time.Time       `json:"deprecated_at,omitempty"`
 	DeprecationReason string          `json:"deprecation_reason,omitempty"`
+
+	// Toolbox is the named domain grouping introduced by the Brae Toolbox
+	// Taxonomy spec (REQ-002). Empty string means "ungrouped" (legacy rows
+	// post-migration default here).
+	Toolbox string `json:"toolbox,omitempty"`
+	// Hashtags is the normalised, deduped, lexicon-filtered capability set
+	// (REQ-001, REQ-NORM-001, REQ-007).
+	Hashtags []string `json:"hashtags,omitempty"`
 }
 
 // QualifiedName returns "namespace/name@version".
