@@ -309,10 +309,11 @@ Currently `t-awaken-probe-instantiate` uses a `NodeKindTool` workaround; migrate
 
 ### SC-10 — Sandbox Wrappers ❌
 
-- **REQ-1001**: On Linux, probe subprocesses MUST be wrapped with `bwrap --ro-bind / / --dev /dev --tmpfs /tmp --unshare-net`.
-- **REQ-1002**: On non-Linux, `firejail --net=none --private-tmp --read-only=/` MUST be used.
-- **REQ-1003**: If neither wrapper is present, awakening MUST fail fast with `error_class="sandbox_missing"`.
+- **REQ-1001**: On Linux, probe subprocesses MUST be wrapped with `bwrap --ro-bind / / --dev /dev --tmpfs /tmp --unshare-net`. Selection MUST be gated on a namespace **smoke test** (`bwrap --ro-bind / / --dev /dev --tmpfs /tmp --unshare-net /bin/true` exits 0) — merely finding `bwrap` on `PATH` is insufficient, because a default Docker seccomp profile allows the binary but blocks `CLONE_NEWUSER`/`CLONE_NEWNET`.
+- **REQ-1002**: On non-Linux, or when bwrap's smoke test fails, `firejail --net=none --private-tmp --read-only=/` MUST be used, also gated on a smoke test (`firejail --noprofile --quiet /bin/true` exits 0).
+- **REQ-1003**: If no wrapper works AND no container runtime is detected, awakening MUST fail fast with `error_class="sandbox_missing"`.
 - **REQ-1004**: The wrapper CLI choice and its version MUST be captured in the report's `Host` block.
+- **REQ-1005**: If no wrapper can create namespaces AND the runtime is detected as a container (docker/podman/kubepods/containerd/lxc/nspawn), the container itself counts as the sandbox. `Host.Sandbox.Tool = "container"`, `Version = <runtime>`. `Wrap()` is a no-op. Container detection signals (any one suffices): `/.dockerenv` (docker), `/run/.containerenv` (podman), `$container` env var (lxc/nspawn), or `/proc/1/cgroup` substring match against `docker|containerd|kubepods|buildah|crio`.
 
 ### SC-11 — Help-Parser Sub-CPN ❌
 
@@ -401,6 +402,8 @@ Per-sub-CPN ACs are expressed as the REQ-xx leaf itself (the REQ **is** the test
 **Why `NodeKindInstantiate` migration (SC-09)?** The `NodeKindTool` workaround is hard to introspect (no sub-CPN span, no AuthoredFlow record). Migrating unlocks tool-synthesis (SC-12) which reuses the same runtime path.
 
 **Why capability ACL on SHA256, not strings (SEC-005)?** A regex-based ACL is easily bypassed by binary substitution (e.g., a shadowed `git` in `~/bin`). Hashing closes that gap.
+
+**Why the container tier for SC-10 (REQ-1005).** A well-configured container already provides SEC-004's three guarantees — network isolation (no host networking unless opted in), read-only root (or at minimum an isolated writable layer), and process isolation (PID namespace). Nesting `bwrap`/`firejail` inside it requires `CAP_SYS_ADMIN` + a relaxed seccomp profile, i.e. running the backend with `--privileged`. That cost is unacceptable, and the benefit is nil: the namespaces the wrapper would create are already created by the container runtime. So when neither wrapper can smoke-test successfully AND we have a positive container signal, we accept the container as the sandbox and no-op `Wrap()`. Fail-fast is preserved for bare metal with no wrapper installed.
 
 **Why SC-16 was removed.** A quarantine escape hatch contradicts REQ-006's fail-fast rail. If the fanout path misbehaves in production, the remedy is to fix it or revert the release, not to route around it silently with a mode flag. Removed prior to shipping.
 
