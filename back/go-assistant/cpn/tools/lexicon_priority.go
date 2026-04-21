@@ -95,3 +95,46 @@ func SelectTopTags(lex cpn.Lexicon, n int, stats *LexiconPriorityStats) []cpn.Le
 	}
 	return out
 }
+
+// TagStat is the input row for the SC-18 closeout priority selector
+// (spec-architecture-brae-awakening.md REQ-1801/REQ-1802). Freq is a raw
+// usage count; Recency is a normalised score in [0,1].
+type TagStat struct {
+	Tag     string  `json:"tag"`
+	Freq    float64 `json:"freq"`
+	Recency float64 `json:"recency"`
+}
+
+// SelectTopTagsByFreqRecency returns the top-n tag names ordered by
+//
+//	p = freq*0.6 + recency*0.4
+//
+// Ties on p are broken by tag ascending (lexicographic). The function is
+// pure — no I/O, no package-level state read — and the input slice is not
+// mutated. When n <= 0 or input is empty the result is nil. When n exceeds
+// len(input) every tag is returned.
+func SelectTopTagsByFreqRecency(input []TagStat, n int) []string {
+	if n <= 0 || len(input) == 0 {
+		return nil
+	}
+	ranked := make([]TagStat, len(input))
+	copy(ranked, input)
+
+	sort.Slice(ranked, func(i, j int) bool {
+		pi := ranked[i].Freq*0.6 + ranked[i].Recency*0.4
+		pj := ranked[j].Freq*0.6 + ranked[j].Recency*0.4
+		if pi != pj {
+			return pi > pj
+		}
+		return ranked[i].Tag < ranked[j].Tag
+	})
+
+	if n > len(ranked) {
+		n = len(ranked)
+	}
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = ranked[i].Tag
+	}
+	return out
+}
