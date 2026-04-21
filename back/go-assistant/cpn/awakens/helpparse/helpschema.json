@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HelpSchema",
+  "type": "object",
+  "required": ["binary", "flags", "subcommands", "examples"],
+  "additionalProperties": true,
+  "properties": {
+    "binary": { "type": "string", "minLength": 1 },
+    "source_sha256": { "type": "string" },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["long"],
+        "properties": {
+          "long": { "type": "string" },
+          "short": { "type": "string" },
+          "arg": { "type": "boolean" },
+          "doc": { "type": "string" }
+        }
+      }
+    },
+    "subcommands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "doc": { "type": "string" }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

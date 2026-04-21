@@ -201,6 +201,38 @@ func (e *Emitter) Mode(ctx context.Context, mode string) {
 	})
 }
 
+// HelpInvoked → awakening.helpparse.invoked (SC-11 REQ-1101 observability).
+// Emitted once per variant (--help / -h) invocation per binary.
+func (e *Emitter) HelpInvoked(ctx context.Context, binary, variant string, duration time.Duration, exitCode int) {
+	e.emit(ctx, "helpparse.invoked", []slog.Attr{
+		slog.String("binary", binary),
+		slog.String("variant", variant),
+		slog.Int64("duration_ms", duration.Milliseconds()),
+		slog.Int("exit_code", exitCode),
+	})
+}
+
+// HelpParsed → awakening.helpparse.parsed (SC-11 REQ-1102/1103). Emitted once
+// per binary whose HelpSchema passed validation.
+func (e *Emitter) HelpParsed(ctx context.Context, binary string, flagCount, subCount int) {
+	e.emit(ctx, "helpparse.parsed", []slog.Attr{
+		slog.String("binary", binary),
+		slog.Int("flag_count", flagCount),
+		slog.Int("sub_count", subCount),
+	})
+}
+
+// HelpFailed → awakening.helpparse.failed (SC-11 REQ-1104). Emitted once per
+// binary that the sub-CPN could not produce a HelpSchema for. Stage is one
+// of "invoke" | "llm" | "validate".
+func (e *Emitter) HelpFailed(ctx context.Context, binary, stage, reason string) {
+	e.emit(ctx, "helpparse.failed", []slog.Attr{
+		slog.String("binary", binary),
+		slog.String("stage", stage),
+		slog.String("reason", reason),
+	})
+}
+
 // CacheHit → awakening.cache.hit (needed by SC-03).
 func (e *Emitter) CacheHit(ctx context.Context, age time.Duration) {
 	e.emit(ctx, "cache.hit", []slog.Attr{
