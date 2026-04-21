@@ -260,6 +260,49 @@ func (e *Emitter) SynthesisFailed(ctx context.Context, binary, reason string) {
 	})
 }
 
+// SynthesizedToolHITLRequested → awakening.synth.hitl.requested (SC-13
+// REQ-1301). Emitted when a synthesized tool invocation blocks pending
+// first-run approval.
+func (e *Emitter) SynthesizedToolHITLRequested(ctx context.Context, sessionID, toolName, provenanceSHA256 string) {
+	e.emit(ctx, "synth.hitl.requested", []slog.Attr{
+		slog.String("session_id", sessionID),
+		slog.String("tool_name", toolName),
+		slog.String("provenance_sha256", provenanceSHA256),
+	})
+}
+
+// SynthesizedToolApproved → awakening.synth.approved (SC-13 REQ-1302).
+// Emitted after an approval row is persisted.
+func (e *Emitter) SynthesizedToolApproved(ctx context.Context, sessionID, toolName, provenanceSHA256 string) {
+	e.emit(ctx, "synth.approved", []slog.Attr{
+		slog.String("session_id", sessionID),
+		slog.String("tool_name", toolName),
+		slog.String("provenance_sha256", provenanceSHA256),
+	})
+}
+
+// SynthesizedToolDenied → awakening.synth.denied (SC-13). Emitted when the
+// operator denies the HITL prompt (or the gate fails closed).
+func (e *Emitter) SynthesizedToolDenied(ctx context.Context, sessionID, toolName, provenanceSHA256, reason string) {
+	e.emit(ctx, "synth.denied", []slog.Attr{
+		slog.String("session_id", sessionID),
+		slog.String("tool_name", toolName),
+		slog.String("provenance_sha256", provenanceSHA256),
+		slog.String("reason", reason),
+	})
+}
+
+// SynthesizedToolAutoApproved → awakening.synth.autoapproved (SC-13
+// REQ-1303 fast-path). Emitted when an identical (session_id, tool_name,
+// provenance_sha256) hit returns approved without a prompt.
+func (e *Emitter) SynthesizedToolAutoApproved(ctx context.Context, sessionID, toolName, provenanceSHA256 string) {
+	e.emit(ctx, "synth.autoapproved", []slog.Attr{
+		slog.String("session_id", sessionID),
+		slog.String("tool_name", toolName),
+		slog.String("provenance_sha256", provenanceSHA256),
+	})
+}
+
 // CacheHit → awakening.cache.hit (needed by SC-03).
 func (e *Emitter) CacheHit(ctx context.Context, age time.Duration) {
 	e.emit(ctx, "cache.hit", []slog.Attr{
