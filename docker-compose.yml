@@ -37,6 +37,7 @@ services:
   backend:
     build:
       context: back/go-assistant
+      network: host
       args:
         VERSION: ${VERSION:-dev}
     container_name: liwaisi-backend
