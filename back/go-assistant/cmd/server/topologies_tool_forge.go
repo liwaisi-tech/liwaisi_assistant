@@ -132,7 +132,7 @@ Output JSON with keys: path, content, sha256 (compute sha256 of content as hex s
 	tWriteSource := cpn.NewTransition("t-write-source", cpn.NodeKindBash,
 		[]string{PlaceForgeSource}, []string{PlaceForgeSourceWritten})
 	tWriteSource.BashConfig = &cpn.BashConfig{
-		Command: "sh",
+		Command: "bash",
 		Args: []string{"-c", `
 set -euo pipefail
 INPUT="$BRAE_TOKEN_PAYLOAD"
@@ -154,7 +154,7 @@ echo "{\"path\":\"$PATH_VAL\",\"written\":true}"
 	tCompile := cpn.NewTransition("t-compile", cpn.NodeKindBash,
 		[]string{PlaceForgeSourceWritten}, []string{PlaceForgeCompiledBinary})
 	tCompile.BashConfig = &cpn.BashConfig{
-		Command:          "sh",
+		Command:          "bash",
 		Args:             []string{"-c", buildCompileScript()},
 		Timeout:          compileTimeout,
 		AllowNonZeroExit: false,
@@ -165,7 +165,7 @@ echo "{\"path\":\"$PATH_VAL\",\"written\":true}"
 	tSmokeTest := cpn.NewTransition("t-smoke-test", cpn.NodeKindBash,
 		[]string{PlaceForgeCompiledBinary}, []string{PlaceForgeSmokeOK})
 	tSmokeTest.BashConfig = &cpn.BashConfig{
-		Command:          "sh",
+		Command:          "bash",
 		Args:             []string{"-c", smokeTestScript()},
 		Timeout:          smokeTimeout,
 		AllowNonZeroExit: true,

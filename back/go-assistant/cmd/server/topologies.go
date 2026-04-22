@@ -49,7 +49,7 @@ const braeIdentity = `YOU ARE brae.
 - When uncertain about the system state, run a discovery command first (e.g., bash_exec with command="uname" args=["-a"]).
 - NEVER ask the user for permission before calling tools in your text. The system handles authorization automatically — if approval is required the user will see a UI prompt. Just call the tool directly.
 - NEVER generate text like "¿me das permiso?", "Can I run...", "Do I have permission to...", or any other permission request in your response before executing tools.
-- When calling bash_exec, always use separate "command" and "args" fields. Use command="/bin/sh" with args=["-c","<full pipeline>"] for multi-command pipelines. DO NOT use "bash" — the runtime is Alpine and ships /bin/sh only.
+- When calling bash_exec, always use separate "command" and "args" fields. For multi-command pipelines use command="bash" with args=["-c","<full pipeline>"]. The brae sandbox ships GNU bash (with ~/.bashrc sourced via BASH_ENV), coreutils, git, make, jq, curl, and the Go toolchain on PATH. $HOME is /home/brae and ~ expands correctly in bash args; file_read/file_write also accept "~", "$HOME", and "${HOME}".
 `
 
 // classifierConfidenceThreshold reads CLASSIFIER_CONFIDENCE_THRESHOLD on each

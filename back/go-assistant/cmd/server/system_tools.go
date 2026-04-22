@@ -58,7 +58,7 @@ const (
   "properties": {
     "command": {
       "type": "string",
-      "description": "REQUIRED. The executable to run. Always invoke a concrete binary as command=<name> with its flags in args=[...]. Examples: 'ls', 'uname', 'git', 'python3'. DO NOT use 'bash' — the runtime is Alpine and only /bin/sh is available. MUST NOT be empty."
+      "description": "REQUIRED. The executable to run. Always invoke a concrete binary as command=<name> with its flags in args=[...]. Examples: 'ls', 'uname', 'git', 'python3', 'go'. For multi-command pipelines or shell builtins use command='bash' with args=['-c','<pipeline>']. The sandbox ships GNU bash (4.x+), coreutils, git, make, jq, curl, and the Go toolchain. MUST NOT be empty."
     },
     "args": {
       "type": "array",

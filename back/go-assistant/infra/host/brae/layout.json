@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "home": "/home/brae",
+  "folders": {
+    "workspace":  {"path": "/home/brae/workspace",  "purpose": "coding"},
+    "bin":        {"path": "/home/brae/bin",        "purpose": "executables"},
+    "Documents":  {"path": "/home/brae/Documents",  "purpose": "long-form text, specs, pdfs"},
+    "Notes":      {"path": "/home/brae/Notes",      "purpose": "short scratch notes"},
+    "Music":      {"path": "/home/brae/Music",      "purpose": "audio"},
+    "Images":     {"path": "/home/brae/Images",     "purpose": "images"},
+    "Videos":     {"path": "/home/brae/Videos",     "purpose": "video"},
+    "Downloads":  {"path": "/home/brae/Downloads",  "purpose": "network downloads"},
+    "cache":      {"path": "/home/brae/.cache",     "purpose": "disposable tool caches"},
+    "brae":       {"path": "/home/brae/.brae",      "purpose": "agent-internal state"},
+    "tmp":        {"path": "/home/brae/.brae/tmp",  "purpose": "single-turn scratch"}
+  },
+  "rules": [
+    "Code belongs under workspace, one subfolder per project.",
+    "Match file extension to folder: mp3/wav/flac -> Music, png/jpg/svg -> Images, mp4/webm -> Videos.",
+    "Scratch work goes in .brae/tmp, not /tmp or $HOME root.",
+    "Network downloads land in Downloads first, then move once classified."
+  ]
+}

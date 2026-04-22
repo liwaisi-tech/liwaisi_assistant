@@ -241,7 +241,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 	tWho := cpn.NewTransition("t-who", cpn.NodeKindBash,
 		[]string{PlaceHostTrigger}, []string{PlaceHostIdentityRaw})
 	tWho.BashConfig = &cpn.BashConfig{
-		Command:          "sh",
+		Command:          "bash",
 		Args:             []string{"-c", whoamiScript()},
 		Timeout:          hostDiscoveryLongTimeout,
 		AllowNonZeroExit: true,
@@ -251,7 +251,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 	tUname := cpn.NewTransition("t-uname", cpn.NodeKindBash,
 		[]string{PlaceHostTrigger}, []string{PlaceHostKernelRaw})
 	tUname.BashConfig = &cpn.BashConfig{
-		Command:          "sh",
+		Command:          "bash",
 		Args:             []string{"-c", unameScript()},
 		Timeout:          hostDiscoveryLongTimeout,
 		AllowNonZeroExit: true,
@@ -265,7 +265,7 @@ func hostDiscoveryTopologyFactory(sessionID string, deps HostDiscoveryDeps) *cpn
 		t := cpn.NewTransition(id, cpn.NodeKindBash,
 			[]string{PlaceHostTrigger}, []string{out})
 		t.BashConfig = &cpn.BashConfig{
-			Command:          "sh",
+			Command:          "bash",
 			Args:             []string{"-c", probeScript(probe)},
 			Timeout:          hostDiscoveryProbeTimeout,
 			AllowNonZeroExit: true,

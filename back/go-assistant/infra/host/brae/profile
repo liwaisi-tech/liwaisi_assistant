@@ -1,0 +1,8 @@
+# ~/.bash_profile for the brae agent user.
+# Sourced by bash login shells. Delegates to ~/.bashrc so a single file
+# owns the environment definition.
+
+if [ -f "$HOME/.bashrc" ]; then
+    # shellcheck source=/home/brae/.bashrc
+    . "$HOME/.bashrc"
+fi

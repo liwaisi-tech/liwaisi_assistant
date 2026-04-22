@@ -1,0 +1,50 @@
+# ~/.bashrc for the brae agent user.
+# Sourced for every `bash -c '...'` invocation via BASH_ENV (see Dockerfile).
+# Keep this file idempotent and side-effect free — it runs on every command.
+
+# Refuse to run outside the brae home. AllowedRoot is enforced by HostGate
+# at the Go layer; this is a belt-and-braces check for interactive shells.
+: "${HOME:=/home/brae}"
+export HOME
+
+# Deterministic umask so tool-forge writes predictable permissions.
+umask 022
+
+# PATH: Go toolchain + per-user bin. $HOME/bin is what topologies_tool_forge.go
+# installs compiled brae tools into (see BIN_DIR="$HOME/bin").
+export GOPATH="${GOPATH:-$HOME/go}"
+export GOCACHE="${GOCACHE:-$HOME/.cache/go-build}"
+export PATH="$HOME/bin:$GOPATH/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Locale / time — prevents UTF-8 breakage in python/node subprocesses the
+# agent spawns (e.g. topologies_tool_forge t-write-source uses python3).
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export TZ="${TZ:-UTC}"
+
+# Keep tool output plain so HostGate log parsers don't trip on ANSI.
+export TERM="${TERM:-dumb}"
+export NO_COLOR=1
+
+# Opinionated workspace layout (see ~/LAYOUT.md and ~/.brae/layout.json).
+# These variables are always defined so the agent can reference folders
+# symbolically instead of hard-coding paths.
+export BRAE_HOME="$HOME"
+export BRAE_WORKSPACE="$HOME/workspace"
+export BRAE_BIN="$HOME/bin"
+export BRAE_DOCUMENTS="$HOME/Documents"
+export BRAE_NOTES="$HOME/Notes"
+export BRAE_MUSIC="$HOME/Music"
+export BRAE_IMAGES="$HOME/Images"
+export BRAE_VIDEOS="$HOME/Videos"
+export BRAE_DOWNLOADS="$HOME/Downloads"
+export BRAE_TMP="$HOME/.brae/tmp"
+
+# Safer defaults for interactive use. Non-interactive `bash -c` shells skip
+# the block below because $PS1 is unset.
+if [ -n "${PS1-}" ]; then
+    alias ls='ls --color=auto'
+    alias ll='ls -la'
+    alias grep='grep --color=auto'
+    PS1='\[\e[32m\]brae@sandbox\[\e[0m\]:\w\$ '
+fi
