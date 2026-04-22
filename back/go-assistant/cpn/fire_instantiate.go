@@ -100,6 +100,19 @@ func fireInstantiate(ctx context.Context, t *Transition, c *CPN, consumed []Toke
 	child.TopologyRouter = c.TopologyRouter
 	child.FirstRunLedger = c.FirstRunLedger
 	child.Cost = c.Cost
+	// JIT sub-CPN plan Phase 3: when the synthesized child references
+	// tools by name (kind:"tool", toolName:"bash_exec"), persist.UnmarshalCPN
+	// preserves the ToolName field but does NOT attach an executor. Ask the
+	// ToolRegistry (when it exposes the wider *tools.Registry surface) to
+	// inject executors + ToolMeta so the tool transitions can fire.
+	// Typed as an anonymous interface to avoid widening the narrow
+	// cpn.ToolRegistry port — that would break test fakes that only
+	// implement RegisterManifest.
+	if child.ToolRegistry != nil {
+		if injector, ok := any(child.ToolRegistry).(interface{ InjectIntoCPN(*CPN) }); ok {
+			injector.InjectIntoCPN(child)
+		}
+	}
 
 	childCtx, cancel := withOptionalTimeout(ctx, t.InstantiateConfig)
 	defer cancel()

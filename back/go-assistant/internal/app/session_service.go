@@ -389,6 +389,14 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		// GAP-3: CPN gets a handle to the registry so
 		// NodeKindRegisterTool can publish new tools at runtime.
 		root.ToolRegistry = s.toolRegistry
+		// JIT sub-CPN plan Phase 2: surface the toolbox catalogue to the
+		// synthesize transition's prompt. *tools.Registry implements both
+		// SessionToolRegistry and cpn.ToolboxCatalogPort; the assertion
+		// succeeds in production and is a tidy no-op for tests that pass
+		// a thinner fake.
+		if catalog, ok := any(s.toolRegistry).(cpn.ToolboxCatalogPort); ok {
+			root.ToolboxCatalog = catalog
+		}
 	}
 
 	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
@@ -1128,6 +1136,11 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 		materialiseUserTools(root, s.toolRegistry, s.hostRuntime, s.logger)
 		s.toolRegistry.InjectIntoCPN(root)
 		root.ToolRegistry = s.toolRegistry
+		// JIT sub-CPN plan Phase 2: mirror the CreateSession wiring so the
+		// synthesize transition sees the toolbox catalogue on this path too.
+		if catalog, ok := any(s.toolRegistry).(cpn.ToolboxCatalogPort); ok {
+			root.ToolboxCatalog = catalog
+		}
 	}
 
 	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
@@ -1893,6 +1906,9 @@ func (s *SessionService) loadFromPersist(ctx context.Context, sessionID string) 
 	s.injectPersonality(ctx, root, rec.UserID)
 	if s.toolRegistry != nil {
 		s.toolRegistry.InjectIntoCPN(root)
+		if catalog, ok := any(s.toolRegistry).(cpn.ToolboxCatalogPort); ok {
+			root.ToolboxCatalog = catalog
+		}
 	}
 
 	// Wire HITL channels to LLM transitions that call RequiresHITL tools.

@@ -97,6 +97,13 @@ type classifierResult struct {
 	// confirm surface (e.g. "bloquea gpt-5" → manage_args={"registry_id":"gpt-5"}).
 	// Absent when Intent != "manage-models".
 	ManageArgs map[string]any `json:"manage_args,omitempty"`
+
+	// CompositionHint is true when the user's request is best served by a
+	// composed sub-CPN (parallel/concurrent tool fan-out with a consolidated
+	// output). Set by the classifier per the JIT sub-CPN plan Phase 2; when
+	// true, guardCompositionHint routes the token to t-compose-spec instead
+	// of the direct planner. Defaults to false / omitted.
+	CompositionHint bool `json:"composition_hint,omitempty"`
 }
 
 // confidence returns the effective confidence, defaulting to 1.0 when the
@@ -190,9 +197,39 @@ func guardPlanTaskDirect(tokens []*cpn.Token) bool {
 	if r.NeedsClarification {
 		return false
 	}
+	// JIT sub-CPN plan Phase 2: yield to the compose-spec branch when the
+	// classifier flagged a composition hint. Without this check t-plan-direct
+	// and t-compose-spec would both be enabled on the same token, and CPN
+	// semantics would non-deterministically pick a firing — a stateful bug
+	// we refuse to ship.
+	if r.CompositionHint {
+		return false
+	}
 	// Confidence gate: require the classifier to be sufficiently sure before
 	// skipping clarification. Keeps ambiguous-but-overconfident prompts out of
 	// the direct-plan path. See guardNeedsClarification for the complement.
+	return r.confidence() >= classifierConfidenceThreshold()
+}
+
+// guardCompositionHint fires t-compose-spec when the classifier flagged the
+// user request as benefitting from a composed sub-CPN (parallel tool fan-out
+// + consolidated output). Mutually exclusive with guardPlanTaskDirect by
+// construction (both gate on intent=="task" && !needs_clarification, and
+// guardPlanTaskDirect yields when CompositionHint is set).
+func guardCompositionHint(tokens []*cpn.Token) bool {
+	r, ok := parseClassified(tokens)
+	if !ok {
+		return false
+	}
+	if !strings.EqualFold(r.Intent, "task") {
+		return false
+	}
+	if r.NeedsClarification {
+		return false
+	}
+	if !r.CompositionHint {
+		return false
+	}
 	return r.confidence() >= classifierConfidenceThreshold()
 }
 
@@ -213,6 +250,7 @@ func newServerFuncRegistry() *persist.FuncRegistry {
 	r.RegisterGuard("guard-needs-clarification", guardNeedsClarification)
 	r.RegisterGuard("guard-plan-task-direct", guardPlanTaskDirect)
 	r.RegisterGuard("guard-plan-task-clarified", guardPlanTaskClarified)
+	r.RegisterGuard("guard-composition-hint", guardCompositionHint)
 	// Iterative clarification loop (spec-architecture-cpn-iterative-clarification-loop.md).
 	r.RegisterGuard("guard-residual-ambiguous", guardResidualAmbiguous)
 	r.RegisterGuard("guard-residual-resolved", guardResidualResolved)
@@ -358,6 +396,23 @@ func unifiedTopologyFactory(sessionID string) *cpn.CPN {
 		"p-plan":          cpn.NewPlace("p-plan", cpn.ColorArtifact, cpn.SpaceSurface),
 		"p-reviewed":      cpn.NewPlace("p-reviewed", cpn.ColorHuman, cpn.SpaceComputation),
 		"p-output":        cpn.NewPlace("p-output", cpn.ColorArtifact, cpn.SpaceSurface),
+		// JIT sub-CPN composition lane (plan i-need-you-make-playful-dongarra.md).
+		// Phase 2 wires t-compose-spec (NodeKindLLM consuming p-classified) to
+		// produce a ColorTaskSpec token on p-synth-request; t-synthesize mints
+		// a topology and forwards the ColorFlowRef on p-instantiate-request;
+		// t-instantiate spawns the child sub-CPN and deposits the aggregated
+		// result on p-subnet-output.
+		//
+		// All three places live in SpaceSurface because the engine's space
+		// invariant (cpn/space_invariant_test.go) allows only NodeKindHITL to
+		// bridge Surface→Computation. p-classified (the upstream source) is
+		// Surface; placing the JIT lane in the same space keeps t-compose-spec
+		// valid without inserting an artificial HITL gate just to cross a
+		// partition boundary the paper describes conceptually, not as a hard
+		// engine rule.
+		"p-synth-request":       cpn.NewPlace("p-synth-request", cpn.ColorTaskSpec, cpn.SpaceSurface),
+		"p-instantiate-request": cpn.NewPlace("p-instantiate-request", cpn.ColorFlowRef, cpn.SpaceSurface),
+		"p-subnet-output":       cpn.NewPlace("p-subnet-output", cpn.ColorJSON, cpn.SpaceSurface),
 	}
 	// REQ-001: seed p-round with {n:0, reset:false} so the initial marking
 	// has the counter available. Also covers REQ-051 (rehydrated
@@ -385,9 +440,17 @@ The message may be in any human language. Classify identically regardless of lan
 A "USER CONTEXT — REGIONAL REGISTER" preamble may be prepended to this prompt at runtime. When present, use the listed idiom glosses to resolve ambiguous imperatives in the user's regional register (e.g., a verb that looks like a command in standard usage but is conversational in that variant). Do not enumerate the idioms in your output; let them inform the conversation/task decision in Step 1.
 
 Schema (all keys required):
-{"intent":"conversation"|"task"|"manage-models","needs_clarification":bool,"missing":[string,...],"confidence":0.0,"manage_kind":"list"|"register"|"toggle"|"set-default"|"review-license"|"delete","manage_args":{}}
+{"intent":"conversation"|"task"|"manage-models","needs_clarification":bool,"missing":[string,...],"confidence":0.0,"manage_kind":"list"|"register"|"toggle"|"set-default"|"review-license"|"delete","manage_args":{},"composition_hint":bool}
 
 The "manage-models" intent + manage_kind + manage_args keys are OPTIONAL; include them ONLY when intent == "manage-models". Omit when not applicable.
+
+The "composition_hint" key is OPTIONAL. Set it to true ONLY when ALL of the following hold:
+  (a) intent == "task" AND needs_clarification == false, AND
+  (b) the user is explicitly asking for TWO OR MORE operations to run CONCURRENTLY (words like "in parallel", "at the same time", "simultaneously", "side by side") AND the results consolidated into a single structured output (usually JSON), AND
+  (c) the operations themselves map cleanly onto the host's existing tools — shell commands, HTTP fetches, file reads — not onto open-ended cognitive work.
+Examples that SET true: "run ls, uname -a, df -h in parallel and give me a JSON", "fetch these three URLs simultaneously and merge the bodies", "list directories and check disk usage at the same time and consolidate".
+Examples that do NOT set true: "write a plan with three sections" (sequential artifact, not concurrent execution); "compare two paragraphs" (single cognitive act); "run ls" (one operation).
+Omit the field or set false when unsure — the platform falls back safely to the direct planner.
 
 Decision procedure — run these steps mentally, then emit JSON.
 
@@ -851,6 +914,85 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 	tRegisterTool := cpn.NewTransition("register_tool", cpn.NodeKindTool, []string{}, []string{})
 	tRegisterTool.ToolName = "register_tool"
 
+	// JIT sub-CPN lane (plan i-need-you-make-playful-dongarra.md).
+	// Phase 1 wired the places + synthesize/instantiate transitions; Phase 2
+	// routes task-intent tokens whose classifier flagged composition_hint
+	// into t-compose-spec, which translates the conversation into a
+	// ColorTaskSpec JSON the synthesizer can consume.
+	tComposeSpec := cpn.NewTransition("t-compose-spec", cpn.NodeKindLLM,
+		[]string{"p-classified"}, []string{"p-synth-request"})
+	tComposeSpec.SystemPrompt = envOr("PROMPT_COMPOSE_SPEC", braeIdentity+`
+You are the sub-CPN composer for brae. The user's latest request has been classified as a task whose ideal execution is a composed Colored Petri Net — parallel tool fan-out with a consolidated output.
+
+Your ONLY output is a TaskSpec JSON object. No prose. No code fences.
+
+Schema (all keys required except where noted):
+{
+  "intent": "string — one sentence restating what the sub-CPN should accomplish, in the user's language",
+  "tools_needed": ["<tool qualified name>", ...],
+  "inputs": [ {"name":"<field>","value":<literal-or-null>} , ...],
+  "expected_output": {"color":"JSON","shape":"string describing the consolidated object"},
+  "parallelism_hint": "fanout" | "sequence" | "auto",
+  "budget": {"max_places": 20, "max_transitions": 20, "timeout_ms": 30000}
+}
+
+Rules:
+- Choose "parallelism_hint":"fanout" when the user explicitly asks for concurrent execution.
+- "tools_needed" MUST reference qualified tool names from the host's toolbox catalogue; pass through bare names ("bash_exec") only when the tool has no namespace.
+- "expected_output.shape" must describe the consolidated JSON keys the user will see.
+- Keep "budget" modest — the synthesizer will reject oversized topologies.
+- If you cannot produce a defensible TaskSpec, emit {"intent":"fallback","tools_needed":[],"inputs":[],"expected_output":{"color":"JSON","shape":"empty"},"parallelism_hint":"auto","budget":{"max_places":5,"max_transitions":5,"timeout_ms":10000}} so the downstream error handler routes to a normal reply.
+
+`+langRule)
+	tComposeSpec.LLMConfig = &cpn.LLMConfig{
+		Role:                 "structured",
+		MaxTokens:            envInt("MAX_TOKENS_COMPOSE_SPEC", 1024),
+		Temperature:          0.2,
+		RequireJSON:          true,
+		ResponseFmtRequired:  true,
+		StreamOutput:         false,
+		SkipHistory:          false,
+		SkipOutputHistory:    true,
+		SkipRegionalPreamble: true,
+	}
+	tComposeSpec.Guard = guardCompositionHint
+
+	tSynthesize := cpn.NewTransition("t-synthesize", cpn.NodeKindSynthesize,
+		[]string{"p-synth-request"}, []string{"p-instantiate-request"})
+	tSynthesize.SynthesizeConfig = &cpn.SynthesizeConfig{
+		MaxTokens:      envInt("MAX_TOKENS_SYNTHESIZE", 4096),
+		Temperature:    0.2,
+		MaxCorrections: 2,
+		SizeCap:        cpn.DefaultSizeCap(),
+	}
+
+	tInstantiate := cpn.NewTransition("t-instantiate", cpn.NodeKindInstantiate,
+		[]string{"p-instantiate-request"}, []string{"p-subnet-output"})
+	tInstantiate.InstantiateConfig = &cpn.InstantiateConfig{}
+
+	// Phase 4 continuation: once the sub-CPN terminates and its aggregated
+	// result lands on p-subnet-output, an LLM transition presents the
+	// structured result to the user as a natural-language reply. Without
+	// this hop the subnet's output would sit on a terminal place forever
+	// and the user would never see it.
+	tSubnetReply := cpn.NewTransition("t-subnet-reply", cpn.NodeKindLLM,
+		[]string{"p-subnet-output"}, []string{"p-output"})
+	tSubnetReply.SystemPrompt = envOr("PROMPT_SUBNET_REPLY", braeIdentity+`
+A sub-CPN you just composed and executed produced a structured result (visible to you as the most recent user message — even though it is system-generated). Your job is to present the result as a clear, concise reply to the original user request.
+
+Rules:
+- Do NOT mention CPNs, sub-nets, topologies, or any internal machinery. The user should experience this as a natural answer.
+- Keep the reply tight. If the payload is small JSON, inline it in a code block. If it is larger, summarize the key findings and offer to show more on request.
+- Match the user's language (see the language rule below).
+- Preserve meaningful data fidelity. Do NOT paraphrase numeric values or hostnames.
+
+`+langRule)
+	tSubnetReply.LLMConfig = &cpn.LLMConfig{
+		MaxTokens:    envInt("MAX_TOKENS_SUBNET_REPLY", 2048),
+		Temperature:  0.5,
+		StreamOutput: true,
+	}
+
 	transitions := map[string]*cpn.Transition{
 		"t-classify":       tClassify,
 		"t-direct":         tDirect,
@@ -869,6 +1011,11 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		"file_read":     tFileRead,
 		"file_write":    tFileWrite,
 		"register_tool": tRegisterTool,
+		// JIT sub-CPN lane — see plan Phases 1-4.
+		"t-compose-spec": tComposeSpec,
+		"t-synthesize":   tSynthesize,
+		"t-instantiate":  tInstantiate,
+		"t-subnet-reply": tSubnetReply,
 	}
 
 	c := cpn.NewCPN(

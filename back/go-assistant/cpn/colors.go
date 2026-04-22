@@ -72,6 +72,12 @@ const (
 	// FlowRepository (GAP-4). Payload is a FlowRef { FlowID, Summary }.
 	// Produced by NodeKindSynthesize, consumed by NodeKindInstantiate.
 	ColorFlowRef ColorSet = "FLOW_REF"
+
+	// ColorTaskSpec carries a JIT sub-CPN composition request. Payload is
+	// a JSON document describing the user's intent, the tools the subnet
+	// may use, input shape, and a parallelism hint. Consumed by
+	// NodeKindSynthesize; produced by the synthesize_subnet LLM tool.
+	ColorTaskSpec ColorSet = "TASK_SPEC"
 )
 
 // IsShellColor reports whether c is one of the shell-family colors

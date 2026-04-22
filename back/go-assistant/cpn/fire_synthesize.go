@@ -40,7 +40,8 @@ func fireSynthesize(ctx context.Context, t *Transition, c *CPN, consumed []Token
 
 	task := extractTaskPayload(consumed)
 	catalogue := c.SafeRegistry.Catalogue()
-	base := buildSynthesizePrompt(t.SynthesizeConfig, catalogue, task)
+	toolboxBlock := renderToolboxBlock(ctx, c, task)
+	base := buildSynthesizePrompt(t.SynthesizeConfig, catalogue, toolboxBlock, task)
 
 	maxCorrections := t.SynthesizeConfig.MaxCorrections
 	if maxCorrections < 0 {
@@ -187,8 +188,13 @@ func extractTaskPayload(consumed []Token) string {
 
 // buildSynthesizePrompt composes the LLM system prompt: the author's
 // SystemPrompt (with TaskPlaceholder substituted), the machine-readable
-// safe catalogue, and the CPNTopology schema hint.
-func buildSynthesizePrompt(cfg *SynthesizeConfig, catalogue json.RawMessage, task string) string {
+// safe catalogue, an optional toolbox block, and the CPNTopology schema hint.
+//
+// toolboxBlock is pre-rendered by renderToolboxBlock from the CPN's
+// ToolboxCatalog port; it is appended verbatim between the safe catalogue
+// and the schema hint so the LLM can reference tool IDs by qualified name
+// when emitting `kind:"tool"` transitions in a sub-CPN topology.
+func buildSynthesizePrompt(cfg *SynthesizeConfig, catalogue json.RawMessage, toolboxBlock, task string) string {
 	body := cfg.SystemPrompt
 	if body == "" {
 		body = defaultSynthesizeSystemPrompt
@@ -204,11 +210,37 @@ func buildSynthesizePrompt(cfg *SynthesizeConfig, catalogue json.RawMessage, tas
 	} else {
 		b.Write(catalogue)
 	}
+	if trimmed := strings.TrimSpace(toolboxBlock); trimmed != "" {
+		b.WriteString("\n\n")
+		b.WriteString(trimmed)
+	}
 	b.WriteString("\n\nTOPOLOGY SCHEMA (informal):\n")
 	b.WriteString(topologySchemaHint)
 	b.WriteString("\n\nRESPONSE FORMAT:\n")
 	b.WriteString("Return your topology as JSON wrapped exactly between <topology> and </topology> delimiters. Nothing else outside the delimiters.")
 	return b.String()
+}
+
+// renderToolboxBlock asks the CPN's ToolboxCatalog port, if wired, for a
+// prompt-ready catalogue filtered to the task's tools_needed when the
+// payload carries that hint. Returns an empty string when no port is wired
+// or when no toolboxes are registered.
+//
+// The filter is best-effort: we attempt to decode the task payload as a
+// TaskSpec JSON; on any parse failure we fall back to the unfiltered
+// catalogue so the LLM still sees something useful.
+func renderToolboxBlock(ctx context.Context, c *CPN, task string) string {
+	if c == nil || c.ToolboxCatalog == nil {
+		return ""
+	}
+	filter := ToolboxCatalogFilter{}
+	var spec struct {
+		ToolsNeeded []string `json:"tools_needed"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(task)), &spec); err == nil {
+		filter.ToolNames = spec.ToolsNeeded
+	}
+	return c.ToolboxCatalog.RenderCatalogue(ctx, filter)
 }
 
 const defaultSynthesizeSystemPrompt = `You are the CPN synthesiser for brae.

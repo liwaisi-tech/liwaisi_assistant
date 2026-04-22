@@ -151,6 +151,13 @@ type CPN struct {
 	// same pattern GAP-3 uses for FirstRunLedger.
 	TopologyRouter TopologyHITLRouter
 
+	// ToolboxCatalog, when non-nil, renders a prompt-ready catalogue of
+	// the host's toolboxes + their tools. Consumed by fire_synthesize to
+	// teach the LLM which tool IDs it can reference inside an authored
+	// sub-CPN topology. Nil means "no toolbox hints" — the synthesizer
+	// falls back to the SafeRegistry catalogue alone.
+	ToolboxCatalog ToolboxCatalogPort
+
 	// approvedFlows records flow_ids that the user has already approved
 	// during this session (REQ-051). Subsequent instantiations skip HITL.
 	// Allocated lazily under mu on first approval.
