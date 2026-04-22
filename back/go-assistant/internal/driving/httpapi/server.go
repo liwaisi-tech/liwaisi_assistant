@@ -46,6 +46,7 @@ func DefaultServerConfig() ServerConfig {
 type Server struct {
 	httpServer *http.Server
 	broker     *SSEBroker
+	handlers   *Handlers
 	logger     *slog.Logger
 	config     ServerConfig
 }
@@ -91,10 +92,21 @@ func NewServer(cfg ServerConfig, appService SessionPort, logger *slog.Logger, bi
 			WriteTimeout: 0, // Disabled for SSE; managed per-request via ResponseController
 			IdleTimeout:  cfg.IdleTimeout,
 		},
-		broker: broker,
-		logger: logger,
-		config: cfg,
+		broker:   broker,
+		handlers: handlers,
+		logger:   logger,
+		config:   cfg,
 	}
+}
+
+// AttachToolApprovalBroker installs the SC-13 synthesized-tool HITL broker
+// on the handler struct after construction. Call this once the broker is
+// built (it needs the SSE broker returned by Broker()).
+func (s *Server) AttachToolApprovalBroker(b *ToolApprovalBroker) {
+	if s == nil || s.handlers == nil {
+		return
+	}
+	s.handlers.ToolApproval = b
 }
 
 // Broker returns the SSE broker for event callback wiring.
@@ -280,4 +292,11 @@ func WithAuthoredFlows(repo cpn.AuthoredFlowRepository) ServerOption {
 // The admin /api/v1/admin/skills endpoints return 503 when unset.
 func WithSkillManifest(svc SkillManifestPort) ServerOption {
 	return func(h *Handlers) { h.SkillManifest = svc }
+}
+
+// WithToolApprovalBroker injects the SC-13 synthesized-tool HITL broker used
+// by POST /api/v1/sessions/{id}/tool-approvals and, via an adapter in
+// internal/app, by toolapproval.Gate.
+func WithToolApprovalBroker(broker *ToolApprovalBroker) ServerOption {
+	return func(h *Handlers) { h.ToolApproval = broker }
 }

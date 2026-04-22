@@ -277,6 +277,17 @@ func (g *PolicyHostGate) Evaluate(ctx context.Context, op cpn.GateOp) Decision {
 	// surface even if the classifier were to somehow grant it a budget.
 	if g.AwakeningMode != nil && g.AwakeningMode.Active(sessionID) &&
 		(op.Kind == "exec" || op.Kind == "spawn_pty") {
+		// Primordial reflex fast-path: the awakening topology itself
+		// authors these Commands in code (not via the LLM), so they are
+		// trusted by construction. Stamping is the subsystem's opt-in —
+		// callers without Origin still fall through to the LLM-probe
+		// introspection check below.
+		if op.Origin == cpn.GateOriginAwakensNative {
+			dec.Verdict = VerdictAllow
+			dec.RiskBand = RiskSafe
+			dec.Reason = "awakening mode: native reflex auto-approved"
+			return dec
+		}
 		if isIntrospectionCommand(op.Command) {
 			dec.Verdict = VerdictAllow
 			dec.RiskBand = RiskSafe

@@ -136,6 +136,8 @@ func main() {
 			}),
 			app.WithSafeRegistry(safeRegistry),
 			app.WithAuthoredFlowRepository(storepostgres.NewAuthoredFlowRepository(store.Pool())),
+			app.WithApprovalStore(storepostgres.NewApprovalRepository(store.Pool())),
+			app.WithPendingToolStore(storepostgres.NewPendingToolRepository(store.Pool())),
 		)
 
 		// ── Config provider (encrypted config in DB) ────────────────────
@@ -527,6 +529,59 @@ func main() {
 	}
 
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
+
+	// ── SC-13 synthesized-tool HITL broker ─────────────────────────────
+	// Built after the HTTP server because it needs the SSE broker owned
+	// by Server.Broker(). Attach to both the handler struct (so the POST
+	// endpoint can resolve prompts) and the SessionService (so
+	// toolapproval.Gate can emit them).
+	toolApprovalBroker := httpapi.NewToolApprovalBroker(srv.Broker(), logger)
+	srv.AttachToolApprovalBroker(toolApprovalBroker)
+	appService.SetToolApprovalPrompter(toolApprovalBroker)
+
+	// ── brae-awakens startup primer ────────────────────────────────────
+	// Prime the host-capability snapshot + toolbox catalogue at boot so the
+	// first interactive session finds a populated registry and the LLM's
+	// "## Environment awareness" block lists every toolbox/tool. Without
+	// this, awakening would run async AFTER injectPersonality has baked the
+	// system prompt — the LLM would then answer "no tools" for the first
+	// few turns. Bounded at 60s; a failure is logged but not fatal (dev
+	// setups without an LLM provider still boot).
+	primeCtx, cancelPrime := context.WithTimeout(context.Background(), 60*time.Second)
+	if err := appService.PrimeHostCapabilities(primeCtx, true); err != nil {
+		logger.Warn("brae-awakens startup primer failed", slog.Any("error", err))
+	} else {
+		logger.Info("brae-awakens startup primer complete")
+	}
+	cancelPrime()
+
+	// Periodic refresh so newly-installed host binaries / updated personality
+	// caches are picked up without a restart. Interval matches the 24h cache
+	// TTL by default; override via LIWAISI_AWAKENING_REFRESH_INTERVAL.
+	refreshInterval := parseDuration("LIWAISI_AWAKENING_REFRESH_INTERVAL", 24*time.Hour)
+	if refreshInterval > 0 {
+		refreshCtx, cancelRefresh := context.WithCancel(context.Background())
+		defer cancelRefresh()
+		go func() {
+			ticker := time.NewTicker(refreshInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-refreshCtx.Done():
+					return
+				case <-ticker.C:
+					cycleCtx, cancel := context.WithTimeout(refreshCtx, 60*time.Second)
+					if err := appService.PrimeHostCapabilities(cycleCtx, true); err != nil {
+						logger.Warn("brae-awakens refresh failed", slog.Any("error", err))
+					} else {
+						logger.Info("brae-awakens refresh complete")
+					}
+					cancel()
+				}
+			}
+		}()
+		logger.Info("brae-awakens refresh loop enabled", slog.Duration("interval", refreshInterval))
+	}
 
 	// ── Hourly purge goroutine ──────────────────────────────────────────
 	// Runs under the process lifetime context so it exits with the

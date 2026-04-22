@@ -5,8 +5,14 @@ import { MessageBubble } from './MessageBubble';
 import { ActivityBubble } from './ActivityBubble';
 import type { SessionState } from '../../types/api';
 import type { ChatMessage, HITLAction } from '../../types/chat';
-import type { CurrentActivity, RecentReceipt } from '../../hooks/useChat';
-import type { A2UIAction } from './a2ui/types';
+import type {
+  AwakeningPhase,
+  CurrentActivity,
+  PendingToolApproval,
+  RecentReceipt,
+} from '../../hooks/useChat';
+import type { A2UIAction, A2UIPayload } from './a2ui/types';
+import { ToolApprovalPrompt } from './ToolApprovalPrompt';
 
 const SUGGESTION_KEYS = [
   'messageList.suggestions.explainCpn',
@@ -18,6 +24,8 @@ const SUGGESTION_KEYS = [
 interface MessageListProps {
   messages: ChatMessage[];
   sessionState: SessionState;
+  sessionId?: string | null;
+  awakeningPhase?: AwakeningPhase;
   onSuggestionClick?: (prompt: string) => void;
   onHITLAction?: (transitionId: string, action: HITLAction, content?: string) => void;
   onA2UIAction?: (action: A2UIAction, messageId: string) => boolean;
@@ -25,11 +33,17 @@ interface MessageListProps {
   currentActivity?: CurrentActivity | null;
   recentReceipt?: RecentReceipt | null;
   onReceiptDismiss?: () => void;
+  /** Outstanding first-run tool approval prompts (task #9). */
+  pendingToolApprovals?: PendingToolApproval[];
+  /** Called once a tool approval POST resolves successfully. */
+  onToolApprovalResolved?: (requestId: string) => void;
 }
 
 export function MessageList({
   messages,
   sessionState,
+  sessionId = null,
+  awakeningPhase = 'complete',
   onSuggestionClick,
   onHITLAction,
   onA2UIAction,
@@ -37,6 +51,8 @@ export function MessageList({
   currentActivity = null,
   recentReceipt = null,
   onReceiptDismiss,
+  pendingToolApprovals = [],
+  onToolApprovalResolved,
 }: MessageListProps) {
   const { t } = useTranslation('chat');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -49,10 +65,56 @@ export function MessageList({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, lastMessage?.content]);
 
+  // Empty-state routing:
+  //   • No session yet → generic welcome + suggestion chips (landing view).
+  //   • Session active, awakening still running → "waking up" home card; the
+  //     actual awakening A2UI card from the backend will replace this view
+  //     as soon as it lands (becomes the first message and thus the home).
+  //   • Session active, awakening complete but no messages → render nothing;
+  //     the agent has spoken at least once and there's nothing useful to say.
+  const showLandingWelcome = messages.length === 0 && !sessionId && sessionState === 'idle';
+  const showWakingHome =
+    messages.length === 0 && !!sessionId && awakeningPhase === 'pending';
+
   return (
     <div className="flex-1 overflow-y-auto chat-scroll">
       <div className="mx-auto w-full max-w-3xl px-4 py-6 space-y-4">
-        {messages.length === 0 && sessionState === 'idle' && (
+        {showWakingHome && (
+          <div
+            data-testid="awakening-home"
+            className="flex flex-col items-center justify-center min-h-[50vh] gap-4 welcome-fade-in"
+          >
+            <span
+              aria-hidden="true"
+              className="activity-pulse"
+              style={{
+                display: 'inline-block',
+                width: 14,
+                height: 14,
+                borderRadius: 9999,
+                background: 'var(--accent)',
+                boxShadow: '0 0 16px var(--accent-glow)',
+              }}
+            />
+            <div className="text-center">
+              <h2
+                className="text-2xl font-semibold tracking-tight"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: 'var(--text-primary)',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                {t('messageList.wakingTitle')}
+              </h2>
+              <p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>
+                {t('messageList.wakingSubtitle')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {showLandingWelcome && (
           <div className="flex flex-col items-center justify-center min-h-[50vh] gap-6 welcome-fade-in">
             {/* Sparkle icon */}
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="welcome-sparkle">
@@ -136,6 +198,17 @@ export function MessageList({
             onOpenMonitor={onOpenMonitor}
           />
         ))}
+
+        {sessionId && pendingToolApprovals.length > 0 &&
+          pendingToolApprovals.map((approval) => (
+            <ToolApprovalPrompt
+              key={approval.requestId}
+              requestId={approval.requestId}
+              preview={approval.preview as A2UIPayload}
+              sessionId={sessionId}
+              onResolved={() => onToolApprovalResolved?.(approval.requestId)}
+            />
+          ))}
 
         <ActivityBubble
           activity={currentActivity}

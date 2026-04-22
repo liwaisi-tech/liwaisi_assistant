@@ -50,6 +50,7 @@ services:
       - LIWAISI_DB_DSN=postgres://liwaisi:${POSTGRES_PASSWORD:-liwaisi_dev}@postgres:5432/liwaisi?sslmode=disable
       - LIWAISI_REDIS_URL=redis://redis:6379/0
       - LIWAISI_MASTER_KEY_PATH=/data/secrets/master.key
+      - LIWAISI_HOST_ID=${LIWAISI_HOST_ID:-liwaisi-backend-dev}
       - ADMIN_EMAILS=${ADMIN_EMAILS:?ADMIN_EMAILS is required}
     volumes:
       - secretsdata:/data/secrets

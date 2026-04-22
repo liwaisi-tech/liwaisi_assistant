@@ -37,9 +37,19 @@ const (
 	// PlaceAwakenSubnetSpec carries the composed *cpn.CPN describing the
 	// probe-fanout sub-net. The probe-instantiate transition consumes it.
 	PlaceAwakenSubnetSpec = "p-awaken-subnet-spec"
-	// PlaceAwakeningReport holds the reducer-assembled AwakeningReport
-	// emitted by the fanout sub-CPN (NOT raw LLM output).
+	// PlaceAwakeningReportRaw holds the probe-only AwakeningReport emitted
+	// by the fanout sub-CPN. Consumed by t-awaken-curate, which adds the
+	// LLM-authored ToolsRegister before forwarding to t-awaken-report.
+	PlaceAwakeningReportRaw = "p-awakening-report-raw"
+	// PlaceAwakeningReport holds the enriched AwakeningReport produced by
+	// t-awaken-curate (probe + LLM-authored tools_to_register).
 	PlaceAwakeningReport    = "p-awakening-report"
+	// PlaceAwakeningReportSynth carries the same AwakeningReport after
+	// t-awaken-synth has optionally run helpparse + toolsynth to stage
+	// PendingTools. The report payload is unchanged — synthesised manifests
+	// live in PendingToolStore (staged, not registered). Report consumes
+	// this downstream so curate and synth run in series inside one CPN.
+	PlaceAwakeningReportSynth = "p-awakening-report-synth"
 	PlaceHostCapabilitiesWK = cpn.WellKnownHostCapabilitiesPlace
 	PlaceAwakeningSnapshot  = "p-awakening-snapshot"
 	PlaceAwakeningMessage   = "p-awakening-message"
@@ -65,7 +75,19 @@ const (
 	// that persistence hop by design (CON-006 of
 	// spec-architecture-brae-awakening-probe-fanout.md).
 	TransitionAwakenProbeInstantiate = "t-awaken-probe-instantiate"
-	TransitionAwakenReport           = "t-awaken-report"
+	// TransitionAwakenCurate is the second-turn LLM-driven curation that
+	// turns probe-discovered Binaries[] into an authored ToolsRegister[].
+	// Implemented as a NodeKindTool calling an injected LLMCurator so the
+	// awakening boot path keeps a single CPN run even when the LLM produces
+	// the curation via a direct sub-call (not a NodeKindLLM transition).
+	TransitionAwakenCurate = "t-awaken-curate"
+	// TransitionAwakenSynth runs SC-11/SC-12: for each present binary not
+	// already curated, invoke `--help`/`-h` through helpparse.Compose, then
+	// synthesize a PendingTool manifest via toolsynth.Compose. Manifests
+	// are staged in deps.PendingToolStore — NEVER auto-registered. Degrades
+	// to a pass-through when the store, LLM, or adapter are missing.
+	TransitionAwakenSynth  = "t-awaken-synth"
+	TransitionAwakenReport = "t-awaken-report"
 	TransitionAwakenPersist          = "t-awaken-persist"
 	TransitionAwakenRegisterTools    = "t-awaken-register-tools"
 	TransitionAwakenEmitMessage      = "t-awaken-emit-message"
@@ -103,6 +125,17 @@ type Deps struct {
 	// Emitter is the SC-08 observability spine. A nil emitter degrades to
 	// a no-op so callers without telemetry wiring behave unchanged.
 	Emitter *Emitter
+	// LLMCurator turns a probe-only AwakeningReport into an authored
+	// ToolsRegister[]. Wired by the session service from an LLM client
+	// closure. When nil, the curate transition is a no-op pass-through so
+	// the topology still boots in tests without an LLM. See curate.go.
+	LLMCurator LLMCuratorFunc
+	// Synth is the injected tool-synthesis driver. When nil, the synth
+	// transition is a pass-through — awakening still boots cleanly on hosts
+	// where helpparse/toolsynth dependencies are not yet wired. The concrete
+	// implementation is built by the session service; see synth.go for the
+	// contract.
+	Synth SynthRunner
 }
 
 // TopologyFactory constructs the `brae-awakens` CPN. The factory is designed
@@ -122,9 +155,12 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 		PlaceAwakenSystemPrompt: cpn.NewPlace(PlaceAwakenSystemPrompt, cpn.ColorString, cpn.SpaceComputation),
 		PlaceAwakenPlan:         cpn.NewPlace(PlaceAwakenPlan, cpn.ColorJSON, cpn.SpaceComputation),
 		PlaceAwakenSubnetSpec:   cpn.NewPlace(PlaceAwakenSubnetSpec, cpn.ColorArtifact, cpn.SpaceComputation),
-		// PlaceAwakeningReport now receives the reducer-assembled report
-		// from the fanout sub-CPN (ColorArtifact payload).
+		// PlaceAwakeningReportRaw carries the probe-only report from the
+		// fanout sub-CPN; PlaceAwakeningReport carries the LLM-curated
+		// enriched version. Both are ColorArtifact tokens.
+		PlaceAwakeningReportRaw:            cpn.NewPlace(PlaceAwakeningReportRaw, cpn.ColorArtifact, cpn.SpaceComputation),
 		PlaceAwakeningReport:               cpn.NewPlace(PlaceAwakeningReport, cpn.ColorArtifact, cpn.SpaceComputation),
+		PlaceAwakeningReportSynth:          cpn.NewPlace(PlaceAwakeningReportSynth, cpn.ColorArtifact, cpn.SpaceComputation),
 		PlaceHostCapabilitiesWK:            cpn.NewPlace(PlaceHostCapabilitiesWK, cpn.ColorHostFact, cpn.SpaceComputation),
 		PlaceAwakeningSnapshot:             cpn.NewPlace(PlaceAwakeningSnapshot, cpn.ColorHostFact, cpn.SpaceComputation),
 		PlaceAwakeningMessage:              cpn.NewPlace(PlaceAwakeningMessage, cpn.ColorEvent, cpn.SpaceComputation),
@@ -147,6 +183,8 @@ func TopologyFactory(sessionID string, deps Deps) *cpn.CPN {
 		TransitionAwakenLLMBootstrap:     newLLMBootstrapTransition(awakenPrompt),
 		TransitionAwakenProbeCompose:     newProbeComposeTransition(sessionID, deps),
 		TransitionAwakenProbeInstantiate: newProbeInstantiateTransition(),
+		TransitionAwakenCurate:           newCurateTransition(deps),
+		TransitionAwakenSynth:            newSynthTransition(deps),
 		TransitionAwakenReport:           newReportTransition(deps),
 		TransitionAwakenPersist:          newPersistTransition(deps),
 		TransitionAwakenRegisterTools:    newRegisterToolsTransition(deps.Emitter),
@@ -331,7 +369,7 @@ func newProbeInstantiateTransition() *cpn.Transition {
 		TransitionAwakenProbeInstantiate,
 		cpn.NodeKindTool,
 		[]string{PlaceAwakenSubnetSpec},
-		[]string{PlaceAwakeningReport},
+		[]string{PlaceAwakeningReportRaw},
 	)
 	t.ToolHandler = func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		if len(consumed) == 0 {
@@ -349,7 +387,7 @@ func newProbeInstantiateTransition() *cpn.Transition {
 			return nil, fmt.Errorf("%s: %w", TransitionAwakenProbeInstantiate, err)
 		}
 		return map[string]cpn.Token{
-			PlaceAwakeningReport: {
+			PlaceAwakeningReportRaw: {
 				Color:   cpn.ColorArtifact,
 				Space:   cpn.SpaceComputation,
 				Payload: report,
@@ -396,7 +434,7 @@ func newReportTransition(deps Deps) *cpn.Transition {
 	t := cpn.NewTransition(
 		TransitionAwakenReport,
 		cpn.NodeKindTool,
-		[]string{PlaceAwakeningReport},
+		[]string{PlaceAwakeningReportSynth},
 		[]string{PlaceAwakeningSnapshot, PlaceAwakeningToolBatch, PlaceAwakeningMessage},
 	)
 	t.ToolHandler = func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {

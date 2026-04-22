@@ -13,6 +13,10 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/fanout"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/helpparse"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolapproval"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolsynth"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
@@ -77,6 +81,14 @@ func WithAwakeningComposer(c awakens.ComposerFunc) SessionServiceOption {
 // Any other error — LLM unreachable, topology deadlock, missing terminal
 // emission — is propagated to the caller; there is no fallback path.
 func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID string) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
+	return s.runAwakeningWith(ctx, sessionID, userID, false)
+}
+
+// runAwakeningWith is the core implementation shared by the per-session
+// awakening flow and the server-startup primer. When skipCache is true the
+// 24h cached-snapshot shortcut is bypassed so probes + curator + synth
+// always run — used by PrimeHostCapabilities to refresh the catalogue.
+func (s *SessionService) runAwakeningWith(ctx context.Context, sessionID, userID string, skipCache bool) (persist.HostCapabilitySnapshot, awakens.A2UIMessage, string, error) {
 	var zero persist.HostCapabilitySnapshot
 	if s.awakensFactory == nil || s.hostCapabilityRepo == nil {
 		return zero, awakens.A2UIMessage{}, "", errAwakeningNotConfigured
@@ -92,20 +104,22 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 	hostID := s.resolveHostID(ctx)
 
 	// 24h cache hit skips shell probes but still emits the first-turn card.
-	if snap, fresh, err := awakens.LookupCachedSnapshot(ctx, s.hostCapabilityRepo, hostID, awakens.DefaultCacheTTL, awakens.SystemClock); err == nil && fresh {
-		envelope := firstTurnMessageFromSnapshot(snap)
-		age := time.Since(snap.CapturedAt)
-		if age < 0 {
-			age = 0
+	if !skipCache {
+		if snap, fresh, err := awakens.LookupCachedSnapshot(ctx, s.hostCapabilityRepo, hostID, awakens.DefaultCacheTTL, awakens.SystemClock); err == nil && fresh {
+			envelope := firstTurnMessageFromSnapshot(snap)
+			age := time.Since(snap.CapturedAt)
+			if age < 0 {
+				age = 0
+			}
+			emitter.CacheHit(ctx, age)
+			emitter.Emitted(ctx, len(envelope.Components))
+			s.logger.Info("awakening: served from 24h cache",
+				slog.String("session_id", sessionID),
+				slog.String("host_id", hostID),
+				slog.String("source", snap.Source),
+			)
+			return snap, envelope, snap.Source, nil
 		}
-		emitter.CacheHit(ctx, age)
-		emitter.Emitted(ctx, len(envelope.Components))
-		s.logger.Info("awakening: served from 24h cache",
-			slog.String("session_id", sessionID),
-			slog.String("host_id", hostID),
-			slog.String("source", snap.Source),
-		)
-		return snap, envelope, snap.Source, nil
 	}
 
 	// First-boot awakening requires a live LLM. Missing provider is a
@@ -139,8 +153,10 @@ func (s *SessionService) runAwakening(ctx context.Context, sessionID, userID str
 		// Lexicon is wired via SessionService.lexicon (optional). When non-
 		// nil, the awakening prompt builder embeds the 32-entry excerpt
 		// + few-shot anchors per spec REQ-002 / AC-003.
-		Lexicon: s.lexicon,
-		Emitter: emitter,
+		Lexicon:    s.lexicon,
+		Emitter:    emitter,
+		LLMCurator: s.buildAwakeningCurator(),
+		Synth:      s.buildAwakeningSynth(emitter, sandbox),
 	}
 	if s.hostRuntime != nil {
 		deps.HostAdapter = s.hostRuntime.Adapter
@@ -310,6 +326,37 @@ func firstTurnMessageFromSnapshot(snap persist.HostCapabilitySnapshot) awakens.A
 	return awakens.BuildFirstTurnMessage(report)
 }
 
+// PrimeHostCapabilities runs the brae-awakens pipeline once at server
+// startup (and periodically thereafter) so the host snapshot + toolbox
+// catalogue are populated BEFORE any interactive session is created. Every
+// later CreateSession call then (a) reads the fresh snapshot during
+// injectPersonality so the "## Environment awareness" block lists the full
+// toolbox set to the LLM and (b) takes the 24h cache-hit path in the
+// per-session runAwakeningAsync so the "brae is ready" first-turn card
+// still fires without re-probing.
+//
+// The call blocks for up to awakeningDeadline. A synthetic session ID is
+// used so the gate's awakening-mode flag does not collide with any real
+// session. Pass force=true to bypass the 24h cache (used by refresh).
+//
+// Returns nil when no awakening factory is wired (graceful degradation for
+// dev mode) or when priming completes successfully. Any other failure is
+// surfaced so main.go can decide to log-and-continue vs. exit.
+func (s *SessionService) PrimeHostCapabilities(ctx context.Context, force bool) error {
+	if s.awakensFactory == nil || s.hostCapabilityRepo == nil {
+		return nil
+	}
+	const primerSessionID = "startup-primer"
+	_, _, _, err := s.runAwakeningWith(ctx, primerSessionID, "", force)
+	if err != nil {
+		if errors.Is(err, errAwakeningNotConfigured) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // runAwakeningAsync runs the awakening flow on a fresh background context so
 // session creation returns immediately. When the flow completes, it seeds
 // p-host-capabilities on the session root and appends the first-turn A2UI
@@ -376,6 +423,27 @@ func (s *SessionService) appendAwakeningMessage(ctx context.Context, session *cp
 	}
 	session.AppendMessage(msg)
 
+	// Fan the A2UI envelope out over the SSE stream so any client already
+	// subscribed to /sessions/:id/events renders the awakening card the
+	// moment awakening completes. Buffered channel (DefaultStreamBuffer=64)
+	// holds the chunk for a late subscriber; a non-blocking select avoids
+	// stalling awakening if the buffer is somehow full.
+	if session.Stream != nil {
+		chunk := cpn.StreamChunk{
+			SessionID: session.ID,
+			CPNID:     session.Root.ID,
+			CPNRole:   awakens.A2UICPNRole,
+			Content:   msg.Content,
+			Done:      true,
+		}
+		select {
+		case session.Stream <- chunk:
+		default:
+			s.logger.Warn("awakening: stream buffer full, card not streamed",
+				slog.String("session_id", session.ID))
+		}
+	}
+
 	if s.persist == nil || s.persist.Sessions == nil {
 		return
 	}
@@ -384,6 +452,216 @@ func (s *SessionService) appendAwakeningMessage(ctx context.Context, session *cp
 		s.logger.Warn("awakening: persist first-turn message",
 			slog.String("session_id", session.ID), slog.Any("error", err))
 	}
+}
+
+// buildAwakeningCurator returns an awakens.LLMCuratorFunc closure that calls
+// s.llm with the curator system prompt and the probe-only report serialised
+// as the user turn, then parses the JSON response into register-ready picks.
+// Returns nil when no LLM is wired — the curate transition then degrades to
+// a pass-through and awakening proceeds with zero curated tools.
+func (s *SessionService) buildAwakeningCurator() awakens.LLMCuratorFunc {
+	if s.llm == nil {
+		return nil
+	}
+	return func(ctx context.Context, probeReport awakens.AwakeningReport) ([]awakens.AwakeningToolRegister, error) {
+		available := make(map[string]struct{}, len(probeReport.PresentTools))
+		for _, t := range probeReport.PresentTools {
+			available[t.Name] = struct{}{}
+		}
+		req := &cpn.LLMRequest{
+			Model: awakeningPinnedModel,
+			Messages: []*cpn.LLMMessage{
+				{Role: "system", Content: awakens.CuratePromptHeader},
+				{Role: "user", Content: awakens.BuildCurateUserMessage(probeReport)},
+			},
+			MaxTokens:   1024,
+			Temperature: 0.2,
+			ResponseFmt: "json_object",
+		}
+		resp, err := s.llm.Complete(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("curator llm: %w", err)
+		}
+		return awakens.ParseCuratorOutput([]byte(resp.Content), available)
+	}
+}
+
+// buildAwakeningSynth returns an awakens.SynthRunner that runs SC-11
+// (helpparse) + SC-12 (toolsynth) for each candidate binary after curate.
+// Returns nil when prerequisites are missing — the synth transition then
+// pass-throughs cleanly.
+//
+// Per-binary help-parse failures are silently skipped (REQ-1104); the
+// function returns the count of manifests successfully staged in the
+// pending store. Staged manifests require SC-13 HITL approval at
+// invocation time before becoming live tools.
+func (s *SessionService) buildAwakeningSynth(emitter *awakens.Emitter, sandbox fanout.Sandbox) awakens.SynthRunner {
+	if s.llm == nil || s.pendingToolStore == nil || s.hostRuntime == nil || s.hostRuntime.Adapter == nil {
+		return nil
+	}
+	return awakens.SynthRunnerFunc(func(ctx context.Context, sessionID string, binaries []string) (int, error) {
+		if len(binaries) == 0 {
+			return 0, nil
+		}
+		inputs := make([]helpparse.HelpInput, 0, len(binaries))
+		for _, name := range binaries {
+			inputs = append(inputs, helpparse.HelpInput{Binary: name, Path: name})
+		}
+		hpDeps := helpparse.Deps{
+			HostAdapter: s.hostRuntime.Adapter,
+			HostGate:    s.hostRuntime.Gate,
+			Sandbox:     sandbox,
+			LLM:         s.llm,
+			Timeout:     helpparse.DefaultHelpTimeout,
+		}
+		if emitter != nil {
+			hpDeps.OnHelpInvoked = emitter.HelpInvoked
+			hpDeps.OnHelpParsed = emitter.HelpParsed
+			hpDeps.OnHelpFailed = emitter.HelpFailed
+		}
+		helpCPN, err := helpparse.Compose(sessionID, inputs, hpDeps)
+		if err != nil {
+			return 0, fmt.Errorf("helpparse compose: %w", err)
+		}
+		if err := helpCPN.Run(ctx); err != nil {
+			s.logger.Warn("awakening synth: helpparse run", slog.Any("error", err))
+		}
+		results := collectHelpResults(helpCPN, inputs)
+		schemas := helpparse.ReduceHelpResults(results)
+		if len(schemas) == 0 {
+			return 0, nil
+		}
+		tsDeps := toolsynth.Deps{Store: s.pendingToolStore}
+		if emitter != nil {
+			tsDeps.OnSynthesisStarted = emitter.SynthesisStarted
+			tsDeps.OnSynthesisCompleted = emitter.SynthesisCompleted
+			tsDeps.OnSynthesisFailed = emitter.SynthesisFailed
+		}
+		synthCPN, err := toolsynth.Compose(sessionID, schemas, tsDeps)
+		if err != nil {
+			return 0, fmt.Errorf("toolsynth compose: %w", err)
+		}
+		if err := synthCPN.Run(ctx); err != nil {
+			s.logger.Warn("awakening synth: toolsynth run", slog.Any("error", err))
+		}
+		list, listErr := s.pendingToolStore.List(ctx, sessionID)
+		if listErr != nil {
+			return 0, fmt.Errorf("list pending tools: %w", listErr)
+		}
+		promoted := 0
+		for _, pt := range list {
+			if err := s.promoteSynthesizedTool(ctx, sessionID, pt); err != nil {
+				s.logger.Warn("awakening synth: promote",
+					slog.String("session_id", sessionID),
+					slog.String("tool", pt.Manifest.Name),
+					slog.Any("error", err),
+				)
+				continue
+			}
+			promoted++
+		}
+		return promoted, nil
+	})
+}
+
+// promoteSynthesizedTool installs a staged PendingTool into the live tool
+// registry (task #10) with a Gate-wrapped executor (task #7). Subsequent
+// InjectIntoCPN passes see the entry; first-call invocation triggers
+// toolapproval.Gate.CheckSynthesized, which prompts the operator via the
+// A2UI HITL broker and caches the decision in the approval store.
+func (s *SessionService) promoteSynthesizedTool(ctx context.Context, sessionID string, pt toolsynth.PendingTool) error {
+	if s.toolRegistry == nil {
+		return errors.New("tool registry not configured")
+	}
+	result, err := s.toolRegistry.RegisterManifest(ctx, pt.Manifest)
+	if err != nil {
+		return fmt.Errorf("register manifest: %w", err)
+	}
+	entry, ok := s.toolRegistry.Resolve(result.QualifiedName)
+	if !ok || entry == nil {
+		return fmt.Errorf("resolve after register: %s", result.QualifiedName)
+	}
+	gate := s.buildApprovalGate(sessionID)
+	entry.Executor = s.makeGatedSynthExecutor(sessionID, pt.Manifest, gate)
+	return nil
+}
+
+// buildApprovalGate assembles a per-session toolapproval.Gate. Returns nil
+// when any collaborator is missing; the synthesized-tool executor then
+// fails closed with a descriptive error at invocation time.
+func (s *SessionService) buildApprovalGate(sessionID string) *toolapproval.Gate {
+	if s.approvalStore == nil || s.toolApprovalPrompter == nil || s.pendingToolStore == nil {
+		return nil
+	}
+	prompter := newSessionScopedPrompter(sessionID, s.toolApprovalPrompter)
+	if prompter == nil {
+		return nil
+	}
+	return &toolapproval.Gate{
+		Approvals: s.approvalStore,
+		Pending:   s.pendingToolStore,
+		Emitter:   awakens.NewEmitter(s.logger),
+		Prompter:  prompter,
+	}
+}
+
+// makeGatedSynthExecutor wraps the host-binary executor with a Gate check.
+// First invocation per (session, tool, provenance) prompts the operator;
+// subsequent invocations are auto-approved via the ApprovalStore cache.
+// Fail-closed: a nil gate or gate error returns an error rather than silently
+// dispatching.
+func (s *SessionService) makeGatedSynthExecutor(sessionID string, manifest cpn.ToolManifest, gate *toolapproval.Gate) tools.ToolExecutor {
+	toolName := manifest.Name
+	binary := manifest.BinaryPath
+	if binary == "" {
+		// Synth stamps only the bare binary name; PATH resolution handles
+		// the rest (same contract as user-authored tools).
+		binary = manifest.Name
+	}
+
+	base := func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
+		if s.hostRuntime == nil || s.hostRuntime.Adapter == nil {
+			return cpn.Token{}, fmt.Errorf("%s: host runtime not configured", toolName)
+		}
+		return makeUserToolExecutor(toolName, binary, s.hostRuntime.Adapter)(ctx, in)
+	}
+
+	return func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
+		if gate == nil {
+			return cpn.Token{}, fmt.Errorf("%s: synthesized tool requires SC-13 gate but none is configured", toolName)
+		}
+		decision, err := gate.CheckSynthesized(ctx, sessionID, manifest)
+		if err != nil {
+			return cpn.Token{}, fmt.Errorf("%s: approval check: %w", toolName, err)
+		}
+		if decision != toolapproval.DecisionApproved {
+			return cpn.Token{}, fmt.Errorf("%s: synthesized-tool invocation denied by operator", toolName)
+		}
+		return base(ctx, in)
+	}
+}
+
+// collectHelpResults peeks the per-binary result places of a helpparse
+// sub-CPN and returns the HelpResult payloads in binary-sorted order.
+// Missing/empty places contribute nothing — reducer drops them anyway.
+func collectHelpResults(c *cpn.CPN, inputs []helpparse.HelpInput) []helpparse.HelpResult {
+	out := make([]helpparse.HelpResult, 0, len(inputs))
+	for _, in := range inputs {
+		place, ok := c.Places[helpparse.PlaceHelpResultPrefix+in.Binary]
+		if !ok {
+			continue
+		}
+		tokens, ok := place.Peek()
+		if !ok || len(tokens) == 0 {
+			continue
+		}
+		res, ok := tokens[0].Payload.(helpparse.HelpResult)
+		if !ok {
+			continue
+		}
+		out = append(out, res)
+	}
+	return out
 }
 
 // seedAwakeningOnRoot seeds the well-known p-host-capabilities place on the

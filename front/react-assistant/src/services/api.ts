@@ -213,6 +213,41 @@ export async function resolveHITL(sessionId: string, transitionId: string, req: 
   });
 }
 
+/**
+ * submitToolApproval — POST the user's approve/deny decision for a
+ * synthesized tool that hit the first-run HITL gate. The backend emits a
+ * `tool_approval_request` SSE event with a `request_id`; the UI POSTs the
+ * decision back with the same id. Backend replies 204 on success.
+ *
+ * We bypass the JSON-only `request` helper here because a 204 has no body
+ * to parse. Auth is threaded through identically.
+ */
+export async function submitToolApproval(
+  sessionId: string,
+  requestId: string,
+  decision: 'approved' | 'denied',
+): Promise<void> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const authToken = tokenGetter?.();
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+  const response = await fetch(`${BASE_URL}/sessions/${sessionId}/tool-approvals`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ request_id: requestId, decision }),
+  });
+
+  if (response.status === 401) {
+    window.dispatchEvent(new Event('auth:expired'));
+    throw new ApiError(401, 'Authentication expired');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText }));
+    const msg = typeof body?.error === 'string' ? body.error : response.statusText;
+    throw new ApiError(response.status, msg);
+  }
+}
+
 export async function deleteSession(sessionId: string): Promise<StatusResponse> {
   return request<StatusResponse>(`/sessions/${sessionId}`, {
     method: 'DELETE',

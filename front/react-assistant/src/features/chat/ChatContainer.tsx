@@ -48,6 +48,8 @@ export function ChatContainer({
     updateMessageContent,
     sendUserAction,
     awakeningPhase,
+    pendingToolApprovals,
+    resolveToolApproval,
   } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
@@ -111,12 +113,16 @@ export function ChatContainer({
       <MessageList
         messages={messages}
         sessionState={sessionState}
+        sessionId={sessionId}
+        awakeningPhase={awakeningPhase}
         onSuggestionClick={handleSend}
         onHITLAction={resolveHITL}
         onA2UIAction={handleA2UIAction}
         currentActivity={currentActivity}
         recentReceipt={recentReceipt}
         onReceiptDismiss={dismissReceipt}
+        pendingToolApprovals={pendingToolApprovals}
+        onToolApprovalResolved={resolveToolApproval}
       />
       {notice && (
         <div className="px-4 pt-2">

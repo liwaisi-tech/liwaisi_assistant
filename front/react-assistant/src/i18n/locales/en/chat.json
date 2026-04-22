@@ -40,6 +40,8 @@
   "messageList": {
     "welcomeTitle": "brae",
     "welcomeSubtitle": "Being a Real AI Engineer",
+    "wakingTitle": "brae is waking up…",
+    "wakingSubtitle": "Bringing senses online",
     "suggestions": {
       "explainCpn": "Explain CPN architecture",
       "helpGoCode": "Help me write Go code",
@@ -110,6 +112,13 @@
         "parseErrorFallback": "Proceeding with the best available interpretation of your request."
       }
     }
+  },
+  "toolApproval": {
+    "title": "New tool wants to activate",
+    "approve": "Approve",
+    "deny": "Deny",
+    "submitting": "Sending…",
+    "error": "Could not submit your decision. Please try again."
   },
   "connection": {
     "connected": "Connected",

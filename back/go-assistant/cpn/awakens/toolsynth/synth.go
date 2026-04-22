@@ -115,47 +115,107 @@ func buildParametersSchema(flags []helpparse.HelpFlag, subs []helpparse.HelpSub)
 	return canonicalJSON(schema)
 }
 
+// maxPromotedFlags bounds the curated-flag list rendered into HelpText.
+// LLM tool-selection degrades when every option is enumerated — we keep the
+// most informative N and collapse the tail into a catch-all sentence. Ten
+// tracks the Anthropic "top 3–5 plus compact tail" guidance with headroom
+// for multi-modal tools like `grep`/`git`. Pure, deterministic: caller
+// pre-sorts flags.
+const maxPromotedFlags = 10
+
+// renderHelpText builds an LLM-optimized description from the parsed help
+// schema. The layout follows 2026 tool-use guidelines (Anthropic, OpenAI
+// function calling, MCP): capability line → when-to-use → when-NOT-to-use →
+// curated key flags → subcommands → examples → caveats. Raw `--help` dumps
+// are explicitly avoided — flags are curated to `maxPromotedFlags` with a
+// count-collapsed tail so the model spends tokens on selection, not scanning.
+//
+// Pure and deterministic (REQ-1204): inputs must already be sorted by the
+// caller; no clock, no map iteration, no randomness.
 func renderHelpText(binary string, flags []helpparse.HelpFlag, subs []helpparse.HelpSub, examples []string) string {
 	var b strings.Builder
-	b.WriteString(binary)
-	b.WriteString("\n")
-	if len(flags) > 0 {
-		b.WriteString("Flags:\n")
-		for _, f := range flags {
+
+	fmt.Fprintf(&b, "%s — command-line tool registered from its `--help` output during brae awakening.\n\n", binary)
+
+	fmt.Fprintf(&b,
+		"When to use: Call this tool when the user asks to run `%s` on the host. Pass only the flags relevant to the user's request; the argument schema mirrors the parsed options.\n\n",
+		binary)
+
+	b.WriteString("When NOT to use: Do not use for tasks outside this binary's domain or when a more specific synthesized tool already covers the request. Treat state-mutating flags (e.g. --in-place, -i, --force) as side-effectful — surface them to the user before invoking.\n\n")
+
+	// Curated flag list — drop --help/-h/--version/-V (never load-bearing
+	// for selection) and prefer flags with non-empty docs.
+	curated, hidden := curateFlags(flags)
+	if len(curated) > 0 {
+		b.WriteString("Key flags:\n")
+		for _, f := range curated {
 			b.WriteString("  ")
 			b.WriteString(f.Long)
 			if f.Short != "" {
 				b.WriteString(", ")
 				b.WriteString(f.Short)
 			}
+			if f.Arg {
+				b.WriteString(" <value>")
+			}
 			if f.Doc != "" {
-				b.WriteString("\t")
+				b.WriteString(" — ")
 				b.WriteString(f.Doc)
 			}
-			b.WriteString("\n")
+			b.WriteByte('\n')
 		}
+		if hidden > 0 {
+			fmt.Fprintf(&b, "  (%d more flag(s) available — invoke `%s --help` for the full reference.)\n", hidden, binary)
+		}
+		b.WriteByte('\n')
 	}
+
 	if len(subs) > 0 {
 		b.WriteString("Subcommands:\n")
 		for _, s := range subs {
 			b.WriteString("  ")
 			b.WriteString(s.Name)
 			if s.Doc != "" {
-				b.WriteString("\t")
+				b.WriteString(" — ")
 				b.WriteString(s.Doc)
 			}
-			b.WriteString("\n")
+			b.WriteByte('\n')
 		}
+		b.WriteByte('\n')
 	}
+
 	if len(examples) > 0 {
 		b.WriteString("Examples:\n")
 		for _, ex := range examples {
 			b.WriteString("  ")
 			b.WriteString(ex)
-			b.WriteString("\n")
+			b.WriteByte('\n')
 		}
+		b.WriteByte('\n')
 	}
+
+	b.WriteString("Notes: Output goes to stdout/stderr with conventional exit codes. This description was auto-synthesized from parsed help text during awakening; if inaccurate, re-register via the register_tool flow.\n")
+
 	return b.String()
+}
+
+// curateFlags drops boilerplate flags (--help/-h/--version/-V) and caps the
+// promoted list at maxPromotedFlags, returning the hidden-count so the
+// renderer can note the tail. Input must be pre-sorted so the selection is
+// deterministic.
+func curateFlags(flags []helpparse.HelpFlag) ([]helpparse.HelpFlag, int) {
+	out := make([]helpparse.HelpFlag, 0, len(flags))
+	for _, f := range flags {
+		switch f.Long {
+		case "--help", "--version":
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) <= maxPromotedFlags {
+		return out, 0
+	}
+	return out[:maxPromotedFlags], len(out) - maxPromotedFlags
 }
 
 // canonicalJSON serialises v with sorted keys. encoding/json already sorts

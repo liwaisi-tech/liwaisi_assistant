@@ -158,6 +158,19 @@ func (e *Emitter) ReportProjected(ctx context.Context, toolCount int, buckets []
 	})
 }
 
+// Curated → awakening.curate.completed. Emitted once per awakening after the
+// t-awaken-curate transition runs. count is the number of picks merged into
+// the AwakeningReport (0 when the curator is unwired, errored, or chose to
+// promote nothing). reason tags the outcome — "ok" on success, "no_curator"
+// when the LLM seam was not injected, "curator_error" when the curator
+// returned an error (degraded to pass-through).
+func (e *Emitter) Curated(ctx context.Context, count int, reason string) {
+	e.emit(ctx, "curate.completed", []slog.Attr{
+		slog.Int("pick_count", count),
+		slog.String("reason", reason),
+	})
+}
+
 // Registered → awakening.registered.
 func (e *Emitter) Registered(ctx context.Context, toolCount, duplicateCount int) {
 	e.emit(ctx, "registered", []slog.Attr{

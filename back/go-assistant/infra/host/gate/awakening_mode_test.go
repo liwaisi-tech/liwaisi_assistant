@@ -102,6 +102,45 @@ func TestPolicyHostGate_AwakeningIntrospectionPassthrough(t *testing.T) {
 	}
 }
 
+// TestPolicyHostGate_AwakeningNativeReflexAllow asserts that GateOps stamped
+// with Origin=GateOriginAwakensNative are auto-approved during awakening,
+// even when their Command is not on the introspection allow-list. This is
+// the "primordial reflex" path used by helpparse `<binary> --help`.
+func TestPolicyHostGate_AwakeningNativeReflexAllow(t *testing.T) {
+	t.Parallel()
+	reg := NewAwakeningModeRegistry()
+	reg.Begin("sess-awaken")
+
+	gate := NewPolicyHostGate(nil, nil, nil, NewBudgetTracker(), alwaysAvailableSandbox{}, nil)
+	gate.AwakeningMode = reg
+	gate.SessionIDResolver = func(_ context.Context) string { return "sess-awaken" }
+
+	dec := gate.Evaluate(context.Background(), cpn.GateOp{
+		Kind:    "exec",
+		Command: "/usr/bin/sed --help",
+		Origin:  cpn.GateOriginAwakensNative,
+	})
+	if dec.Verdict != VerdictAllow {
+		t.Fatalf("native reflex must be allowed during awakening; got verdict=%q reason=%q", dec.Verdict, dec.Reason)
+	}
+	if dec.Reason != "awakening mode: native reflex auto-approved" {
+		t.Errorf("unexpected reason: %q", dec.Reason)
+	}
+
+	// Same op WITHOUT awakening mode must NOT take the reflex fast-path —
+	// Origin alone doesn't bypass policy, because the gate is only in
+	// awakening mode while the topology is actively running.
+	reg.End("sess-awaken")
+	dec = gate.Evaluate(context.Background(), cpn.GateOp{
+		Kind:    "exec",
+		Command: "/usr/bin/sed --help",
+		Origin:  cpn.GateOriginAwakensNative,
+	})
+	if dec.Reason == "awakening mode: native reflex auto-approved" {
+		t.Errorf("reflex fast-path must require awakening mode; got %+v", dec)
+	}
+}
+
 type alwaysAvailableSandbox struct{}
 
 func (alwaysAvailableSandbox) Available(_ string) bool { return true }

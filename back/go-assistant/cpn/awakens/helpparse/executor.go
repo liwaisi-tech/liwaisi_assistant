@@ -40,7 +40,11 @@ func makeInvokeExecutor(binary, path, variant string, deps Deps) func(context.Co
 		}
 		command := fmt.Sprintf("%s %s", path, variant)
 		if deps.HostGate != nil {
-			gateOp := cpn.GateOp{Kind: "exec", Command: command}
+			gateOp := cpn.GateOp{
+				Kind:    "exec",
+				Command: command,
+				Origin:  cpn.GateOriginAwakensNative,
+			}
 			if err := deps.HostGate.Check(ctx, gateOp); err != nil {
 				raw.Err = "gate: " + err.Error()
 				raw.ExitCode = GateDenyExitCode

@@ -108,6 +108,11 @@ type Handlers struct {
 	// SkillManifest is the GAP-8 aggregator. Optional — when nil the
 	// /api/v1/admin/skills* endpoints return 503.
 	SkillManifest SkillManifestPort
+
+	// ToolApproval is the SC-13 broker routing synthesized-tool HITL
+	// prompts to the A2UI SSE stream and back. Optional — when nil the
+	// POST /api/v1/sessions/{id}/tool-approvals endpoint returns 503.
+	ToolApproval *ToolApprovalBroker
 }
 
 // HostPolicyReader is the minimal port the admin handlers use to inspect

@@ -177,10 +177,25 @@ func mandatoryInfoProbes() []AwakeningProbeEntry {
 	}
 }
 
-// withMandatoryInfoProbes appends every entry from mandatoryInfoProbes that is
-// not already covered (by ID or by Target) in plan.Probes. Fresh info probes
-// are deterministically ordered (the fixed list), which preserves the
-// NFR-002 deterministic-output guarantee.
+// mandatoryDevtoolProbes is the fixed set of developer-toolchain binary
+// probes the composer always adds when the LLM plan omits them. These surface
+// Go, Git, Make, and jq so curate/synth can promote them into tools without
+// relying on the LLM remembering to probe them. Each command is introspection-
+// class (`command -v <bin>`, matches the Host-gate safe-band prefix).
+func mandatoryDevtoolProbes() []AwakeningProbeEntry {
+	return []AwakeningProbeEntry{
+		{ID: "cmd-go", Kind: ProbeKindBinary, Target: "go", Command: "command -v go"},
+		{ID: "cmd-git", Kind: ProbeKindBinary, Target: "git", Command: "command -v git"},
+		{ID: "cmd-make", Kind: ProbeKindBinary, Target: "make", Command: "command -v make"},
+		{ID: "cmd-jq", Kind: ProbeKindBinary, Target: "jq", Command: "command -v jq"},
+	}
+}
+
+// withMandatoryInfoProbes appends every entry from mandatoryInfoProbes and
+// mandatoryDevtoolProbes that is not already covered (by ID or by Target) in
+// plan.Probes. Info probes are added first so environment metadata is never
+// lost to the MaxProbes cap; devtool probes follow since they are a softer
+// opt-in.
 //
 // The plan cap (MaxProbes) is respected: any mandatory probe that would push
 // the total over MaxProbes is dropped, since structural validity must hold
@@ -197,9 +212,10 @@ func withMandatoryInfoProbes(plan AwakeningProbePlan) AwakeningProbePlan {
 		}
 	}
 	out := plan
-	out.Probes = make([]AwakeningProbeEntry, 0, len(plan.Probes)+len(mandatoryInfoProbes()))
+	mandatory := append(mandatoryInfoProbes(), mandatoryDevtoolProbes()...)
+	out.Probes = make([]AwakeningProbeEntry, 0, len(plan.Probes)+len(mandatory))
 	out.Probes = append(out.Probes, plan.Probes...)
-	for _, p := range mandatoryInfoProbes() {
+	for _, p := range mandatory {
 		if _, ok := seenID[p.ID]; ok {
 			continue
 		}

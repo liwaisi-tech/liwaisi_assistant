@@ -40,6 +40,8 @@
   "messageList": {
     "welcomeTitle": "brae",
     "welcomeSubtitle": "Being a Real AI Engineer",
+    "wakingTitle": "brae está despertando…",
+    "wakingSubtitle": "Activando los sentidos",
     "suggestions": {
       "explainCpn": "Explicar la arquitectura CPN",
       "helpGoCode": "Ayúdame a escribir código Go",
@@ -110,6 +112,13 @@
         "parseErrorFallback": "Avanzo con la mejor interpretación disponible de tu pedido."
       }
     }
+  },
+  "toolApproval": {
+    "title": "Nueva herramienta quiere activarse",
+    "approve": "Aprobar",
+    "deny": "Rechazar",
+    "submitting": "Enviando…",
+    "error": "No se pudo enviar tu decisión. Inténtalo de nuevo."
   },
   "connection": {
     "connected": "Conectado",

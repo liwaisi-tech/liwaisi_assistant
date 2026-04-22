@@ -36,6 +36,18 @@ export interface RecentReceipt {
   shownAt: number;
 }
 
+/**
+ * PendingToolApproval — a first-run HITL gate for a freshly synthesized
+ * tool. Emitted by the backend as a `tool_approval_request` SSE event; the
+ * frontend holds a FIFO queue keyed by request_id so multiple concurrent
+ * prompts render in order. Resolved when the user clicks approve/deny and
+ * the POST comes back 2xx.
+ */
+export interface PendingToolApproval {
+  requestId: string;
+  preview: unknown; // A2UIPayload shape validated at render time by the renderer itself
+}
+
 export interface ChatState {
   // Tracks the session whose stream we are willing to apply. STREAM_CHUNK
   // actions whose SessionID does not match are dropped so a late chunk from
@@ -56,6 +68,12 @@ export interface ChatState {
   notice: string | null;
   currentActivity: CurrentActivity | null;
   recentReceipt: RecentReceipt | null;
+  /**
+   * FIFO queue of unresolved `tool_approval_request` SSE events. The UI
+   * renders the head of the queue inline in the message list; resolving
+   * (approve or deny via POST /tool-approvals) removes it.
+   */
+  pendingToolApprovals: PendingToolApproval[];
 }
 
 export type ChatAction =
@@ -87,6 +105,8 @@ export type ChatAction =
   | { type: 'INJECT_LOCAL_MESSAGE'; id: string; content: string; cpnRole?: string }
   | { type: 'UPDATE_MESSAGE_CONTENT'; id: string; content: string }
   | { type: 'TOOL_EXECUTED'; cpnId: string; sessionId: string; execution: ToolExecution }
+  | { type: 'TOOL_APPROVAL_REQUESTED'; requestId: string; preview: unknown }
+  | { type: 'TOOL_APPROVAL_RESOLVED'; requestId: string }
   | { type: 'RESET' };
 
 // mapBackendStateToReducerState translates the rehydration-oriented vocabulary
@@ -606,6 +626,29 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: updated };
     }
 
+    case 'TOOL_APPROVAL_REQUESTED': {
+      // Idempotent: a duplicate request_id (e.g. SSE reconnect replay) MUST
+      // not stack twice in the queue.
+      if (state.pendingToolApprovals.some((p) => p.requestId === action.requestId)) {
+        return state;
+      }
+      return {
+        ...state,
+        pendingToolApprovals: [
+          ...state.pendingToolApprovals,
+          { requestId: action.requestId, preview: action.preview },
+        ],
+      };
+    }
+
+    case 'TOOL_APPROVAL_RESOLVED':
+      return {
+        ...state,
+        pendingToolApprovals: state.pendingToolApprovals.filter(
+          (p) => p.requestId !== action.requestId,
+        ),
+      };
+
     case 'RESET':
       return { ...initialState };
 
@@ -622,6 +665,7 @@ export const initialState: ChatState = {
   notice: null,
   currentActivity: null,
   recentReceipt: null,
+  pendingToolApprovals: [],
 };
 
 export interface UseChatOptions {
@@ -700,6 +744,13 @@ export interface UseChatReturn {
   currentActivity: CurrentActivity | null;
   recentReceipt: RecentReceipt | null;
   dismissReceipt: () => void;
+  /**
+   * Outstanding `tool_approval_request` SSE events awaiting the user's
+   * approve/deny click. The chat surface renders the head of the queue
+   * inline; resolving removes it (see `resolveToolApproval`).
+   */
+  pendingToolApprovals: PendingToolApproval[];
+  resolveToolApproval: (requestId: string) => void;
   // Local message injection — used by the in-chat A2UI model-admin
   // fragment to drop a synthetic assistant bubble without a backend
   // round-trip. The bubble's content carries a `$$a2ui:` payload which
@@ -900,6 +951,17 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     [],
   );
 
+  const onToolApprovalRequested = useCallback(
+    (data: { request_id: string; preview: unknown }) => {
+      dispatch({
+        type: 'TOOL_APPROVAL_REQUESTED',
+        requestId: data.request_id,
+        preview: data.preview,
+      });
+    },
+    [],
+  );
+
   const { isConnected, connectionState } = useSSE({
     sessionId,
     onStreamChunk,
@@ -909,11 +971,16 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     onTransitionStarted,
     onTransitionCompleted,
     onToolExecuted,
+    onToolApprovalRequested,
     onSubNetStarted: options?.onSubNetStarted,
     onSubNetCompleted: options?.onSubNetCompleted,
     onSubNetFailed: options?.onSubNetFailed,
     onSessionNotFound: options?.onSessionNotFound,
   });
+
+  const resolveToolApproval = useCallback((requestId: string) => {
+    dispatch({ type: 'TOOL_APPROVAL_RESOLVED', requestId });
+  }, []);
 
   const dismissReceipt = useCallback(() => {
     dispatch({ type: 'ACTIVITY_RECEIPT_DISMISS' });
@@ -1064,5 +1131,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     injectLocalMessage,
     updateMessageContent,
     sendUserAction,
+    pendingToolApprovals: state.pendingToolApprovals,
+    resolveToolApproval,
   };
 }

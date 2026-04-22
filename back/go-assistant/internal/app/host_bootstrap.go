@@ -14,6 +14,10 @@ var osReadFileHostID = os.ReadFile
 // osHostname is a seam for tests.
 var osHostname = os.Hostname
 
+// osGetenvHostID is a seam so tests can inject the LIWAISI_HOST_ID override
+// without touching real process env.
+var osGetenvHostID = os.Getenv
+
 // fallbackMachineIDHash mirrors the deterministic FNV-derived identifier
 // used by the topology's own fallback so the bootstrap key and the
 // post-discovery key agree when /etc/machine-id is unreadable.

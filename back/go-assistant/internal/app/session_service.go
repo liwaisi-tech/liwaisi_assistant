@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolapproval"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolsynth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/prompts"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
@@ -139,6 +142,23 @@ type SessionService struct {
 	// awareness" block keyed by PersonalityDigest (SC-07 REQ-703). Nil
 	// disables caching; the block is re-rendered on every turn ≥ 2.
 	personalityCache awakens.PersonalityCache
+
+	// pendingToolStore holds manifests synthesized by SC-11/SC-12 during
+	// awakening. Populated process-wide in memory; survives session
+	// boundaries so approval flows can find the record. Persistence
+	// (Postgres-backed store) is a follow-up — see tasks for layer-2 work.
+	pendingToolStore toolsynth.PendingToolStore
+
+	// approvalStore persists SC-13 HITL decisions keyed by
+	// (session_id, tool_name, provenance_sha256). Optional — when nil the
+	// SC-13 gate is not constructed and synthesized-tool invocations fail
+	// closed at dispatch time.
+	approvalStore toolapproval.ApprovalStore
+
+	// toolApprovalPrompter is the transport that surfaces synthesized-
+	// tool HITL prompts (HTTP+SSE in production). Required alongside
+	// approvalStore for the SC-13 gate.
+	toolApprovalPrompter ToolApprovalPrompterPort
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -276,12 +296,13 @@ func WithPersonalityCache(c awakens.PersonalityCache) SessionServiceOption {
 // NewSessionService creates a SessionService with the given dependencies.
 func NewSessionService(llm cpn.LLMClient, cost cpn.CostProvider, logger *slog.Logger, factory TopologyFactory, opts ...SessionServiceOption) *SessionService {
 	svc := &SessionService{
-		sessions:        make(map[string]*cpn.Session),
-		states:          make(map[string]*sessionState),
-		llm:             llm,
-		cost:            cost,
-		logger:          logger,
-		topologyFactory: factory,
+		sessions:         make(map[string]*cpn.Session),
+		states:           make(map[string]*sessionState),
+		llm:              llm,
+		cost:             cost,
+		logger:           logger,
+		topologyFactory:  factory,
+		pendingToolStore: toolsynth.NewMemoryPendingToolStore(),
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -2130,13 +2151,19 @@ func (s *SessionService) runHostDiscovery(ctx context.Context) (persist.HostCapa
 	return persist.HostCapabilitySnapshot{}, fmt.Errorf("host-discovery-cpn completed without snapshot")
 }
 
-// resolveHostID reads /etc/machine-id (via the host adapter if available,
-// else direct os.ReadFile as a fallback). On failure it returns a
-// deterministic hash of hostname so the repo's host_id column is never
-// empty.
+// resolveHostID returns the stable host_id used as the partition key for
+// host_capability_snapshots. Resolution order:
+//  1. LIWAISI_HOST_ID env var — preferred for containerised deployments
+//     where /etc/machine-id is absent or not stable across image rebuilds.
+//  2. /etc/machine-id via the HostAdapter (hexagonal path).
+//  3. /etc/machine-id direct read (the adapter jail rejects it on most
+//     deployments, so this is the practical hit on bare metal / VMs).
+//  4. Deterministic hash of hostname — last-resort so the repo's host_id
+//     column is never empty. Visible in logs as "fallback-…".
 func (s *SessionService) resolveHostID(ctx context.Context) string {
-	// Preferred: HostAdapter (hexagonal). The default ReadFile jail rejects
-	// /etc/machine-id, so we fall back to the direct read below.
+	if envID := strings.TrimSpace(osGetenvHostID("LIWAISI_HOST_ID")); envID != "" {
+		return envID
+	}
 	if s.hostRuntime != nil && s.hostRuntime.Adapter != nil {
 		if data, err := s.hostRuntime.Adapter.ReadFile(ctx, "/etc/machine-id"); err == nil {
 			id := trimMachineID(data)
@@ -2151,7 +2178,6 @@ func (s *SessionService) resolveHostID(ctx context.Context) string {
 			return id
 		}
 	}
-	// Fallback: hash of hostname.
 	host, _ := osHostname()
 	return fallbackMachineIDHash(host)
 }

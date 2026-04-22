@@ -15,6 +15,14 @@ interface UseSSEOptions {
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
   onToolExecuted?: (data: CPNEventData) => void;
+  /**
+   * Fired when the backend asks the user to approve a freshly synthesized
+   * tool before its first run. Payload shape:
+   *   { request_id: string, preview: A2UIPayload }
+   * Kept as `unknown` here so this hook stays a thin SSE pump — the
+   * caller (useChat) parses + validates the bag.
+   */
+  onToolApprovalRequested?: (data: { request_id: string; preview: unknown }) => void;
   onError?: (error: Event) => void;
   /**
    * Fired when the SSE stream reveals that the current session id no longer
@@ -80,6 +88,7 @@ export function useSSE({
   onSubNetCompleted,
   onSubNetFailed,
   onToolExecuted,
+  onToolApprovalRequested,
   onError,
   onSessionNotFound,
 }: UseSSEOptions): UseSSEReturn {
@@ -95,11 +104,11 @@ export function useSSE({
   // each render — `connect` only depends on stable values below.
   const callbacksRef = useRef({
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onToolApprovalRequested, onError, onSessionNotFound,
   });
   callbacksRef.current = {
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onToolApprovalRequested, onError, onSessionNotFound,
   };
 
   /**
@@ -239,6 +248,18 @@ export function useSSE({
       try {
         const data: CPNEventData = JSON.parse(evt.data);
         callbacksRef.current.onToolExecuted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    // tool_approval_request — first-run HITL gate for a freshly synthesized
+    // tool. Payload is `{ request_id, preview }` where preview is an A2UI
+    // envelope. Forwarded as-is; useChat is responsible for shape validation.
+    es.addEventListener('tool_approval_request', (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (data && typeof data.request_id === 'string') {
+          callbacksRef.current.onToolApprovalRequested?.(data);
+        }
       } catch { /* malformed SSE data — skip event */ }
     });
 

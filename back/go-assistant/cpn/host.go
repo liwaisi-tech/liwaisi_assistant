@@ -169,7 +169,19 @@ type GateOp struct {
 	// remembered approvals per session instead of bucketing everything into
 	// a global "default" (REQ-FIX-009).
 	SessionID string
+	// Origin identifies the subsystem that authored this op's command string.
+	// Empty means "user/LLM-authored" — the default and most gated path.
+	// Constants such as GateOriginAwakensNative mark ops whose Command is a
+	// hard-coded constant in brae's own code (reflex-like native steps), so
+	// the gate can trust them without subjecting them to user/LLM policy.
+	Origin string
 }
+
+// GateOriginAwakensNative marks GateOps whose Command is code-authored by
+// the awakening topology itself (e.g. helpparse `<path> --help`). These are
+// primordial reflexes — they run every time brae wakes up and are not
+// subject to the LLM-probe allow-list.
+const GateOriginAwakensNative = "awakens-native"
 
 // ── Ports ───────────────────────────────────────────────────────────────────
 

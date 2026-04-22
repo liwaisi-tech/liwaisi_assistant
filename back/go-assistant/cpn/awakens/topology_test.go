@@ -141,7 +141,7 @@ func TestTopology_PlanToFanout_WireUp(t *testing.T) {
 		t.Errorf("compose kind = %v; want NodeKindTool", compose.Kind)
 	}
 
-	// instantiate: p-awaken-subnet-spec -> p-awakening-report
+	// instantiate: p-awaken-subnet-spec -> p-awakening-report-raw
 	inst := c.Transitions[TransitionAwakenProbeInstantiate]
 	if inst == nil {
 		t.Fatal("probe-instantiate transition missing")
@@ -149,17 +149,41 @@ func TestTopology_PlanToFanout_WireUp(t *testing.T) {
 	if len(inst.InputPlaces) != 1 || inst.InputPlaces[0] != PlaceAwakenSubnetSpec {
 		t.Errorf("instantiate inputs = %v; want [%s]", inst.InputPlaces, PlaceAwakenSubnetSpec)
 	}
-	if len(inst.OutputPlaces) != 1 || inst.OutputPlaces[0] != PlaceAwakeningReport {
-		t.Errorf("instantiate outputs = %v; want [%s]", inst.OutputPlaces, PlaceAwakeningReport)
+	if len(inst.OutputPlaces) != 1 || inst.OutputPlaces[0] != PlaceAwakeningReportRaw {
+		t.Errorf("instantiate outputs = %v; want [%s]", inst.OutputPlaces, PlaceAwakeningReportRaw)
 	}
 
-	// Report consumes p-awakening-report.
+	// curate: p-awakening-report-raw -> p-awakening-report
+	curate := c.Transitions[TransitionAwakenCurate]
+	if curate == nil {
+		t.Fatal("curate transition missing")
+	}
+	if len(curate.InputPlaces) != 1 || curate.InputPlaces[0] != PlaceAwakeningReportRaw {
+		t.Errorf("curate inputs = %v; want [%s]", curate.InputPlaces, PlaceAwakeningReportRaw)
+	}
+	if len(curate.OutputPlaces) != 1 || curate.OutputPlaces[0] != PlaceAwakeningReport {
+		t.Errorf("curate outputs = %v; want [%s]", curate.OutputPlaces, PlaceAwakeningReport)
+	}
+
+	// synth: p-awakening-report -> p-awakening-report-synth
+	synth := c.Transitions[TransitionAwakenSynth]
+	if synth == nil {
+		t.Fatal("synth transition missing")
+	}
+	if len(synth.InputPlaces) != 1 || synth.InputPlaces[0] != PlaceAwakeningReport {
+		t.Errorf("synth inputs = %v; want [%s]", synth.InputPlaces, PlaceAwakeningReport)
+	}
+	if len(synth.OutputPlaces) != 1 || synth.OutputPlaces[0] != PlaceAwakeningReportSynth {
+		t.Errorf("synth outputs = %v; want [%s]", synth.OutputPlaces, PlaceAwakeningReportSynth)
+	}
+
+	// Report consumes p-awakening-report-synth.
 	report := c.Transitions[TransitionAwakenReport]
 	if report == nil {
 		t.Fatal("report transition missing")
 	}
-	if len(report.InputPlaces) != 1 || report.InputPlaces[0] != PlaceAwakeningReport {
-		t.Errorf("report inputs = %v; want [%s]", report.InputPlaces, PlaceAwakeningReport)
+	if len(report.InputPlaces) != 1 || report.InputPlaces[0] != PlaceAwakeningReportSynth {
+		t.Errorf("report inputs = %v; want [%s]", report.InputPlaces, PlaceAwakeningReportSynth)
 	}
 }
 

@@ -23,6 +23,7 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("POST /api/v1/sessions/{id}/fork", h.HandleForkSession)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/messages", h.HandleSendMessage)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/hitl/{transitionID}", h.HandleResolveHITL)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/tool-approvals", h.HandleToolApprovalDecision)
 
 	// Flows
 	mux.HandleFunc("GET /api/v1/flows", h.HandleListFlows)
