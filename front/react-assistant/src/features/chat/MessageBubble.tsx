@@ -181,7 +181,7 @@ export const MessageBubble = memo(function MessageBubble({
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`relative max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 ${
-          isUser ? 'rounded-br-md' : 'rounded-bl-md'
+          isUser ? 'rounded-br-md' : 'rounded-bl-md brae-rail brae-rail-cyan'
         }`}
         style={{
           backgroundColor: isUser ? 'var(--bg-user)' : 'var(--bg-assistant)',

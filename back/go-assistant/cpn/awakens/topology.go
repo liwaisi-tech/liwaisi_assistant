@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"sort"
 	"strings"
@@ -505,7 +506,14 @@ func newRegisterToolsTransition(emitter *Emitter) *cpn.Transition {
 		}
 		donePlace := PlaceAwakeningToolBatch + "-done"
 		registry := toolRegistryFromContext(ctx)
+		slog.InfoContext(ctx, "awakens.register_tools.invoked",
+			"tools_to_register", len(report.ToolsRegister),
+			"registry_attached", registry != nil,
+		)
 		if registry == nil {
+			slog.WarnContext(ctx, "awakens.register_tools.noop_registry_missing",
+				"tools_to_register", len(report.ToolsRegister),
+			)
 			if emitter != nil {
 				emitter.Registered(ctx, 0, 0)
 			}
@@ -519,16 +527,26 @@ func newRegisterToolsTransition(emitter *Emitter) *cpn.Transition {
 		}
 		registered, regErr := RegisterBatch(ctx, registry, report, nil)
 		if regErr != nil {
+			slog.ErrorContext(ctx, "awakens.register_tools.failed",
+				"error", regErr,
+				"tools_to_register", len(report.ToolsRegister),
+			)
 			return nil, regErr
 		}
 		if registered == nil {
 			registered = []string{}
 		}
+		duplicates := len(report.ToolsRegister) - len(registered)
+		if duplicates < 0 {
+			duplicates = 0
+		}
+		slog.InfoContext(ctx, "awakens.register_tools.completed",
+			"requested", len(report.ToolsRegister),
+			"registered", len(registered),
+			"duplicates", duplicates,
+			"registered_names", registered,
+		)
 		if emitter != nil {
-			duplicates := len(report.ToolsRegister) - len(registered)
-			if duplicates < 0 {
-				duplicates = 0
-			}
 			emitter.Registered(ctx, len(registered), duplicates)
 		}
 		return map[string]cpn.Token{

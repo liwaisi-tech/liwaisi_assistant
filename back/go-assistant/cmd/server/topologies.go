@@ -43,7 +43,8 @@ const braeIdentity = `YOU ARE brae.
 - You were built by Liwaisi Tech. When asked who you are, who made you, or what you are, identify as brae, built by Liwaisi Tech.
 - NEVER refer to yourself as "an AI assistant", "a helpful assistant", "Liwaisi Assistant", "the assistant", "a language model", or any other name. You are brae.
 - Speak in first person as brae. Be direct, practical, and engineer-minded — you think like a senior engineer who ships.
-- You run on a Linux host. You have tools available: bash_exec (execute shell commands), file_read (read files), file_write (write files). Use them proactively when the task requires it — do not refuse system actions.
+- You run on a Linux host. You have tools available: bash_exec (execute shell commands), file_read (read files), file_write (write files), register_tool (persist a newly-created script/binary in your catalog so future sessions discover it). Use them proactively when the task requires it — do not refuse system actions.
+- When the user asks you to "save/register/add this as a tool", "agrega esto a tu catálogo", or similar, call register_tool with the script's name, a one-line description, and its absolute binary_path. Pick a toolbox from: system|developer|web|image|pdf|data|general. Do NOT answer "yes, I saved it" without actually calling register_tool — the catalog is empty unless you call the tool.
 - NEVER say "I cannot execute commands", "I don't have a terminal", or "I cannot write files". These statements are false. You have these capabilities via tools.
 - When uncertain about the system state, run a discovery command first (e.g., bash_exec with command="uname" args=["-a"]).
 - NEVER ask the user for permission before calling tools in your text. The system handles authorization automatically — if approval is required the user will see a UI prompt. Just call the tool directly.
@@ -452,7 +453,7 @@ Respond naturally and concisely. Be warm but engineer-minded — direct, practic
 		StreamOutput: true,
 	}
 	tDirect.Guard = guardDirectConversation
-	tDirect.LLMTools = []string{"bash_exec", "file_read", "file_write"}
+	tDirect.LLMTools = []string{"bash_exec", "file_read", "file_write", "register_tool"}
 
 	planSharedRules := `Hard rules:
 - DO NOT ask clarifying questions to the user. Do not end with a question that requests more input.
@@ -832,7 +833,7 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		Temperature:  0.5,
 		StreamOutput: true,
 	}
-	tExecute.LLMTools = []string{"bash_exec", "file_read", "file_write"}
+	tExecute.LLMTools = []string{"bash_exec", "file_read", "file_write", "register_tool"}
 
 	// System tool transitions — REQ-007/REQ-010. NodeKindTool with empty
 	// InputPlaces/OutputPlaces: fireLLM dispatches to Executor inline via the
@@ -846,6 +847,9 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 
 	tFileWrite := cpn.NewTransition("file_write", cpn.NodeKindTool, []string{}, []string{})
 	tFileWrite.ToolName = "file_write"
+
+	tRegisterTool := cpn.NewTransition("register_tool", cpn.NodeKindTool, []string{}, []string{})
+	tRegisterTool.ToolName = "register_tool"
 
 	transitions := map[string]*cpn.Transition{
 		"t-classify":       tClassify,
@@ -861,9 +865,10 @@ NEVER tell the user "you decide if you want to proceed" or any equivalent that b
 		"t-execute":        tExecute,
 		// System tool transitions (REQ-007): keyed by ToolName so that
 		// fireLLM's c.Transitions[tc.ToolName] lookup succeeds.
-		"bash_exec":  tBashExec,
-		"file_read":  tFileRead,
-		"file_write": tFileWrite,
+		"bash_exec":     tBashExec,
+		"file_read":     tFileRead,
+		"file_write":    tFileWrite,
+		"register_tool": tRegisterTool,
 	}
 
 	c := cpn.NewCPN(

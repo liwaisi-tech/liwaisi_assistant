@@ -16,13 +16,15 @@ type ToolListResponse struct {
 
 // ToolSummary is a tool in the list view.
 type ToolSummary struct {
-	Name         string `json:"name"`
-	Namespace    string `json:"namespace"`
-	Description  string `json:"description"`
-	InputColor   string `json:"input_color"`
-	OutputColor  string `json:"output_color"`
-	RequiresHITL bool   `json:"requires_hitl"`
-	Version      string `json:"version"`
+	Name         string   `json:"name"`
+	Namespace    string   `json:"namespace"`
+	Description  string   `json:"description"`
+	InputColor   string   `json:"input_color"`
+	OutputColor  string   `json:"output_color"`
+	RequiresHITL bool     `json:"requires_hitl"`
+	Version      string   `json:"version"`
+	Toolbox      string   `json:"toolbox"`
+	Hashtags     []string `json:"hashtags"`
 }
 
 // ToolDetailResponse is the full tool detail.
@@ -43,19 +45,13 @@ func (h *Handlers) HandleListTools(w http.ResponseWriter, r *http.Request) {
 
 	namespace := r.URL.Query().Get("namespace")
 
-	var summaries []ToolSummary
-	if namespace != "" {
-		schemas := h.ToolRegistry.List(namespace)
-		summaries = make([]ToolSummary, 0, len(schemas))
-		for _, s := range schemas {
-			summaries = append(summaries, toolSchemaToSummary(s))
+	entries := h.ToolRegistry.ListFiltered(r.Context(), tools.ToolFilter{Namespace: namespace})
+	summaries := make([]ToolSummary, 0, len(entries))
+	for _, e := range entries {
+		if e == nil || e.Schema == nil {
+			continue
 		}
-	} else {
-		schemas := h.ToolRegistry.ListAll()
-		summaries = make([]ToolSummary, 0, len(schemas))
-		for _, s := range schemas {
-			summaries = append(summaries, toolSchemaToSummary(s))
-		}
+		summaries = append(summaries, toolEntryToSummary(e))
 	}
 
 	writeJSON(w, http.StatusOK, ToolListResponse{Tools: summaries})
@@ -82,14 +78,20 @@ func (h *Handlers) HandleGetTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ToolDetailResponse{
-		ToolSummary: toolSchemaToSummary(entry.Schema),
+		ToolSummary: toolEntryToSummary(entry),
 		Parameters:  entry.Schema.Parameters,
 	})
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────
 
-func toolSchemaToSummary(s *tools.ToolSchema) ToolSummary {
+func toolEntryToSummary(e *tools.ToolEntry) ToolSummary {
+	s := e.Schema
+	toolbox := e.Toolbox
+	if toolbox == "" {
+		toolbox = s.Namespace
+	}
+	tags := append([]string{}, e.Hashtags...)
 	return ToolSummary{
 		Name:         s.QualifiedName(),
 		Namespace:    s.Namespace,
@@ -98,5 +100,7 @@ func toolSchemaToSummary(s *tools.ToolSchema) ToolSummary {
 		OutputColor:  string(s.OutputColor),
 		RequiresHITL: s.RequiresHITL,
 		Version:      s.Version,
+		Toolbox:      toolbox,
+		Hashtags:     tags,
 	}
 }

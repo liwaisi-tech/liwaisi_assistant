@@ -147,6 +147,11 @@ type sessionState struct {
 	state        cpn.State
 	cancel       context.CancelFunc
 	streamClosed sync.Once // guards explicit session teardown in CloseStream
+	// persistedExecCount is the number of execution records already persisted
+	// to store for this session. MetricsRecorder.Records() returns a cumulative
+	// slice, so persistAfterRun must only flush the tail past this offset to
+	// avoid inserting N + (N-1) + ... duplicate rows across turns.
+	persistedExecCount int
 }
 
 func (ss *sessionState) set(s cpn.State) {
@@ -354,6 +359,11 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
+		// Synthesise NodeKindTool transitions for every user-authored
+		// catalogue entry BEFORE InjectIntoCPN so user tools are first-class
+		// in the LLM surface of every new session
+		// (spec/spec-architecture-user-tool-session-surface.md).
+		materialiseUserTools(root, s.toolRegistry, s.hostRuntime, s.logger)
 		s.toolRegistry.InjectIntoCPN(root)
 		// GAP-3: CPN gets a handle to the registry so
 		// NodeKindRegisterTool can publish new tools at runtime.
@@ -1094,6 +1104,7 @@ func (s *SessionService) ForkSession(ctx context.Context, sourceSessionID, userI
 
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
+		materialiseUserTools(root, s.toolRegistry, s.hostRuntime, s.logger)
 		s.toolRegistry.InjectIntoCPN(root)
 		root.ToolRegistry = s.toolRegistry
 	}
@@ -1547,7 +1558,23 @@ func (s *SessionService) persistAfterRun(sessionID string, newMessages []cpn.Mes
 
 	// 4. Persist execution records and update flow stats.
 	if s.persist.Intelligence != nil && root != nil && root.Metrics != nil {
-		records := root.Metrics.Records()
+		allRecords := root.Metrics.Records()
+		// Only persist the tail past what we already flushed for this
+		// session — Records() is cumulative, so re-persisting the full slice
+		// every turn produced 1,2,3,... duplicates across turns.
+		s.mu.RLock()
+		st := s.states[sessionID]
+		s.mu.RUnlock()
+		offset := 0
+		if st != nil {
+			st.mu.RLock()
+			offset = st.persistedExecCount
+			st.mu.RUnlock()
+			if offset > len(allRecords) {
+				offset = len(allRecords)
+			}
+		}
+		records := allRecords[offset:]
 		var totalCost float64
 		var totalDur int64
 		var successCount int
@@ -1600,6 +1627,15 @@ func (s *SessionService) persistAfterRun(sessionID string, newMessages []cpn.Mes
 					s.logger.Warn("persist flow updateStats", "hash", flowHash, "error", err)
 				}
 			}
+		}
+
+		// Advance the persisted-exec offset so the next turn only flushes new
+		// records. Done after the loop so a crash mid-persist re-flushes from
+		// the same offset (at-least-once), never skipping rows.
+		if st != nil && len(records) > 0 {
+			st.mu.Lock()
+			st.persistedExecCount = len(allRecords)
+			st.mu.Unlock()
 		}
 	}
 

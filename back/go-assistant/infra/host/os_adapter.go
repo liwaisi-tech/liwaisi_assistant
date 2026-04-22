@@ -40,17 +40,17 @@ var DefaultDenyList = []string{
 	":(){ :|:& };:",
 }
 
-// pathJailSubdir is the suffix under $HOME that WriteFile/ReadFile are
-// allowed to touch (SEC-002). v1 is unconditional; GAP-6 delegates to gate.
-const pathJailSubdir = ".local/brae"
-
 // OSHostAdapter is the production implementation of cpn.HostAdapter. It is
 // safe for concurrent use.
 type OSHostAdapter struct {
 	MaxOutputBytes int
 	DenyList       []string
-	// AllowedRoot is the absolute directory WriteFile/ReadFile may write
-	// inside of. Defaults to $HOME/.local/brae/ (SEC-002).
+	// AllowedRoot is the absolute directory WriteFile/ReadFile may operate
+	// inside of. Defaults to the process user's $HOME — the real security
+	// boundary is OS-level: brae runs as a dedicated non-sudo user, so the
+	// kernel's filesystem permissions enforce isolation. AllowedRoot just
+	// prevents the adapter from traversing outside that home via symlinks
+	// or ../ escapes. Override with BRAE_ALLOWED_ROOT for tighter jails.
 	AllowedRoot string
 
 	Logger *slog.Logger
@@ -85,8 +85,10 @@ func NewOSHostAdapter(logger *slog.Logger, opts ...Option) *OSHostAdapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	home, _ := os.UserHomeDir()
-	allowed := filepath.Join(home, pathJailSubdir)
+	allowed := os.Getenv("BRAE_ALLOWED_ROOT")
+	if allowed == "" {
+		allowed, _ = os.UserHomeDir()
+	}
 	a := &OSHostAdapter{
 		MaxOutputBytes: DefaultMaxOutputBytes,
 		DenyList:       append([]string(nil), DefaultDenyList...),

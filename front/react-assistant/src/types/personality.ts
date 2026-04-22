@@ -38,6 +38,8 @@ export interface ToolSummary {
   output_color: string;
   requires_hitl: boolean;
   version: string;
+  toolbox: string;
+  hashtags: string[];
 }
 
 export interface ToolListResponse {

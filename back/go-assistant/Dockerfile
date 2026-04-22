@@ -24,15 +24,22 @@ RUN CGO_ENABLED=0 go build \
 # ── Runtime stage ──
 FROM alpine:3.21
 
-# Security: non-root user
-# Alpine 3.21 ships with ca-certificates pre-installed
-RUN addgroup -S brae && adduser -S brae -G brae
+# Security: non-root user with a real $HOME it fully owns.
+# The brae agent's sandbox is OS-level: kernel fs permissions on this user
+# are the real boundary. AllowedRoot defaults to this $HOME.
+# Alpine 3.21 ships with ca-certificates pre-installed.
+RUN addgroup -S brae \
+    && adduser -S -D -H -h /home/brae -G brae brae \
+    && mkdir -p /home/brae \
+    && chown -R brae:brae /home/brae \
+    && chmod 0755 /home/brae
 
 COPY --from=builder /liwaisi-server /usr/local/bin/liwaisi-server
 COPY --from=builder /build/store/postgres/migrations /app/migrations
 COPY --from=builder /build/infra/host/policies /app/infra/host/policies
 
 ENV HOST_POLICY_PATH=/app/infra/host/policies/default.yaml
+ENV HOME=/home/brae
 WORKDIR /app
 
 # Ensure secrets directory exists and is writable by app user

@@ -12,6 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
@@ -19,6 +23,31 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
+
+// resolveUserPath expands ~, $HOME, and ${HOME} in a user-supplied path and
+// requires the result to be absolute. The LLM routinely emits literal "$HOME"
+// or "~/foo" expecting shell-style expansion; file_read/file_write do not
+// shell out, so we expand here before handing the path to the adapter.
+func resolveUserPath(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("'path' is required")
+	}
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		switch {
+		case p == "~":
+			p = home
+		case strings.HasPrefix(p, "~/"):
+			p = filepath.Join(home, p[2:])
+		}
+		p = strings.ReplaceAll(p, "${HOME}", home)
+		p = strings.ReplaceAll(p, "$HOME", home)
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("path %q must be absolute (after ~ / $HOME expansion)", p)
+	}
+	return filepath.Clean(p), nil
+}
 
 // JSON schema constants passed to ToolSchema.Parameters so buildToolSchema
 // includes them in the LLM tool description (REQ-005).
@@ -55,7 +84,7 @@ const (
   "properties": {
     "path": {
       "type": "string",
-      "description": "Absolute path to the file to read. Must be inside $HOME/.local/brae/ or user home."
+      "description": "Absolute path to the file to read. Must resolve inside the brae user's $HOME. You may use ~, ~/, $HOME, or ${HOME} — they are expanded to the home directory before resolution."
     }
   }
 }`
@@ -66,7 +95,7 @@ const (
   "properties": {
     "path": {
       "type": "string",
-      "description": "Absolute path to write. Must be inside $HOME/.local/brae/."
+      "description": "Absolute path to write. Must resolve inside the brae user's $HOME. You may use ~, ~/, $HOME, or ${HOME} — they are expanded to the home directory before resolution. Parent directories are NOT created automatically; run mkdir -p first via bash_exec if needed."
     },
     "content": {
       "type": "string",
@@ -75,6 +104,43 @@ const (
     "mode": {
       "type": "integer",
       "description": "Unix file permission mode as decimal integer (e.g., 420 = 0644). Defaults to 420."
+    }
+  }
+}`
+
+	registerToolParamsSchema = `{
+  "type": "object",
+  "required": ["name", "description", "binary_path"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Short identifier (e.g., 'check-health'). Must match [A-Za-z][A-Za-z0-9_-]{0,63}."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line human-readable summary of what the tool does."
+    },
+    "binary_path": {
+      "type": "string",
+      "description": "Absolute path to the executable script or binary on the brae user's host. Must resolve inside $HOME. You may use ~, ~/, $HOME, or ${HOME}."
+    },
+    "toolbox": {
+      "type": "string",
+      "description": "Optional toolbox grouping. One of: system, developer, web, image, pdf, data, general. Defaults to 'general'.",
+      "enum": ["system", "developer", "web", "image", "pdf", "data", "general"]
+    },
+    "hashtags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional 2–5 short capability tags (e.g. ['system','health','read']). Unknown tags are dropped silently."
+    },
+    "help_text": {
+      "type": "string",
+      "description": "Optional usage hint — typically the first line of the tool's --help output."
+    },
+    "version": {
+      "type": "string",
+      "description": "Optional semver string. Defaults to '0.1.0'."
     }
   }
 }`
@@ -124,7 +190,7 @@ func registerSystemTools(toolReg *tools.Registry, adapter cpn.HostAdapter, gate 
 			schema: &tools.ToolSchema{
 				Name:        "file_read",
 				Namespace:   "system",
-				Description: "Read a file from the host filesystem. Path must be inside $HOME/.local/brae/.",
+				Description: "Read a file from the host filesystem. Path must resolve inside the brae user's $HOME.",
 				InputColor:  cpn.ColorJSON,
 				OutputColor: cpn.ColorArtifact,
 				Parameters:  json.RawMessage(fileReadParamsSchema),
@@ -136,7 +202,7 @@ func registerSystemTools(toolReg *tools.Registry, adapter cpn.HostAdapter, gate 
 			schema: &tools.ToolSchema{
 				Name:         "file_write",
 				Namespace:    "system",
-				Description:  "Write content to a file on the host filesystem. Path must be inside $HOME/.local/brae/.",
+				Description:  "Write content to a file on the host filesystem. Path must resolve inside the brae user's $HOME.",
 				InputColor:   cpn.ColorJSON,
 				OutputColor:  cpn.ColorArtifact,
 				Parameters:   json.RawMessage(fileWriteParamsSchema),
@@ -144,6 +210,19 @@ func registerSystemTools(toolReg *tools.Registry, adapter cpn.HostAdapter, gate 
 				Version:      "1.0",
 			},
 			exec: makeFileWriteExecutor(adapter),
+		},
+		{
+			schema: &tools.ToolSchema{
+				Name:         "register_tool",
+				Namespace:    "system",
+				Description:  "Register a new tool in brae's catalog so future sessions can discover it. Use this after you have created a working executable script on disk (e.g., a health-check written to ~/.local/bin/). The registration persists name, description, binary_path, toolbox, and hashtags in the catalog; it does NOT copy or compile anything. Requires human approval.",
+				InputColor:   cpn.ColorJSON,
+				OutputColor:  cpn.ColorArtifact,
+				Parameters:   json.RawMessage(registerToolParamsSchema),
+				RequiresHITL: true,
+				Version:      "1.0",
+			},
+			exec: makeRegisterToolExecutor(toolReg, adapter),
 		},
 	}
 
@@ -233,14 +312,15 @@ func makeFileReadExecutor(adapter cpn.HostAdapter) tools.ToolExecutor {
 		if err := json.Unmarshal([]byte(payload), &args); err != nil {
 			return cpn.Token{}, fmt.Errorf("file_read: parse arguments: %w", err)
 		}
-		if args.Path == "" {
-			return cpn.Token{}, fmt.Errorf("file_read: 'path' is required")
+		resolved, err := resolveUserPath(args.Path)
+		if err != nil {
+			return cpn.Token{}, fmt.Errorf("file_read: %w", err)
 		}
 
-		data, err := adapter.ReadFile(ctx, args.Path)
+		data, err := adapter.ReadFile(ctx, resolved)
 		if err != nil {
 			if isPathDenied(err) {
-				return cpn.Token{}, fmt.Errorf("error: path %s is outside the allowed root. Use paths under $HOME/.local/brae/", args.Path)
+				return cpn.Token{}, fmt.Errorf("error: path %s is outside the allowed root (brae user's $HOME)", resolved)
 			}
 			return cpn.Token{}, fmt.Errorf("file_read: %w", err)
 		}
@@ -268,16 +348,17 @@ func makeFileWriteExecutor(adapter cpn.HostAdapter) tools.ToolExecutor {
 		if err := json.Unmarshal([]byte(payload), &args); err != nil {
 			return cpn.Token{}, fmt.Errorf("file_write: parse arguments: %w", err)
 		}
-		if args.Path == "" {
-			return cpn.Token{}, fmt.Errorf("file_write: 'path' is required")
+		resolved, err := resolveUserPath(args.Path)
+		if err != nil {
+			return cpn.Token{}, fmt.Errorf("file_write: %w", err)
 		}
 		if args.Mode == 0 {
 			args.Mode = 0o644
 		}
 
-		if err := adapter.WriteFile(ctx, args.Path, []byte(args.Content), fs.FileMode(args.Mode)); err != nil { //nolint:gosec // G115: Mode is a POSIX permission bitmask (<=0o777) that fits in uint32
+		if err := adapter.WriteFile(ctx, resolved, []byte(args.Content), fs.FileMode(args.Mode)); err != nil { //nolint:gosec // G115: Mode is a POSIX permission bitmask (<=0o777) that fits in uint32
 			if isPathDenied(err) {
-				return cpn.Token{}, fmt.Errorf("error: path %s is outside the allowed root. Use paths under $HOME/.local/brae/", args.Path)
+				return cpn.Token{}, fmt.Errorf("error: path %s is outside the allowed root (brae user's $HOME)", resolved)
 			}
 			return cpn.Token{}, fmt.Errorf("file_write: %w", err)
 		}
@@ -288,7 +369,7 @@ func makeFileWriteExecutor(adapter cpn.HostAdapter) tools.ToolExecutor {
 		}
 		return cpn.Token{
 			Color:   cpn.ColorArtifact,
-			Payload: writeResult{Written: true, Path: args.Path},
+			Payload: writeResult{Written: true, Path: resolved},
 		}, nil
 	}
 }
@@ -303,4 +384,100 @@ func isPathDenied(err error) bool {
 		return he.Code == cpn.HostErrCodePathDenied
 	}
 	return false
+}
+
+// registerToolNameRe mirrors awakens.toolNameRe — conservative identifier
+// set that cannot embed shell metachars or namespace separators.
+var registerToolNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+
+// makeRegisterToolExecutor returns a ToolExecutor for system/register_tool.
+// After HITL approval it persists a ToolManifest in the registry under the
+// "user" namespace so catalogue reads (GET /api/v1/tools) surface it.
+func makeRegisterToolExecutor(toolReg *tools.Registry, adapter cpn.HostAdapter) tools.ToolExecutor {
+	return func(ctx context.Context, in cpn.Token) (cpn.Token, error) {
+		payload, ok := in.Payload.(string)
+		if !ok {
+			return cpn.Token{}, fmt.Errorf("register_tool: expected string payload, got %T", in.Payload)
+		}
+		var args struct {
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			BinaryPath  string   `json:"binary_path"`
+			Toolbox     string   `json:"toolbox"`
+			Hashtags    []string `json:"hashtags"`
+			HelpText    string   `json:"help_text"`
+			Version     string   `json:"version"`
+		}
+		if err := json.Unmarshal([]byte(payload), &args); err != nil {
+			return cpn.Token{}, fmt.Errorf("register_tool: parse arguments: %w", err)
+		}
+
+		name := strings.TrimSpace(args.Name)
+		if !registerToolNameRe.MatchString(name) {
+			return cpn.Token{}, fmt.Errorf("register_tool: 'name' must match [A-Za-z][A-Za-z0-9_-]{0,63} (got %q)", name)
+		}
+		if strings.TrimSpace(args.Description) == "" {
+			return cpn.Token{}, fmt.Errorf("register_tool: 'description' is required")
+		}
+		resolvedBin, err := resolveUserPath(args.BinaryPath)
+		if err != nil {
+			return cpn.Token{}, fmt.Errorf("register_tool: %w", err)
+		}
+		if _, err := adapter.Stat(ctx, resolvedBin); err != nil {
+			if isPathDenied(err) {
+				return cpn.Token{}, fmt.Errorf("error: binary_path %s is outside the allowed root (brae user's $HOME)", resolvedBin)
+			}
+			return cpn.Token{}, fmt.Errorf("register_tool: binary_path %s: %w", resolvedBin, err)
+		}
+
+		version := strings.TrimSpace(args.Version)
+		if version == "" {
+			version = "0.1.0"
+		}
+		toolbox := strings.TrimSpace(strings.ToLower(args.Toolbox))
+		if toolbox == "" {
+			toolbox = "general"
+		}
+		helpText := args.HelpText
+		if strings.TrimSpace(helpText) == "" {
+			helpText = args.Description
+		}
+
+		manifest := cpn.ToolManifest{
+			Namespace:    "user",
+			Name:         name,
+			Version:      version,
+			Origin:       "user-authored",
+			HelpText:     helpText,
+			BinaryPath:   resolvedBin,
+			Toolbox:      toolbox,
+			Hashtags:     args.Hashtags,
+			RegisteredBy: "system/register_tool",
+			Provenance: cpn.ProvenanceSnapshot{
+				PromptDigest: "system/register_tool@v1",
+			},
+		}
+		result, err := toolReg.RegisterManifest(ctx, manifest)
+		if err != nil {
+			return cpn.Token{}, fmt.Errorf("register_tool: %w", err)
+		}
+
+		type registerResult struct {
+			QualifiedName string    `json:"qualified_name"`
+			ID            string    `json:"id"`
+			RegisteredAt  time.Time `json:"registered_at"`
+			Toolbox       string    `json:"toolbox"`
+			BinaryPath    string    `json:"binary_path"`
+		}
+		return cpn.Token{
+			Color: cpn.ColorArtifact,
+			Payload: registerResult{
+				QualifiedName: result.QualifiedName,
+				ID:            result.ID,
+				RegisteredAt:  result.RegisteredAt,
+				Toolbox:       toolbox,
+				BinaryPath:    resolvedBin,
+			},
+		}, nil
+	}
 }

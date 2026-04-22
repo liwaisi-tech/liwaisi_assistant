@@ -10,6 +10,7 @@ export function ToolBrowser() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   useEffect(() => { loadNamespace('tools'); }, []);
 
@@ -30,27 +31,50 @@ export function ToolBrowser() {
     loadTools();
   }, [loadTools]);
 
+  const resolveToolbox = useCallback(
+    (tool: ToolSummary) => tool.toolbox?.trim() || tool.namespace || t('browser.uncategorized'),
+    [t],
+  );
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     if (!q) return tools;
-    return tools.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        t.namespace.toLowerCase().includes(q) ||
-        t.description.toLowerCase().includes(q),
-    );
-  }, [tools, search]);
+    return tools.filter((tool) => {
+      const tb = resolveToolbox(tool).toLowerCase();
+      return (
+        tool.name.toLowerCase().includes(q) ||
+        tool.namespace.toLowerCase().includes(q) ||
+        tool.description.toLowerCase().includes(q) ||
+        tb.includes(q) ||
+        tool.hashtags?.some((h) => h.toLowerCase().includes(q))
+      );
+    });
+  }, [tools, search, resolveToolbox]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, ToolSummary[]>();
+  const toolboxes = useMemo(() => {
+    const map = new Map<string, { tools: ToolSummary[]; hashtags: Set<string> }>();
     for (const tool of filtered) {
-      const list = map.get(tool.namespace) ?? [];
-      list.push(tool);
-      map.set(tool.namespace, list);
+      const key = resolveToolbox(tool);
+      let bucket = map.get(key);
+      if (!bucket) {
+        bucket = { tools: [], hashtags: new Set() };
+        map.set(key, bucket);
+      }
+      bucket.tools.push(tool);
+      for (const tag of tool.hashtags ?? []) bucket.hashtags.add(tag);
     }
-    // Sort namespaces alphabetically
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filtered]);
+    return Array.from(map.entries())
+      .map(([name, bucket]) => ({
+        name,
+        tools: bucket.tools,
+        hashtags: Array.from(bucket.hashtags).sort(),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [filtered, resolveToolbox]);
+
+  const toggle = useCallback((name: string) => {
+    setCollapsed((prev) => ({ ...prev, [name]: !prev[name] }));
+  }, []);
 
   if (loading) {
     return (
@@ -125,128 +149,195 @@ export function ToolBrowser() {
             onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-dim)'; }}
           />
 
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-            {t('browser.toolsFound', { count: filtered.length })}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+              {t('browser.toolboxesFound', { count: toolboxes.length })}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>·</span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+              {t('browser.toolsFound', { count: filtered.length })}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Tool list */}
+      {/* Toolbox list */}
       <div className="flex-1 overflow-y-auto chat-scroll p-4 md:p-6 pt-3">
-        <div className="max-w-2xl mx-auto w-full space-y-5">
-          {grouped.length === 0 && (
+        <div className="max-w-2xl mx-auto w-full space-y-3">
+          {toolboxes.length === 0 && (
             <p className="text-sm text-center py-8" style={{ color: 'var(--text-muted)' }}>
               {t('browser.noToolsFound')}
             </p>
           )}
 
-          {grouped.map(([namespace, nsTools]) => (
-            <div key={namespace}>
-              {/* Namespace header */}
-              <div className="flex items-center gap-2 mb-2">
-                <span
-                  className="text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
-                >
-                  {namespace}
-                </span>
-                <span
-                  className="px-1.5 py-0.5 rounded text-[9px]"
+          {toolboxes.map((box) => {
+            const isOpen = !collapsed[box.name];
+            return (
+              <div
+                key={box.name}
+                className="rounded-lg border overflow-hidden"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-dim)' }}
+              >
+                {/* Toolbox header (clickable) */}
+                <button
+                  type="button"
+                  onClick={() => toggle(box.name)}
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? t('browser.collapse') : t('browser.expand')}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 transition-colors"
                   style={{
-                    backgroundColor: 'rgba(255,255,255,0.05)',
-                    color: 'var(--text-muted)',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    backgroundColor: 'rgba(14, 165, 233, 0.04)',
+                    borderBottom: isOpen ? '1px solid var(--border-dim)' : 'none',
                   }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(14, 165, 233, 0.08)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(14, 165, 233, 0.04)'; }}
                 >
-                  {nsTools.length}
-                </span>
-              </div>
-
-              {/* Tool cards */}
-              <div className="space-y-2">
-                {nsTools.map((tool) => (
-                  <div
-                    key={`${tool.namespace}-${tool.name}`}
-                    className="rounded-lg border p-3 transition-colors duration-150"
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--text-muted)"
+                    strokeWidth="2.5"
                     style={{
-                      backgroundColor: 'var(--bg-surface)',
-                      borderColor: 'var(--border-dim)',
+                      transition: 'transform 150ms ease',
+                      transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(14, 165, 233, 0.3)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-dim)'; }}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span
-                            className="text-xs font-medium"
-                            style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
-                          >
-                            {tool.name}
-                          </span>
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
 
-                          {/* Namespace badge */}
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[9px]"
-                            style={{
-                              backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                              color: 'var(--accent)',
-                              fontFamily: "'JetBrains Mono', monospace",
-                            }}
-                          >
-                            {tool.namespace}
-                          </span>
+                  {/* Toolbox icon */}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 7h-3V5a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                  </svg>
 
-                          {/* HITL badge */}
-                          {tool.requires_hitl && (
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[9px]"
-                              style={{
-                                backgroundColor: 'rgba(245, 158, 11, 0.15)',
-                                color: '#fbbf24',
-                                fontFamily: "'JetBrains Mono', monospace",
-                              }}
-                            >
-                              {t('browser.hitlBadge')}
-                            </span>
-                          )}
+                  <span
+                    className="text-xs font-semibold flex-1 text-left"
+                    style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
+                  >
+                    {box.name}
+                  </span>
 
-                          {/* Version */}
-                          <span
-                            className="text-[9px]"
-                            style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
-                          >
-                            v{tool.version}
-                          </span>
-                        </div>
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px]"
+                    style={{
+                      backgroundColor: 'rgba(14, 165, 233, 0.12)',
+                      color: 'var(--accent)',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {t('browser.toolCount', { count: box.tools.length })}
+                  </span>
+                </button>
 
-                        <p className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
-                          {tool.description}
-                        </p>
-                      </div>
-
-                      {/* Color dots (input/output) */}
-                      <div className="flex items-center gap-1 shrink-0 mt-1">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: tool.input_color }}
-                          title={t('browser.inputColorTitle', { color: tool.input_color })}
-                        />
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                          <polyline points="9 18 15 12 9 6" />
-                        </svg>
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: tool.output_color }}
-                          title={t('browser.outputColorTitle', { color: tool.output_color })}
-                        />
-                      </div>
-                    </div>
+                {/* Hashtags row */}
+                {isOpen && box.hashtags.length > 0 && (
+                  <div
+                    className="flex flex-wrap gap-1 px-3 py-2"
+                    style={{ borderBottom: '1px solid var(--border-dim)' }}
+                  >
+                    {box.hashtags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-1.5 py-0.5 rounded text-[9px]"
+                        style={{
+                          backgroundColor: 'rgba(255,255,255,0.05)',
+                          color: 'var(--text-muted)',
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}
+                      >
+                        #{tag}
+                      </span>
+                    ))}
                   </div>
-                ))}
+                )}
+
+                {/* Tool cards */}
+                {isOpen && (
+                  <div className="divide-y" style={{ borderColor: 'var(--border-dim)' }}>
+                    {box.tools.map((tool) => (
+                      <div
+                        key={`${tool.namespace}-${tool.name}`}
+                        className="p-3 transition-colors duration-150"
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(14, 165, 233, 0.03)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className="text-xs font-medium"
+                                style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
+                              >
+                                {tool.name}
+                              </span>
+
+                              {/* Namespace badge */}
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[9px]"
+                                style={{
+                                  backgroundColor: 'rgba(14, 165, 233, 0.1)',
+                                  color: 'var(--accent)',
+                                  fontFamily: "'JetBrains Mono', monospace",
+                                }}
+                              >
+                                {tool.namespace}
+                              </span>
+
+                              {/* HITL badge */}
+                              {tool.requires_hitl && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[9px]"
+                                  style={{
+                                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                    color: '#fbbf24',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                  }}
+                                >
+                                  {t('browser.hitlBadge')}
+                                </span>
+                              )}
+
+                              {/* Version */}
+                              <span
+                                className="text-[9px]"
+                                style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                              >
+                                v{tool.version}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+                              {tool.description}
+                            </p>
+                          </div>
+
+                          {/* Color dots (input/output) */}
+                          <div className="flex items-center gap-1 shrink-0 mt-1">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: tool.input_color }}
+                              title={t('browser.inputColorTitle', { color: tool.input_color })}
+                            />
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                              <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                            <span
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: tool.output_color }}
+                              title={t('browser.outputColorTitle', { color: tool.output_color })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -1,0 +1,149 @@
+/* brae OS — additive design tokens from the Claude Design handoff
+ * (being-a-real-ai-enginer-brae / brae OS.html).
+ *
+ * This file is additive: it layers the brae-OS palette, typography, and
+ * primitive utilities on top of the existing Deep-Space Terminal tokens in
+ * `index.css`. Components opt in by using the new tokens/utilities; nothing
+ * existing is clobbered.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
+
+:root {
+  /* Semantic surfaces — finer-grained than index.css so dense panels layer. */
+  --brae-bg-0: #070a0e;
+  --brae-bg-1: #0b1016;
+  --brae-bg-2: #101722;
+  --brae-bg-3: #161f2c;
+  --brae-bg-4: #1d2736;
+
+  --brae-border-0: #131a25;
+  --brae-border-1: #1a2431;
+  --brae-border-2: #243043;
+  --brae-border-3: #334458;
+
+  --brae-text-0: #e8edf5;
+  --brae-text-1: #aab4c2;
+  --brae-text-2: #7a8593;
+  --brae-text-3: #4d5866;
+  --brae-text-4: #2f3845;
+
+  /* Semantic palette — used for status/risk/HITL. */
+  --brae-cyan: #6ec4ea;
+  --brae-cyan-dim: #4da3cc;
+  --brae-cyan-glow: rgba(110, 196, 234, 0.12);
+
+  --brae-green: #7fd4a1;
+  --brae-green-dim: #58b684;
+  --brae-green-glow: rgba(127, 212, 161, 0.1);
+
+  --brae-amber: #e8b363;
+  --brae-amber-dim: #c89347;
+  --brae-amber-glow: rgba(232, 179, 99, 0.1);
+
+  --brae-red: #e38585;
+  --brae-red-dim: #c26262;
+  --brae-red-glow: rgba(227, 133, 133, 0.1);
+
+  --brae-violet: #a68ae0;
+  --brae-violet-dim: #8970bd;
+  --brae-violet-glow: rgba(166, 138, 224, 0.1);
+
+  --brae-font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --brae-font-ui: 'Inter Tight', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --brae-font-display: 'Instrument Serif', 'Times New Roman', serif;
+
+  --brae-r-sm: 4px;
+  --brae-r-md: 6px;
+  --brae-r-lg: 10px;
+  --brae-r-xl: 14px;
+}
+
+/* ─── Primitives ────────────────────────────────────────────────────────── */
+
+.brae-mono { font-family: var(--brae-font-mono); font-feature-settings: 'zero', 'ss01'; }
+.brae-ui { font-family: var(--brae-font-ui); }
+.brae-display { font-family: var(--brae-font-display); font-style: italic; font-weight: 400; }
+.brae-tabular { font-variant-numeric: tabular-nums; }
+
+/* Label in all-caps mono — used to mark every dense section. */
+.brae-label-caps {
+  font-family: var(--brae-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brae-text-2);
+}
+
+/* Pill — compact status chip. Base + semantic variants. */
+.brae-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-family: var(--brae-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--brae-border-2);
+  color: var(--brae-text-1);
+  background: var(--brae-bg-2);
+  line-height: 1.6;
+}
+.brae-pill-cyan { color: var(--brae-cyan); border-color: color-mix(in oklch, var(--brae-cyan) 35%, var(--brae-border-2)); background: var(--brae-cyan-glow); }
+.brae-pill-green { color: var(--brae-green); border-color: color-mix(in oklch, var(--brae-green) 35%, var(--brae-border-2)); background: var(--brae-green-glow); }
+.brae-pill-amber { color: var(--brae-amber); border-color: color-mix(in oklch, var(--brae-amber) 35%, var(--brae-border-2)); background: var(--brae-amber-glow); }
+.brae-pill-red { color: var(--brae-red); border-color: color-mix(in oklch, var(--brae-red) 35%, var(--brae-border-2)); background: var(--brae-red-glow); }
+.brae-pill-violet { color: var(--brae-violet); border-color: color-mix(in oklch, var(--brae-violet) 35%, var(--brae-border-2)); background: var(--brae-violet-glow); }
+
+.brae-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.brae-dot-green { background: var(--brae-green); box-shadow: 0 0 6px var(--brae-green); }
+.brae-dot-amber { background: var(--brae-amber); box-shadow: 0 0 6px var(--brae-amber); }
+.brae-dot-red { background: var(--brae-red); }
+.brae-dot-muted { background: var(--brae-text-3); }
+
+/* CPN rail — left-accent strip for assistant/HITL cards. */
+.brae-rail { position: relative; }
+.brae-rail::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 10px; bottom: 10px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--brae-border-2);
+}
+.brae-rail-cyan::before { background: var(--brae-cyan); }
+.brae-rail-green::before { background: var(--brae-green); }
+.brae-rail-amber::before { background: var(--brae-amber); }
+.brae-rail-red::before { background: var(--brae-red); }
+.brae-rail-violet::before { background: var(--brae-violet); }
+
+/* Inline code pill (distinct from markdown inline code). */
+.brae-code-inline {
+  font-family: var(--brae-font-mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  background: var(--brae-bg-3);
+  border: 1px solid var(--brae-border-1);
+  border-radius: 3px;
+  color: var(--brae-cyan);
+}
+
+/* Starry stardust backdrop for empty states. */
+.brae-stardust {
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(110,196,234,0.25), transparent 50%),
+    radial-gradient(1px 1px at 70% 60%, rgba(110,196,234,0.15), transparent 50%),
+    radial-gradient(1px 1px at 40% 80%, rgba(166,138,224,0.2), transparent 50%),
+    radial-gradient(1px 1px at 85% 25%, rgba(127,212,161,0.15), transparent 50%);
+}
+
+/* Pulse animation for live dots (separate keyframe name so it doesn't
+ * collide with index.css `status-pulse`). */
+@keyframes brae-pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.brae-pulse { animation: brae-pulse-dot 1.5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .brae-pulse { animation: none; }
+}

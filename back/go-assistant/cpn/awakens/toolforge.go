@@ -95,6 +95,10 @@ func RegisterBatch(ctx context.Context, reg cpn.ToolRegistry, r AwakeningReport,
 		entries = entries[:MaxToolsToRegister]
 	}
 
+	logger.InfoContext(ctx, "awakens.register_batch.start",
+		slog.Int("entries", len(entries)),
+	)
+
 	registered := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		tags, droppedByCap := normaliseHashtags(entry.Hashtags)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -28,6 +29,7 @@ type ToolExecutor = func(ctx context.Context, in cpn.Token) (cpn.Token, error)
 const (
 	OriginBuiltin       = "builtin"
 	OriginUser          = "user"
+	OriginUserAuthored  = "user-authored"
 	OriginAgentAuthored = "agent-authored"
 )
 
@@ -549,12 +551,29 @@ func (r *Registry) RegisterEntry(ctx context.Context, entry *ToolEntry) error {
 	r.mu.Unlock()
 
 	if repo != nil {
+		slog.DebugContext(ctx, "tools.registry.persist.start",
+			slog.String("qualified_name", qn),
+			slog.String("origin", entry.Origin),
+			slog.String("toolbox", entry.Toolbox),
+		)
 		if err := repo.Upsert(ctx, toPersistEntry(entry)); err != nil {
 			if isPersistDuplicate(err) {
+				slog.WarnContext(ctx, "tools.registry.persist.duplicate",
+					slog.String("qualified_name", qn),
+				)
 				return wrapErr(ErrDuplicate, qn, err)
 			}
+			slog.ErrorContext(ctx, "tools.registry.persist.failed",
+				slog.String("qualified_name", qn),
+				slog.Any("error", err),
+			)
 			return wrapErr(ErrInvalidInput, "persist upsert", err)
 		}
+		slog.InfoContext(ctx, "tools.registry.persisted",
+			slog.String("qualified_name", qn),
+			slog.String("origin", entry.Origin),
+			slog.String("toolbox", entry.Toolbox),
+		)
 	}
 
 	r.mu.Lock()
@@ -753,6 +772,28 @@ func (r *Registry) ListFiltered(_ context.Context, f ToolFilter) []*ToolEntry {
 		}
 		return persist.CompareSemver(out[i].Version, out[j].Version) > 0
 	})
+	return out
+}
+
+// ListUserAuthored returns non-deprecated entries authored at runtime by the
+// operator through system/register_tool (Origin = "user-authored"). One entry
+// per anchor: the latest non-deprecated version. Sorted by bare name so
+// session bootstrap produces a deterministic prompt-tool ordering.
+func (r *Registry) ListUserAuthored() []*ToolEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*ToolEntry, 0)
+	for _, entries := range r.byAnchor {
+		e := pickLatestNonDeprecated(entries)
+		if e == nil {
+			continue
+		}
+		if e.Origin != OriginUserAuthored {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 

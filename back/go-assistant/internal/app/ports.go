@@ -25,6 +25,13 @@ type SessionToolRegistry interface {
 	// Resolve returns the live ToolEntry for a qualified name or false when
 	// the name is not registered.
 	Resolve(qualifiedName string) (*tools.ToolEntry, bool)
+
+	// ListUserAuthored returns non-deprecated entries registered at runtime
+	// by the operator through system/register_tool. Session bootstrap
+	// materialises one NodeKindTool transition per entry so the LLM sees
+	// them as first-class callable tools in every new session (see
+	// spec/spec-architecture-user-tool-session-surface.md).
+	ListUserAuthored() []*tools.ToolEntry
 }
 
 // ToolboxLister is the aggregate read-only view over registered tools

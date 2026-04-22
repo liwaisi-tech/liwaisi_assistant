@@ -13,8 +13,16 @@
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
-  --accent: #0ea5e9;
-  --accent-glow: #0ea5e940;
+  --accent: #6ec4ea;
+  --accent-glow: rgba(110, 196, 234, 0.25);
+
+  /* brae-OS semantic palette aliased at the global level so non-namespaced
+   * components pick up the new hues without churn. Tokens defined in
+   * styles/brae-os.css; mirrored here with short names for terseness. */
+  --violet: #a68ae0;
+  --amber:  #e8b363;
+  --green:  #7fd4a1;
+  --red:    #e38585;
 }
 
 /* -- Base resets -- */
@@ -22,7 +30,7 @@ body {
   margin: 0;
   background-color: var(--bg-deep);
   color: var(--text-primary);
-  font-family: 'DM Sans', system-ui, sans-serif;
+  font-family: 'Inter Tight', 'DM Sans', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

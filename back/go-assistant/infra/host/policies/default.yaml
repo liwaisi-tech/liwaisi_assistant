@@ -87,7 +87,7 @@ dangerous_patterns:
 hitl_patterns: []
 
 path_jail:
-  write: "$HOME/.local/brae/"
+  write: "$HOME/"
   read: "/"
 
 sandbox_mappings:

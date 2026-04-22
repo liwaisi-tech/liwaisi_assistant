@@ -81,6 +81,27 @@ func ParseShellInvocation(tool string, args any) (command string, ok bool) {
 			return stringifyFallback(args), false
 		}
 		return "read ← " + parsed.Path, true
+
+	case "register_tool":
+		if !rawOK {
+			return stringifyFallback(args), false
+		}
+		var parsed struct {
+			Name       string `json:"name"`
+			BinaryPath string `json:"binary_path"`
+			Toolbox    string `json:"toolbox"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Name == "" {
+			return stringifyFallback(args), false
+		}
+		summary := "register tool " + parsed.Name
+		if parsed.Toolbox != "" {
+			summary += " [" + parsed.Toolbox + "]"
+		}
+		if parsed.BinaryPath != "" {
+			summary += " @ " + parsed.BinaryPath
+		}
+		return summary, true
 	}
 
 	return stringifyFallback(args), false

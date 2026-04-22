@@ -337,7 +337,7 @@ INPUT="$BRAE_TOKEN_PAYLOAD"
 SRC_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['path'])" 2>/dev/null)
 LANG=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('language','bash'))" 2>/dev/null)
 TOOL_NAME=$(basename "${SRC_PATH%.*}")
-BIN_DIR="$HOME/.local/brae/bin"
+BIN_DIR="$HOME/bin"
 mkdir -p "$BIN_DIR"
 BIN_PATH="$BIN_DIR/$TOOL_NAME"
 case "$LANG" in
