@@ -263,17 +263,26 @@ func (g *PolicyHostGate) Evaluate(ctx context.Context, op cpn.GateOp) Decision {
 		SessionID: sessionID,
 	}
 
-	// Awakening-mode silent-deny (CON-003 / SEC-004 / AC-005). When the
-	// current session is running `brae-awakens`, any command that the
-	// introspection classifier rejects is denied without a HITL prompt.
-	// Introspection commands fall through and are approved by the
-	// downstream safe-band matcher. This short-circuit runs BEFORE kill
-	// ops and budget checks so an LLM-issued destructive command cannot
-	// leak into the user's HITL surface even if the classifier were to
-	// somehow grant it a budget.
+	// Awakening-mode fast-path (CON-003 / SEC-001..SEC-004 / AC-005). When
+	// the current session is running `brae-awakens`:
+	//   - Non-introspection commands are silently denied (no HITL prompt).
+	//   - Introspection commands are AUTO-APPROVED immediately, bypassing
+	//     first-run ledger / caution / HITL. Awakening must complete
+	//     unattended; asking the user to approve every `whoami`/`uname`
+	//     the planner emits defeats the point of silent probing and was
+	//     the cause of all `info-*` probes returning GateDenyExitCode=-2
+	//     on fresh hosts whose ledger had no entry for the busybox applets.
+	// This short-circuit runs BEFORE kill ops and budget checks so an
+	// LLM-issued destructive command cannot leak into the user's HITL
+	// surface even if the classifier were to somehow grant it a budget.
 	if g.AwakeningMode != nil && g.AwakeningMode.Active(sessionID) &&
-		(op.Kind == "exec" || op.Kind == "spawn_pty") &&
-		!isIntrospectionCommand(op.Command) {
+		(op.Kind == "exec" || op.Kind == "spawn_pty") {
+		if isIntrospectionCommand(op.Command) {
+			dec.Verdict = VerdictAllow
+			dec.RiskBand = RiskSafe
+			dec.Reason = "awakening mode: introspection auto-approved"
+			return dec
+		}
 		dec.Verdict = VerdictDeny
 		dec.RiskBand = RiskForbidden
 		dec.Reason = "awakening mode: command outside introspection allow-list"
