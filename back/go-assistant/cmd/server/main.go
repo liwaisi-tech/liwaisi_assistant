@@ -87,6 +87,10 @@ func main() {
 	}
 	safeRegistry.Seal()
 	synthesis.Bootstrap(safeRegistry)
+	// Plan i-need-you-make-playful-dongarra.md Phase 3: install the
+	// TaskSpec→topology shortcut so parallel-fanout TaskSpecs bypass the
+	// LLM authoring loop and use the deterministic jit template instead.
+	jit.RegisterComposeHook()
 	logger.Info("synthesis safe registry sealed", "primitives", len(safeRegistry.Names()))
 
 	if dsn := os.Getenv("LIWAISI_DB_DSN"); dsn != "" {

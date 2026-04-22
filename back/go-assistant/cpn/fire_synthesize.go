@@ -39,6 +39,39 @@ func fireSynthesize(ctx context.Context, t *Transition, c *CPN, consumed []Token
 	}
 
 	task := extractTaskPayload(consumed)
+
+	// Deterministic shortcut: when the consumed token parses as a TaskSpec
+	// and matches a known template, delegate to the compose hook (JIT) and
+	// skip the LLM authoring loop. Keeps the parallel-fanout happy path
+	// bounded in latency and immune to prompt drift. When the hook returns
+	// nil/nil the TaskSpec did not match — fall through to the LLM path
+	// exactly as before.
+	var (
+		topoJSON     json.RawMessage
+		lintFeedback string
+		totalCost    float64
+	)
+	if spec, ok := decodeTaskSpec(task); ok {
+		if blob, err := composeFromTaskSpec(ctx, spec, c.SafeRegistry); err != nil {
+			slog.WarnContext(ctx, "synthesize: compose-from-taskspec failed, falling back to LLM",
+				"transition_id", t.ID, "error", err)
+		} else if len(blob) > 0 {
+			// Re-lint here too — synthesis.Bootstrap's lint hook already
+			// validates shape, but we want the same diagnostic path the
+			// LLM branch uses so any future hook regressions surface as
+			// an explicit ErrorPlace route.
+			result := lintTopology(blob, c.SafeRegistry, t.SynthesizeConfig.SizeCap)
+			if result.Passed() {
+				topoJSON = blob
+				slog.InfoContext(ctx, "synthesize: compose shortcut produced topology",
+					"transition_id", t.ID, "bytes", len(blob))
+			} else {
+				slog.WarnContext(ctx, "synthesize: compose shortcut emitted topology that failed lint; falling back to LLM",
+					"transition_id", t.ID, "feedback", result.Err())
+			}
+		}
+	}
+
 	catalogue := c.SafeRegistry.Catalogue()
 	toolboxBlock := renderToolboxBlock(ctx, c, task)
 	base := buildSynthesizePrompt(t.SynthesizeConfig, catalogue, toolboxBlock, task)
@@ -47,13 +80,7 @@ func fireSynthesize(ctx context.Context, t *Transition, c *CPN, consumed []Token
 	if maxCorrections < 0 {
 		maxCorrections = 0
 	}
-
-	var (
-		topoJSON     json.RawMessage
-		lintFeedback string
-		totalCost    float64
-	)
-	for attempt := 0; attempt <= maxCorrections; attempt++ {
+	for attempt := 0; topoJSON == nil && attempt <= maxCorrections; attempt++ {
 		prompt := base
 		if lintFeedback != "" {
 			prompt = prompt + "\n\nPREVIOUS ATTEMPT FEEDBACK:\n" + lintFeedback + "\n\nTry again."
@@ -219,6 +246,25 @@ func buildSynthesizePrompt(cfg *SynthesizeConfig, catalogue json.RawMessage, too
 	b.WriteString("\n\nRESPONSE FORMAT:\n")
 	b.WriteString("Return your topology as JSON wrapped exactly between <topology> and </topology> delimiters. Nothing else outside the delimiters.")
 	return b.String()
+}
+
+// decodeTaskSpec parses `task` as a JSON TaskSpec. Returns (zero, false)
+// when the input is not a JSON object or lacks the required intent field —
+// in that case fire_synthesize treats the task as an opaque free-form
+// request and falls through to the LLM authoring path.
+func decodeTaskSpec(task string) (TaskSpec, bool) {
+	s := strings.TrimSpace(task)
+	if s == "" || s[0] != '{' {
+		return TaskSpec{}, false
+	}
+	var spec TaskSpec
+	if err := json.Unmarshal([]byte(s), &spec); err != nil {
+		return TaskSpec{}, false
+	}
+	if strings.TrimSpace(spec.Intent) == "" && len(spec.ToolsNeeded) == 0 {
+		return TaskSpec{}, false
+	}
+	return spec, true
 }
 
 // renderToolboxBlock asks the CPN's ToolboxCatalog port, if wired, for a

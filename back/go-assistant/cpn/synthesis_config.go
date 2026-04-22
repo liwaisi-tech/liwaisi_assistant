@@ -55,6 +55,40 @@ type SynthesizeConfig struct {
 	Summary string
 }
 
+// TaskSpec is the decoded payload of a ColorTaskSpec token emitted by the
+// t-compose-spec LLM transition (plan i-need-you-make-playful-dongarra.md
+// Phase 2). Consumers use it to short-circuit the synthesize LLM when a
+// deterministic template applies (e.g. parallel fanout).
+type TaskSpec struct {
+	Intent          string          `json:"intent"`
+	ToolsNeeded     []string        `json:"tools_needed"`
+	Inputs          []TaskSpecInput `json:"inputs,omitempty"`
+	ExpectedOutput  TaskSpecOutput  `json:"expected_output,omitempty"`
+	ParallelismHint string          `json:"parallelism_hint,omitempty"`
+	Budget          TaskSpecBudget  `json:"budget,omitempty"`
+}
+
+// TaskSpecInput is one named input the composed subnet consumes. Value is
+// an opaque payload — the subnet's deserialiser is responsible for typing.
+type TaskSpecInput struct {
+	Name  string `json:"name"`
+	Value any    `json:"value,omitempty"`
+}
+
+// TaskSpecOutput describes the consolidated output shape the composed
+// subnet is expected to produce.
+type TaskSpecOutput struct {
+	Color string `json:"color,omitempty"`
+	Shape string `json:"shape,omitempty"`
+}
+
+// TaskSpecBudget caps composed subnet size + runtime.
+type TaskSpecBudget struct {
+	MaxPlaces      int `json:"max_places,omitempty"`
+	MaxTransitions int `json:"max_transitions,omitempty"`
+	TimeoutMs      int `json:"timeout_ms,omitempty"`
+}
+
 // InstantiateConfig drives a NodeKindInstantiate transition (spec §4).
 type InstantiateConfig struct {
 	// InputMapping wires parent output place → child source place.

@@ -49,11 +49,26 @@ type LintResultPort interface {
 	Err() error
 }
 
+// ComposeFromTaskSpecFunc is the optional deterministic-shortcut hook used
+// by fire_synthesize BEFORE falling through to the LLM authoring loop. When
+// the TaskSpec matches a known template (e.g. parallelism_hint=="fanout"),
+// the hook returns a canonical topology JSON directly — no LLM round trip,
+// no retries, bounded latency.
+//
+// Contract:
+//   - Returns (non-nil JSON, nil) when the hook produced a topology.
+//   - Returns (nil, nil) when the TaskSpec does not match any template —
+//     fire_synthesize MUST fall through to the LLM path.
+//   - Returns (nil, err) on a hard failure — fire_synthesize treats this as
+//     a synthesise error and routes to ErrorPlace / retry.
+type ComposeFromTaskSpecFunc func(ctx context.Context, spec TaskSpec, safe SafeRegistryPort) (json.RawMessage, error)
+
 var (
 	lintTopologyHook        LintTopologyFunc
 	canonicaliseTopologyFun CanonicaliseTopologyFunc
 	materialiseTopologyHook MaterialiseTopologyFunc
 	topologyDigestHook      TopologyDigestFunc
+	composeFromTaskSpecHook ComposeFromTaskSpecFunc
 )
 
 // SetLintTopology installs the pluggable linter.
@@ -67,6 +82,10 @@ func SetMaterialiseTopology(fn MaterialiseTopologyFunc) { materialiseTopologyHoo
 
 // SetTopologyDigest installs the pluggable digest helper.
 func SetTopologyDigest(fn TopologyDigestFunc) { topologyDigestHook = fn }
+
+// SetComposeFromTaskSpec installs the pluggable TaskSpec→topology shortcut.
+// Nil disables the shortcut (fire_synthesize always goes to the LLM).
+func SetComposeFromTaskSpec(fn ComposeFromTaskSpecFunc) { composeFromTaskSpecHook = fn }
 
 // ── internal-use wrappers (nil-safe) ──────────────────────────────────────
 
@@ -100,6 +119,13 @@ func topologyDigest(topo json.RawMessage) TopologyDigest {
 		return TopologyDigest{}
 	}
 	return topologyDigestHook(topo)
+}
+
+func composeFromTaskSpec(ctx context.Context, spec TaskSpec, safe SafeRegistryPort) (json.RawMessage, error) {
+	if composeFromTaskSpecHook == nil {
+		return nil, nil
+	}
+	return composeFromTaskSpecHook(ctx, spec, safe)
 }
 
 type passThroughLint struct{}

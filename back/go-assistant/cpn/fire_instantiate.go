@@ -100,6 +100,15 @@ func fireInstantiate(ctx context.Context, t *Transition, c *CPN, consumed []Toke
 	child.TopologyRouter = c.TopologyRouter
 	child.FirstRunLedger = c.FirstRunLedger
 	child.Cost = c.Cost
+
+	// Expose the materialised child on the instantiate transition so the
+	// topology snapshot the monitor serialises (persist.MarshalCPN →
+	// TransitionTopology.SubNetTopology) includes the live sub-CPN graph.
+	// Without this assignment the monitor would render t-instantiate as a
+	// leaf box and the composed structure (3 bash clones + aggregate)
+	// would be invisible to the user — defeating the "evolve like a
+	// biological being" goal (plan Phase 4).
+	t.SubNet = child
 	// JIT sub-CPN plan Phase 3: when the synthesized child references
 	// tools by name (kind:"tool", toolName:"bash_exec"), persist.UnmarshalCPN
 	// preserves the ToolName field but does NOT attach an executor. Ask the
