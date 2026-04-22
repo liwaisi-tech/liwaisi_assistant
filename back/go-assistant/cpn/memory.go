@@ -58,7 +58,7 @@ func BuildContext(systemPrompt string, history []*Message, contextWindowSize int
 		for _, m := range raw {
 			window = append(window, &LLMMessage{
 				Role:    string(m.Role),
-				Content: m.Content,
+				Content: sanitizeForLLM(m.Content),
 			})
 		}
 	}
@@ -73,6 +73,28 @@ func BuildContext(systemPrompt string, history []*Message, contextWindowSize int
 		Messages:           messages,
 		InputTokenEstimate: estimateTokens(systemPrompt, messages),
 	}
+}
+
+// a2uiMarker is the prefix fireHITL writes to History rows that carry a
+// rendered A2UI surface. It must be kept in sync with the frontend constant
+// (front/react-assistant/src/features/chat/a2ui/constants.ts).
+const a2uiMarker = "$$a2ui:"
+
+// sanitizeForLLM rewrites a History row's content before it is added to the
+// LLM context window. Today this strips any A2UI surface payload — the LLM
+// has no use for the raw JSON, and seeing the literal "$$a2ui:" marker
+// teaches it to mimic the syntax in plain-text replies (which then breaks
+// frontend rendering, since "$$…$$" is treated as KaTeX math).
+//
+// The replacement keeps the turn observable to the model ("a review form
+// was shown") without leaking the wire format. Untouched content passes
+// through unchanged so this stays cheap on the hot path.
+func sanitizeForLLM(content string) string {
+	prefix, _, found := strings.Cut(content, a2uiMarker)
+	if !found {
+		return content
+	}
+	return strings.TrimRight(prefix, " \t\n\r") + "\n[A2UI surface rendered to user]"
 }
 
 // filterRaw returns only RoleUser and RoleAssistant messages from history.

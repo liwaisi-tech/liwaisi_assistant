@@ -35,6 +35,38 @@ func makeHistory(observers, raws int) []*Message {
 
 // ── BuildContext Tests ───────────────────────────────────────────────────────
 
+func TestBuildContext_StripsA2UIMarkerFromHistory(t *testing.T) {
+	// Regression: when a previous assistant turn carries a fireHITL surface
+	// ($$a2ui:{...}), the LLM must NOT see the literal marker — otherwise it
+	// learns to mimic the syntax in plain-text replies and the frontend's
+	// markdown renderer (remark-math) interprets "$$…$$" as a KaTeX block.
+	history := []*Message{
+		{Role: RoleAssistant, Content: `Here is the plan.
+$$a2ui:{"components":[{"type":"button","props":{"label":"Approve"}}]}`},
+	}
+	ctx := BuildContext("sys", history, 5)
+	if len(ctx.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(ctx.Messages))
+	}
+	got := ctx.Messages[0].Content
+	if strings.Contains(got, "$$a2ui:") {
+		t.Errorf("history must not leak $$a2ui: marker to LLM, got: %q", got)
+	}
+	if !strings.Contains(got, "Here is the plan.") {
+		t.Errorf("prefix dropped: %q", got)
+	}
+	if !strings.Contains(got, "[A2UI surface rendered to user]") {
+		t.Errorf("expected placeholder, got: %q", got)
+	}
+}
+
+func TestSanitizeForLLM_NoMarker_PassThrough(t *testing.T) {
+	in := "Plain text with no marker."
+	if got := sanitizeForLLM(in); got != in {
+		t.Errorf("pass-through changed content: %q", got)
+	}
+}
+
 func TestBuildContext_ObserverMessagesAlwaysIncluded(t *testing.T) {
 	history := makeHistory(3, 10)
 	ctx := BuildContext("system prompt", history, 3) // windowSize=3 → last 6 raw

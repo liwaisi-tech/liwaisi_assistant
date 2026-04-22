@@ -338,14 +338,23 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	// See spec-process-bugfix-a2ui-rehydration-completion.md REQ-101..107.
 	if !t.LLMConfig.SkipHistory && !t.LLMConfig.SkipOutputHistory {
 		c.mu.Lock()
+		// FIX-LLM-PERSIST: mint stable IDs for History rows produced by an LLM
+		// transition. Without this, MessageToRecord copies an empty string into
+		// MessageRecord.ID, the Postgres INSERT collides on PRIMARY KEY (the
+		// first empty-id row wins forever) via ON CONFLICT (id) DO NOTHING,
+		// and every subsequent streamed assistant turn is silently dropped on
+		// disk while still showing in the live SSE stream — yielding a UI/DB
+		// divergence where only HITL surfaces survive page reload.
 		if len(userTokens) > 0 {
 			c.History = append(c.History, &Message{
+				ID:        fmt.Sprintf("%s-llmin-%d", c.SessionID, time.Now().UnixNano()),
 				Role:      RoleUser,
 				Content:   formatTokenPayload(userTokens),
 				Timestamp: time.Now(),
 			})
 		}
 		c.History = append(c.History, &Message{
+			ID:        fmt.Sprintf("%s-llm-%d", c.SessionID, time.Now().UnixNano()),
 			Role:      RoleAssistant,
 			Content:   content,
 			CPNID:     c.ID,

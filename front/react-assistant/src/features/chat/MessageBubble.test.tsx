@@ -170,15 +170,42 @@ describe('MessageBubble', () => {
     });
   });
 
-  it('should route to MarkdownContent when marker is inline (not at offset 0 after trim) (AC-009 / REQ-012)', async () => {
+  it('should split prefix from inline $$a2ui: marker and never leak it to MarkdownContent (AC-009 / REQ-012)', async () => {
+    // The literal "$$a2ui:" must NEVER reach MarkdownContent — remark-math
+    // treats `$$…$$` as a KaTeX block and renders the JSON as a broken
+    // empty math node. Prefix is rendered, marker and trailing JSON are
+    // dropped (or parsed as A2UI when valid; here the suffix "inline" is
+    // not valid JSON so it is silently discarded).
     const content = 'Here is the marker $$a2ui: inline';
     render(
       <MessageBubble {...baseProps} role="assistant" content={content} />,
       { wrapper },
     );
     await waitFor(() => {
-      // Entire content passes through verbatim to MarkdownContent
-      expect(screen.getByTestId('markdown-content')).toHaveTextContent(content);
+      const md = screen.getByTestId('markdown-content');
+      expect(md).toHaveTextContent('Here is the marker');
+      expect(md.textContent ?? '').not.toContain('$$a2ui:');
+    });
+  });
+
+  it('should render prefix as text AND inline A2UI surface when LLM mimics $$a2ui: mid-message', async () => {
+    // Regression: streamed t-execute output sometimes mimics the previous
+    // fireHITL surface, producing "...question?\n$$a2ui:{...buttons...}".
+    // The prefix must render as markdown and the suffix JSON, when valid,
+    // must materialize as A2UI components (not be silently dropped).
+    const surface = JSON.stringify({
+      components: [
+        { type: 'button', props: { label: 'Inline Approve', actionType: 'noop', id: 'x' } },
+      ],
+    });
+    const content = `Plan question?\n$$a2ui:${surface}`;
+    render(
+      <MessageBubble {...baseProps} role="assistant" content={content} />,
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('markdown-content')).toHaveTextContent('Plan question?');
+      expect(screen.getByText('Inline Approve')).toBeInTheDocument();
     });
   });
 

@@ -59,8 +59,13 @@ function formatRespondingModel(raw: string): string {
 /**
  * Parse A2UI payload from message content.
  * Returns the parsed payload if content (after trimming leading ASCII
- * whitespace) starts with $$a2ui:, otherwise builds a default text
- * component payload for markdown rendering. REQ-011 / REQ-012.
+ * whitespace) starts with $$a2ui:. If the marker appears MID-message — the
+ * pathological case where a streaming LLM mimicked a prior fireHITL surface
+ * — the prefix is rendered as text and the marker block is parsed as A2UI
+ * when the JSON is well-formed, or dropped otherwise. Either way the raw
+ * "$$a2ui:" must never reach MarkdownContent: remark-math treats `$$…$$`
+ * as a KaTeX block and renders the JSON as a broken/empty math node.
+ * REQ-011 / REQ-012.
  *
  * Fall-through preserves the ORIGINAL (untrimmed) content so that plain
  * messages which legitimately begin with whitespace render unchanged.
@@ -73,6 +78,28 @@ function parsePayload(content: string, isStreaming: boolean): A2UIPayload {
     } catch {
       // Malformed or partial A2UI JSON — fall through to text rendering
     }
+  }
+
+  // Mid-message marker (LLM mimicry). Split off the prefix; never let the
+  // raw "$$" survive into the markdown pipeline.
+  const markerIdx = content.indexOf(A2UI_MARKER);
+  if (markerIdx > 0) {
+    const prefix = content.slice(0, markerIdx).replace(/\s+$/, '');
+    const suffix = content.slice(markerIdx + A2UI_MARKER.length);
+    let inlineSurface: A2UIPayload | null = null;
+    try {
+      inlineSurface = JSON.parse(suffix) as A2UIPayload;
+    } catch {
+      inlineSurface = null;
+    }
+    const components: A2UIPayload['components'] = [];
+    if (prefix) {
+      components.push({ type: 'text', props: { content: prefix, isStreaming } });
+    }
+    if (inlineSurface?.components) {
+      components.push(...inlineSurface.components);
+    }
+    return { components };
   }
 
   // Default: wrap plain content in a text component (renders via MarkdownContent)
