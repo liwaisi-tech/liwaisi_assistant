@@ -77,8 +77,31 @@ func TestExtractJSONObject(t *testing.T) {
 			empty: true,
 		},
 		{
-			name:  "unterminated object returns empty",
+			// Was "returns empty" pre-repair; we now salvage truncated
+			// responses when the prefix contains enough structure to
+			// hydrate a usable questionnaireSpec.
+			name:  "unterminated object is repaired by closing open containers",
 			in:    `{"restated_goal":"x","questions":[`,
+			want:  `{"restated_goal":"x","questions":[]}`,
+			empty: false,
+		},
+		{
+			// Real shape from the session logs: gemini-2.5-flash truncated
+			// a long restated_goal mid-string. The UI showed "Your
+			// selected model did not return a valid questionnaire"
+			// because the scan-forward loop found no balanced object.
+			// Repair closes the open string, drops the dangling prefix,
+			// and returns a usable spec.
+			name:  "truncated string value is repaired",
+			in:    `{"restated_goal":"El usuario quiere que, asumiendo la pe`,
+			want:  `{"restated_goal":"El usuario quiere que, asumiendo la pe"}`,
+			empty: false,
+		},
+		{
+			// No usable content even after repair — just `{` — caller
+			// should still surface the "no JSON object found" error.
+			name:  "only open brace cannot be repaired usefully",
+			in:    `{`,
 			want:  "",
 			empty: true,
 		},

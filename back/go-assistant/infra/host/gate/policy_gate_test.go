@@ -249,6 +249,43 @@ func TestRememberedCautionSafe(t *testing.T) {
 	}
 }
 
+// TestRememberApproval_UnwrapsShellWrapper guards the bug where
+// approve-and-remember on a shell-wrapped command stored a pattern against
+// the wrapper string (e.g. `^bash -lc "ps aux"($|\s)`) while Classify
+// unwraps the wrapper and matches against the inner (`ps aux`). The
+// stored pattern never matched the unwrapped form, so every subsequent
+// invocation fell through to RiskUnknown → HITL again, even though the
+// UI had already shown "Aprobado y recordado".
+func TestRememberApproval_UnwrapsShellWrapper(t *testing.T) {
+	p := defaultTestPolicy(t)
+	holder := NewHolder(p)
+	dec := &memoryDecisions{}
+	sb := fakeSandbox{avail: map[string]bool{"bwrap": true}}
+	g := NewPolicyHostGate(holder, nil, dec, NewBudgetTracker(), sb, nil)
+
+	op := cpn.GateOp{Kind: "exec", Command: `bash -lc "ps aux"`, Sandbox: cpn.SandboxNone}
+
+	// Remember the wrapper form — simulates the user clicking
+	// "Aprobado y recordado" on a bash_exec invocation that wrapped the
+	// inner command in `bash -lc "..."`.
+	if err := g.rememberApproval(context.Background(), op); err != nil {
+		t.Fatalf("rememberApproval: %v", err)
+	}
+
+	// The exact same invocation must now hit the safe band, not fall
+	// through to default-deny HITL.
+	if err := g.Check(context.Background(), op); err != nil {
+		t.Fatalf("expected allow after remember, got %v", err)
+	}
+
+	// And the bare inner command must also be allowed — same intent,
+	// different call shape.
+	innerOp := cpn.GateOp{Kind: "exec", Command: "ps aux", Sandbox: cpn.SandboxNone}
+	if err := g.Check(context.Background(), innerOp); err != nil {
+		t.Fatalf("expected allow for inner command after remembering wrapped form, got %v", err)
+	}
+}
+
 // TestUnknownDefaultsToHITL enforces GUD-001 (when in doubt, deny via HITL).
 func TestUnknownDefaultsToHITL(t *testing.T) {
 	p := defaultTestPolicy(t)

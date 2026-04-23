@@ -63,8 +63,11 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/v1/health"]
       interval: 10s
       timeout: 3s
-      start_period: 5s
-      retries: 3
+      # Cold-start awakening probes every baseline binary before the
+      # server listens (~25-30s on first boot, slo target 15s). Give it
+      # room so `docker compose up --build` doesn't race the first probe.
+      start_period: 45s
+      retries: 5
     restart: unless-stopped
 
   frontend:

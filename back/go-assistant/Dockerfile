@@ -86,6 +86,12 @@ COPY --from=builder /build/store/postgres/migrations /app/migrations
 COPY --from=builder /build/infra/host/policies /app/infra/host/policies
 
 ENV HOST_POLICY_PATH=/app/infra/host/policies/default.yaml
+# The learned overlay (approve-and-remember persistence) must live on a
+# path writable by the `brae` user. /app/infra/host/policies is root-owned
+# from the COPY above, so pin the overlay under $HOME instead — otherwise
+# appendToLearnedFile silently warns on every HITL approval and the
+# remember only lasts in-memory until the container restarts.
+ENV HOST_POLICY_LEARNED_PATH=/home/brae/.brae/learned.yaml
 ENV HOME=/home/brae
 ENV GOPATH=/home/brae/go
 ENV GOCACHE=/home/brae/.cache/go-build

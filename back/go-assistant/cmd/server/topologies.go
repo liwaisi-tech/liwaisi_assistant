@@ -1201,8 +1201,29 @@ func extractJSONObject(s string) string {
 			}
 		}
 		if end < 0 {
-			// No matching close brace from this start: unterminated.
-			// Nothing further in s can be balanced either — bail.
+			// Unterminated: the LLM response was cut off mid-object (we've
+			// seen Gemini-2.5-flash truncate a long `restated_goal` string
+			// before the closing quote, leaving
+			//   {"restated_goal":"El usuario quiere que, asumiendo la pe
+			// which otherwise fails the caller with "no JSON object found"
+			// and surfaces as "Your selected model did not return a valid
+			// questionnaire" in the UI. Try a conservative repair: close
+			// any open string, then append the missing ] / } in the right
+			// order. If the repaired payload decodes into a usable spec,
+			// use it; otherwise fall through to firstSyntactic.
+			if repaired, ok := repairTruncatedJSONObject(s[start:]); ok {
+				var spec questionnaireSpec
+				if err := json.Unmarshal([]byte(repaired), &spec); err == nil {
+					if spec.RestatedGoal != "" || len(spec.Assumptions) > 0 || len(spec.Questions) > 0 {
+						return repaired
+					}
+				}
+				// Repaired but empty — drop it. We deliberately do NOT
+				// set firstSyntactic here: an empty `{}` would look like
+				// a "valid but useless" object to the caller and suppress
+				// the more specific "no JSON object found" error.
+			}
+			// Nothing further in s can be balanced — bail.
 			break
 		}
 
@@ -1227,6 +1248,154 @@ func extractJSONObject(s string) string {
 	// candidate if we found one — the caller's Unmarshal will surface
 	// a more specific error than "no JSON found".
 	return firstSyntactic
+}
+
+// repairTruncatedJSONObject takes a string that starts with '{' but whose
+// object was never closed (LLM response truncated mid-token) and returns a
+// best-effort balanced object with ok=true, or ("", false) when the input
+// can't be salvaged.
+//
+// Strategy:
+//  1. Walk the input maintaining a stack of open containers ('{' / '[') and
+//     a "currently inside string" flag (respecting backslash-escapes).
+//  2. When we hit end-of-input, close whatever is still open in reverse
+//     order — first close an unterminated string with '"', then pop each
+//     container with its matching closer.
+//  3. Before appending the final '}', trim any trailing comma + whitespace
+//     so `{"a":"b",` → `{"a":"b"}` instead of `{"a":"b",}` (invalid).
+//  4. Also handle a dangling `"key":` where the value never arrived —
+//     replace the trailing `"key":` with nothing (drop the half-field).
+//
+// This is intentionally conservative: it only closes unterminated shapes.
+// It does not try to fix semantically broken JSON (wrong types, duplicate
+// keys, etc.) — those cases still fall through to the caller's error path.
+func repairTruncatedJSONObject(s string) (string, bool) {
+	if len(s) == 0 || s[0] != '{' {
+		return "", false
+	}
+	var stack []byte
+	inString := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if n := len(stack); n > 0 {
+				stack = stack[:n-1]
+			}
+		}
+	}
+	if len(stack) == 0 && !inString {
+		// Input was already balanced — caller's main loop should've
+		// taken this path. Nothing to repair.
+		return s, true
+	}
+
+	var b strings.Builder
+	b.Grow(len(s) + len(stack) + 1)
+	b.WriteString(s)
+	if inString {
+		// If the unterminated string ends with a lone backslash, drop it
+		// so we don't escape our closing quote.
+		raw := b.String()
+		if len(raw) > 0 && raw[len(raw)-1] == '\\' {
+			b.Reset()
+			b.WriteString(raw[:len(raw)-1])
+		}
+		b.WriteByte('"')
+	}
+
+	repaired := b.String()
+
+	// Strip a dangling `"key":` or `"key": ` when we never received the
+	// value. Detect by looking back past whitespace for a ':' with only
+	// an identifier-like string behind it.
+	repaired = dropDanglingObjectKey(repaired)
+
+	// Pop containers in reverse, trimming trailing commas/whitespace
+	// before each closer so `{"a":1,` → `{"a":1}`.
+	for i := len(stack) - 1; i >= 0; i-- {
+		repaired = strings.TrimRight(repaired, " \t\r\n")
+		repaired = strings.TrimSuffix(repaired, ",")
+		repaired += string(stack[i])
+	}
+	return repaired, true
+}
+
+// dropDanglingObjectKey trims a `"key":` (with optional whitespace) from the
+// tail of s when no value has been written yet — the JSON would otherwise
+// parse as `{"key":}` which is invalid. Leaves s untouched when the tail
+// doesn't match that exact shape.
+func dropDanglingObjectKey(s string) string {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	if !strings.HasSuffix(trimmed, ":") {
+		return s
+	}
+	// Walk back past the ':' and any whitespace.
+	i := len(trimmed) - 1 // ':'
+	i--
+	for i >= 0 && (trimmed[i] == ' ' || trimmed[i] == '\t') {
+		i--
+	}
+	// Expect a closing quote of the key string.
+	if i < 0 || trimmed[i] != '"' {
+		return s
+	}
+	// Walk back to the opening quote (respecting backslash escapes).
+	j := i - 1
+	for j >= 0 {
+		if trimmed[j] == '"' {
+			// Count preceding backslashes to check escaping.
+			bs := 0
+			for k := j - 1; k >= 0 && trimmed[k] == '\\'; k-- {
+				bs++
+			}
+			if bs%2 == 0 {
+				break
+			}
+		}
+		j--
+	}
+	if j < 0 {
+		return s
+	}
+	// Walk back past any leading whitespace before the key. If the char
+	// immediately before is '{' or ',' we have a clean "dangling key"
+	// shape; otherwise leave s untouched (be conservative).
+	k := j - 1
+	for k >= 0 && (trimmed[k] == ' ' || trimmed[k] == '\t' || trimmed[k] == '\r' || trimmed[k] == '\n') {
+		k--
+	}
+	if k < 0 || (trimmed[k] != '{' && trimmed[k] != ',') {
+		return s
+	}
+	// If the preceding char was ',', strip it too so we don't leave a
+	// trailing comma for the container-closer pass to handle.
+	if trimmed[k] == ',' {
+		return trimmed[:k]
+	}
+	// Leave the '{' in place; just drop the dangling key+colon.
+	return trimmed[:k+1]
 }
 
 // firstQuestionnaireFromTokens decodes the first ColorJSON / string-payload

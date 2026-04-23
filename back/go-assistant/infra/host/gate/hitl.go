@@ -122,9 +122,17 @@ func (g *PolicyHostGate) rememberApproval(_ context.Context, op cpn.GateOp) erro
 	if g.Policies == nil {
 		return fmt.Errorf("no policy holder")
 	}
-	// Pin to the exact normalised command as a literal-prefix regex so
-	// arg-pattern variations still require a new approval.
-	pattern := "^" + regexpQuote(CommandKey(op.Command)) + "($|\\s)"
+	// Must match what Classify sees on the NEXT invocation: Classify
+	// normalises the command AND then unwraps `sh -c "<inner>"` /
+	// `bash -lc "<inner>"` before pattern matching. If we store the
+	// wrapper form, the inner form never matches it and the approval
+	// silently evaporates. Unwrap here too so the stored pattern keys
+	// on the same string the matcher will actually compare against.
+	key := CommandKey(op.Command)
+	if inner, ok := unwrapShellWrapper(key); ok {
+		key = inner
+	}
+	pattern := "^" + regexpQuote(key) + "($|\\s)"
 	return g.Policies.AppendLearnedSafePattern(pattern)
 }
 
@@ -143,7 +151,11 @@ func (g *PolicyHostGate) blacklist(op cpn.GateOp) error {
 	if p == nil {
 		return fmt.Errorf("no policy")
 	}
-	pattern := "^" + regexpQuote(CommandKey(op.Command)) + "($|\\s)"
+	key := CommandKey(op.Command)
+	if inner, ok := unwrapShellWrapper(key); ok {
+		key = inner
+	}
+	pattern := "^" + regexpQuote(key) + "($|\\s)"
 	p.ForbiddenPat = append(p.ForbiddenPat, pattern)
 	return p.finalize()
 }
