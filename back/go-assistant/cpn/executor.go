@@ -70,6 +70,13 @@ func (c *CPN) Run(ctx context.Context) error {
 	var tracker *executionTracker
 	if c.Metrics != nil {
 		tracker = newExecutionTracker(c.ID, c.Role, c.Depth, c.SessionID)
+		// Architect-lane provenance (spec §11 slice 4) — copy once at
+		// construction. The field is read under mu to tolerate callers
+		// that stamp it on a concurrent goroutine just before Run.
+		c.mu.RLock()
+		prov := c.RunProvenance
+		c.mu.RUnlock()
+		tracker.SetProvenance(prov.FlowID, prov.Strategy)
 	}
 	// PAT-003: Defer-based finalization captures metrics on all exit paths (REQ-013, CON-005).
 	defer func() {

@@ -181,7 +181,32 @@ type CPN struct {
 	// (approved and rejected) to the audit store (GAP-7 REQ-005).
 	MutationLog MutationAuditLog
 
+	// RunProvenance, when set before Run(), stamps the current execution
+	// with the library FlowID + architect Strategy that produced it
+	// (spec-architecture-cpn-agent-architect §11 slice 4). Purely additive
+	// metadata — runs without provenance keep the zero value and behave
+	// identically to legacy executions.
+	RunProvenance RunProvenance
+
 	mu sync.RWMutex
+}
+
+// RunProvenance is the architect-lane metadata stamped on an ExecutionRecord
+// so downstream consumers (ranking, observability, later-slice learning) know
+// which library entry or synthesis strategy produced the run.
+type RunProvenance struct {
+	FlowID   string
+	Strategy string
+}
+
+// SetRunProvenance is the setter used by the integration layer (session
+// service or architect transition) immediately before c.Run. Equivalent to
+// direct assignment on RunProvenance; kept as a method so test doubles and
+// future validation (e.g., reject unknown strategies) have a single hook.
+func (c *CPN) SetRunProvenance(flowID, strategy string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.RunProvenance = RunProvenance{FlowID: flowID, Strategy: strategy}
 }
 
 // NewCPN creates a CPN in StateIdle. Call Run(ctx) to start execution.

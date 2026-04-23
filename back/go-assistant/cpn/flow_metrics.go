@@ -23,6 +23,16 @@ type ExecutionRecord struct {
 	Success          bool
 	StartedAt        time.Time
 	CompletedAt      time.Time
+
+	// Architect-lane provenance (spec-architecture-cpn-agent-architect §8,
+	// §11 slice 4). FlowID is the crystallised library entry's hash when
+	// the architect chose Reuse or Extend; empty for ad-hoc runs. Strategy
+	// is one of "reuse" | "extend" | "compose" | "toolforge-then-compose"
+	// — unset means "not decided by the architect lane." DB persistence is
+	// deferred to a future slice; these fields live in-memory for now so
+	// ranking / observability can start consuming them immediately.
+	FlowID   string
+	Strategy string
 }
 
 // executionTracker is a mutable, thread-safe counter object for one Run() call.
@@ -37,6 +47,11 @@ type executionTracker struct {
 	llmCallCount     atomic.Int64
 	toolCallCount    atomic.Int64
 	tokensProduced   atomic.Int64
+
+	// Provenance is stamped once at construction from CPN.RunProvenance.
+	// Read at Finalize time — not hot-path, no atomic needed.
+	flowID   string
+	strategy string
 }
 
 // newExecutionTracker creates a tracker with identity fields and start timestamp.
@@ -67,6 +82,14 @@ func (et *executionTracker) RecordTokensProduced(n int) {
 	et.tokensProduced.Add(int64(n))
 }
 
+// SetProvenance stamps the architect-lane flow id + strategy onto this
+// tracker. Safe to call before or during Run(); Finalize reads the most
+// recent values. Typically invoked once per Run() by the integration layer.
+func (et *executionTracker) SetProvenance(flowID, strategy string) {
+	et.flowID = flowID
+	et.strategy = strategy
+}
+
 // Finalize creates an immutable ExecutionRecord from the tracker state (REQ-004).
 // Duration is computed from startedAt to now. Timestamps are set.
 func (et *executionTracker) Finalize(success bool, costUSD float64) ExecutionRecord {
@@ -85,6 +108,8 @@ func (et *executionTracker) Finalize(success bool, costUSD float64) ExecutionRec
 		Success:          success,
 		StartedAt:        et.startedAt,
 		CompletedAt:      now,
+		FlowID:           et.flowID,
+		Strategy:         et.strategy,
 	}
 }
 
