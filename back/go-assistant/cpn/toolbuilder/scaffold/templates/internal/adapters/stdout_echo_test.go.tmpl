@@ -1,0 +1,64 @@
+package adapters
+
+import (
+	"bytes"
+	"testing"
+)
+
+// Seed TDD test — intentionally minimal so fresh-scaffold `go test ./...` passes.
+// The atelier's TDD loop adds real failing tests on top of this.
+func TestStdoutEcho_Emit(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"empty", nil, ""},
+		{"single", []string{"hello"}, "hello\n"},
+		{"multi", []string{"a", "b"}, "a\nb\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			e := &StdoutEcho{W: &buf}
+			if err := e.Emit(tt.args); err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if got := buf.String(); got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStdoutEcho_Emit_NilWriterFallsBackToStdout(t *testing.T) {
+	e := &StdoutEcho{W: nil}
+	// Empty args path — doesn't actually write to stdout, but exercises the
+	// fallback branch so coverage records it.
+	if err := e.Emit(nil); err != nil {
+		t.Fatalf("Emit with nil writer: %v", err)
+	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, errWriteBoom }
+
+var errWriteBoom = &writeBoom{}
+
+type writeBoom struct{}
+
+func (*writeBoom) Error() string { return "write boom" }
+
+func TestStdoutEcho_Emit_PropagatesWriteError(t *testing.T) {
+	e := &StdoutEcho{W: errWriter{}}
+	if err := e.Emit([]string{"x"}); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+}
+
+func TestNewDefault_NotNil(t *testing.T) {
+	if NewDefault() == nil {
+		t.Fatal("NewDefault returned nil")
+	}
+}

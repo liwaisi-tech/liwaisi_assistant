@@ -1,0 +1,29 @@
+# {{.Name}}
+
+{{.Description}}
+
+Authored by brae (tool-atelier) on {{.Date}}.
+
+## Layout
+
+```
+cmd/{{.Name}}/         CLI entry point
+internal/
+  domain/              Pure business types, no deps
+  app/                 Application services (use-cases)
+  ports/               Port interfaces (hexagonal boundary)
+  adapters/            Adapter implementations (tests live here too)
+```
+
+## Usage
+
+```bash
+make test           # run tests with race detector
+make test-coverage  # enforces ≥85% coverage
+make build          # produce bin/{{.Name}}
+make install        # copy binary into workspace/tools/bin/
+```
+
+## Development
+
+This project follows TDD: write a failing test in `internal/adapters/` (or wherever the behaviour lives), then make it pass. Keep the domain package dependency-free.

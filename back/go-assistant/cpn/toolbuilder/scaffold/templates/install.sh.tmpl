@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# install.sh — copies bin/{{.Name}} into brae's tool-bin directory so the
+# tool-atelier's t-register transition can pick it up by path.
+set -euo pipefail
+
+BINARY="{{.Name}}"
+SRC="bin/${BINARY}"
+DEST_DIR="${BRAE_TOOLS_BIN:-$HOME/workspace/tools/bin}"
+
+if [ ! -x "$SRC" ]; then
+  echo "install.sh: $SRC not built; run \`make build\` first" >&2
+  exit 1
+fi
+
+mkdir -p "$DEST_DIR"
+install -m 0755 "$SRC" "$DEST_DIR/$BINARY"
+echo "installed: $DEST_DIR/$BINARY"

@@ -1,0 +1,43 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+
+	"{{.Module}}/internal/adapters"
+	"{{.Module}}/internal/app"
+)
+
+const (
+	toolName    = "{{.Name}}"
+	toolVersion = "0.1.0"
+	toolHelp    = "{{.Description}}"
+)
+
+func main() {
+	var (
+		showHelp    = flag.Bool("help", false, "print usage and exit")
+		showVersion = flag.Bool("version", false, "print version and exit")
+	)
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "%s — %s\n\nUsage:\n  %s [flags]\n\nFlags:\n", toolName, toolHelp, toolName)
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if *showHelp {
+		flag.Usage()
+		return
+	}
+	if *showVersion {
+		fmt.Printf("%s %s\n", toolName, toolVersion)
+		return
+	}
+
+	svc := app.New(adapters.NewDefault())
+	if err := svc.Run(flag.Args()); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}

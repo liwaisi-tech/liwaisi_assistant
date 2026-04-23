@@ -1,0 +1,33 @@
+BINARY := {{.Name}}
+PKG    := ./...
+# Coverage is measured only on internal packages; cmd/* are thin drivers and
+# main() is not instrumentable in-process.
+COVERPKG := ./internal/...
+
+.PHONY: test test-coverage test-coverage-html lint build install clean
+
+test:
+	go test -race -count=1 $(PKG)
+
+test-coverage:
+	go test -race -count=1 -coverpkg=$(COVERPKG) -coverprofile=coverage.out $(COVERPKG)
+	@echo "--- coverage ---"
+	@go tool cover -func=coverage.out | tail -1
+	@go tool cover -func=coverage.out | tail -1 | awk '{ pct=$$3; sub("%","",pct); if (pct+0 < 85.0) { print "FAIL: coverage " pct "% < 85%"; exit 1 } else { print "OK: coverage gate passed" } }'
+
+test-coverage-html: test-coverage
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "wrote coverage.html"
+
+lint:
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed"; exit 1; }
+	golangci-lint run
+
+build:
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/$(BINARY) ./cmd/$(BINARY)
+
+install: build
+	@./install.sh
+
+clean:
+	rm -rf bin coverage.out coverage.html

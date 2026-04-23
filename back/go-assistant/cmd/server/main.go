@@ -528,7 +528,7 @@ func main() {
 			toolReg.Repository(),
 			hostCapRepo,
 			resolvedHostID,
-			[]string{"classifier", "host-discovery", "tool-forge"},
+			[]string{"classifier", "host-discovery", "tool-forge", "tool-atelier"},
 		)
 		serverOpts = append(serverOpts, httpapi.WithSkillManifest(skillManifest))
 	}
@@ -539,6 +539,8 @@ func main() {
 	// POST /api/v1/flows so the frontend can forge flows independently of a
 	// chat turn.
 	flowLibrary := cpn.NewFlowLibrary()
+	// Register built-in topologies so the architect planner can select them.
+	registerToolAtelier(flowLibrary)
 	flowPlanner := &architect.Planner{
 		Library:      flowLibrary,
 		Retriever:    architect.NewHashtagRetriever(toolReg),

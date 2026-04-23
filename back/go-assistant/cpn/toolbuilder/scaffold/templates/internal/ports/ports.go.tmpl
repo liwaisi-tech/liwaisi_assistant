@@ -1,0 +1,9 @@
+// Package ports defines the interfaces (hexagonal "primary" and "secondary"
+// ports) that adapters implement.
+package ports
+
+// Echo is a minimal seed port: writes a line for each arg. Real atelier-built
+// tools replace this with purpose-specific ports during the TDD loop.
+type Echo interface {
+	Emit(args []string) error
+}

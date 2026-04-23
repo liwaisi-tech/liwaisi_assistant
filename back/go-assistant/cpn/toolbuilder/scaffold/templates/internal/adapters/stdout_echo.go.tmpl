@@ -1,0 +1,35 @@
+// Package adapters wires ports to concrete infrastructure.
+package adapters
+
+import (
+	"fmt"
+	"io"
+	"os"
+
+	"{{.Module}}/internal/ports"
+)
+
+// StdoutEcho is the default ports.Echo implementation. It writes to os.Stdout
+// unless a writer is injected.
+type StdoutEcho struct {
+	W io.Writer
+}
+
+// NewDefault returns a StdoutEcho writing to os.Stdout, implementing ports.Echo.
+func NewDefault() ports.Echo {
+	return &StdoutEcho{W: os.Stdout}
+}
+
+// Emit implements ports.Echo. Writes each arg on its own line.
+func (e *StdoutEcho) Emit(args []string) error {
+	w := e.W
+	if w == nil {
+		w = os.Stdout
+	}
+	for _, a := range args {
+		if _, err := fmt.Fprintln(w, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
