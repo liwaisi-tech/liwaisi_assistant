@@ -28,6 +28,7 @@ export interface MessageResponse {
   role: 'user' | 'assistant' | 'observer';
   content: string;
   cpn_id?: string;
+  cpn_role?: string;
   timestamp: string;
   // parent_message_id pairs a HITL response row with the A2UI surface it
   // answers so the reducer can lock the questionnaire on rehydration

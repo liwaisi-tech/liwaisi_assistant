@@ -50,6 +50,7 @@ type MessageResponse struct {
 	Role            string `json:"role"`
 	Content         string `json:"content"`
 	CPNID           string `json:"cpn_id,omitempty"`
+	CPNRole         string `json:"cpn_role,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	ParentMessageID string `json:"parent_message_id,omitempty"`
 }

@@ -273,6 +273,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         return state;
       }
 
+      // 0b. Awakening dedupe. `appendAwakeningMessage` (backend) persists
+      // the first-turn card AND emits it on the buffered SSE stream. A late
+      // subscriber that just rehydrated via GET /sessions/:id would then
+      // render the same card twice. If an awakening assistant row is
+      // already present, drop this chunk.
+      if (
+        data.CPNRole === AWAKENING_CPN_ROLE &&
+        state.messages.some(
+          (m) => m.role === 'assistant' && m.cpnRole === AWAKENING_CPN_ROLE,
+        )
+      ) {
+        return state;
+      }
+
       // respondingModel is surfaced on the FINAL chunk (Done=true) of an
       // LLM transition per REQ-GAP-IND-001. Support both snake_case (wire)
       // and PascalCase (legacy reducer field) so the reducer tolerates
@@ -790,6 +804,7 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           content: m.content,
           isStreaming: false,
           cpnId: m.cpn_id,
+          cpnRole: m.cpn_role,
           timestamp: new Date(m.timestamp),
           parentMessageId: m.parent_message_id,
         }));

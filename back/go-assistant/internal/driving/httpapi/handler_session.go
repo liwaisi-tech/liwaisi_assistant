@@ -251,6 +251,7 @@ func (h *Handlers) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 			Role:            string(m.Role),
 			Content:         m.Content,
 			CPNID:           m.CPNID,
+			CPNRole:         m.CPNRole,
 			Timestamp:       m.Timestamp.Format(time.RFC3339),
 			ParentMessageID: m.ParentMessageID,
 		}
