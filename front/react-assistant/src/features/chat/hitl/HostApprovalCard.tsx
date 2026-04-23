@@ -182,75 +182,122 @@ const COPY = {
   retry: 'Reintentar',
 };
 
-// ActionButton — small, opinionated wrapper that carries a short label,
-// an optional tooltip (rendered as native `title` so it works on touch
-// via long-press), and a pair of variant × tone colours derived from
-// the band. Keeps the markup inside the card body readable.
-interface ActionButtonProps {
+// ── Inline SVG icons ────────────────────────────────────────────────────────
+// 14px stroke icons, no new dependency. Consumer buttons carry aria-label
+// + native title; the icons are purely decorative.
+
+const IconCheck = memo(function IconCheck() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+});
+
+const IconStar = memo(function IconStar() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m12 17.3-6.2 3.7 1.6-7L2 9.2l7.1-.6L12 2l2.9 6.6 7.1.6-5.4 4.8 1.6 7z" />
+    </svg>
+  );
+});
+
+const IconX = memo(function IconX() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+});
+
+const IconBan = memo(function IconBan() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="m5.6 5.6 12.8 12.8" />
+    </svg>
+  );
+});
+
+interface PrimaryActionButtonProps {
   label: string;
-  tone: 'approve' | 'deny' | 'primary';
-  tooltip?: string;
   disabled?: boolean;
   chosen?: boolean;
   onClick: () => void;
-  emphasis?: 'solid' | 'soft';
   dataTestid?: string;
 }
 
-function ActionButton({
-  label,
-  tone,
-  tooltip,
-  disabled,
-  chosen,
-  onClick,
-  emphasis = 'soft',
-  dataTestid,
-}: ActionButtonProps) {
+function PrimaryActionButton({
+  label, disabled, chosen, onClick, dataTestid,
+}: PrimaryActionButtonProps) {
+  return (
+    <button
+      type="button"
+      data-testid={dataTestid}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150"
+      style={{
+        backgroundColor: 'var(--accent)',
+        color: 'var(--bg-deep)',
+        border: '1px solid var(--accent)',
+        boxShadow: chosen ? '0 0 14px -4px var(--accent-glow)' : 'none',
+        opacity: disabled && !chosen ? 0.4 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+      }}
+    >
+      <IconCheck />
+      {label}
+    </button>
+  );
+}
+
+type IconTone = 'approve' | 'deny' | 'deny-strong';
+
+interface IconActionButtonProps {
+  icon: 'star' | 'x' | 'ban';
+  tone: IconTone;
+  ariaLabel: string;
+  tooltip: string;
+  disabled?: boolean;
+  chosen?: boolean;
+  onClick: () => void;
+  dataTestid?: string;
+}
+
+function IconActionButton({
+  icon, tone, ariaLabel, tooltip, disabled, chosen, onClick, dataTestid,
+}: IconActionButtonProps) {
   const palette = useMemo(() => {
-    // Approve tone is always the brand accent so the primary CTA reads as
-    // "green-go". Deny tone borrows the rose from the dangerous band so
-    // users get a consistent "this cancels things" association across the
-    // two buttons. `primary` is reserved for the neutral "remember" pair
-    // which uses secondary/slate treatment to keep the tap-hierarchy
-    // legible.
     if (tone === 'approve') {
-      return emphasis === 'solid'
-        ? {
-            bg: 'var(--accent)',
-            color: 'var(--bg-deep)',
-            border: 'var(--accent)',
-            glow: '0 0 18px -4px var(--accent-glow)',
-          }
-        : {
-            bg: 'rgba(14, 165, 233, 0.14)',
-            color: 'var(--accent)',
-            border: 'rgba(14, 165, 233, 0.35)',
-            glow: '0 0 10px -4px var(--accent-glow)',
-          };
+      return {
+        bg: chosen ? 'rgba(14, 165, 233, 0.18)' : 'transparent',
+        color: 'var(--accent)',
+        border: chosen ? 'rgba(14, 165, 233, 0.45)' : 'var(--border-dim)',
+        hoverBg: 'rgba(14, 165, 233, 0.1)',
+      };
     }
-    if (tone === 'deny') {
-      return emphasis === 'solid'
-        ? {
-            bg: '#f43f5e',
-            color: '#fff1f2',
-            border: '#f43f5e',
-            glow: '0 0 18px -4px rgba(244, 63, 94, 0.5)',
-          }
-        : {
-            bg: 'rgba(244, 63, 94, 0.12)',
-            color: '#fb7185',
-            border: 'rgba(244, 63, 94, 0.4)',
-            glow: '0 0 10px -4px rgba(244, 63, 94, 0.35)',
-          };
-    }
+    const strong = tone === 'deny-strong';
     return {
-      bg: 'rgba(255, 255, 255, 0.04)',
-      color: 'var(--text-secondary)',
-      border: 'var(--border-dim)',
-      glow: 'none',
+      bg: chosen
+        ? (strong ? 'rgba(244, 63, 94, 0.22)' : 'rgba(244, 63, 94, 0.16)')
+        : 'transparent',
+      color: '#fb7185',
+      border: chosen
+        ? (strong ? 'rgba(244, 63, 94, 0.55)' : 'rgba(244, 63, 94, 0.45)')
+        : 'var(--border-dim)',
+      hoverBg: strong ? 'rgba(244, 63, 94, 0.14)' : 'rgba(244, 63, 94, 0.1)',
     };
-  }, [tone, emphasis]);
+  }, [tone, chosen]);
+
+  const Icon = icon === 'star' ? IconStar : icon === 'x' ? IconX : IconBan;
+  const fullTooltip = `${ariaLabel} — ${tooltip}`;
 
   return (
     <button
@@ -258,21 +305,64 @@ function ActionButton({
       data-testid={dataTestid}
       onClick={onClick}
       disabled={disabled}
-      title={tooltip}
-      aria-label={tooltip ? `${label} — ${tooltip}` : label}
-      className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-medium transition-all duration-150"
+      title={fullTooltip}
+      aria-label={fullTooltip}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 focus:outline-none"
       style={{
         backgroundColor: palette.bg,
         color: palette.color,
         border: `1px solid ${palette.border}`,
-        boxShadow: chosen ? palette.glow : 'none',
-        opacity: disabled && !chosen ? 0.35 : 1,
+        opacity: disabled && !chosen ? 0.3 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) e.currentTarget.style.backgroundColor = palette.hoverBg;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = palette.bg;
       }}
     >
-      {chosen ? `\u2713 ${label}` : label}
+      <Icon />
     </button>
+  );
+}
+
+const lockedIconFor: Record<HostApprovalAction, 'check' | 'star' | 'x' | 'ban'> = {
+  'approve-once': 'check',
+  'approve-and-remember': 'star',
+  deny: 'x',
+  'deny-and-blacklist': 'ban',
+};
+
+function LockedStatusChip({
+  action, label, time,
+}: { action: HostApprovalAction; label: string; time: string | null }) {
+  const isApprove = action === 'approve-once' || action === 'approve-and-remember';
+  const iconKey = lockedIconFor[action];
+  const Icon =
+    iconKey === 'check' ? IconCheck
+    : iconKey === 'star' ? IconStar
+    : iconKey === 'x' ? IconX
+    : IconBan;
+  const color = isApprove ? 'var(--accent)' : '#fb7185';
+  const bg = isApprove ? 'rgba(14, 165, 233, 0.1)' : 'rgba(244, 63, 94, 0.1)';
+  const border = isApprove ? 'rgba(14, 165, 233, 0.35)' : 'rgba(244, 63, 94, 0.35)';
+  return (
+    <div
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
+      style={{
+        backgroundColor: bg,
+        border: `1px solid ${border}`,
+        fontFamily: "'JetBrains Mono', monospace",
+      }}
+      data-testid="host-approval-resolved-state"
+    >
+      <span style={{ color, display: 'inline-flex' }}><Icon /></span>
+      <span style={{ color: 'var(--text-primary)' }}>{label}</span>
+      {time && (
+        <span style={{ color: 'var(--text-muted)' }}>{`· ${time}`}</span>
+      )}
+    </div>
   );
 }
 
@@ -311,15 +401,6 @@ export const HostApprovalCard = memo(function HostApprovalCard({
   const truncatedCommand = commandIsLong
     ? `${payload.command.slice(0, 68).trimEnd()}\u2026`
     : payload.command;
-
-  // Clock-time for "responded at". Falls back to locale default; short
-  // enough to sit inside the badge row without wrapping.
-  const respondedAtLabel = resolvedAt
-    ? COPY.respondedAt.replace(
-        '{{time}}',
-        resolvedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      )
-    : null;
 
   return (
     <section
@@ -560,57 +641,60 @@ export const HostApprovalCard = memo(function HostApprovalCard({
         className="flex flex-col gap-2 px-4 py-3"
         style={{ borderTop: '1px solid var(--border-dim)' }}
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <ActionButton
-            dataTestid="host-approval-approve-once"
-            label={COPY.actions.approveOnce}
-            tone="approve"
-            emphasis="solid"
-            disabled={locked || forbidden}
-            chosen={resolvedAction === 'approve-once'}
-            onClick={() => handle('approve-once')}
-          />
-          {!rememberHidden && (
-            <ActionButton
-              dataTestid="host-approval-approve-remember"
-              label={COPY.actions.approveRemember}
-              tone="approve"
-              emphasis="soft"
-              tooltip={COPY.tooltips.approveRemember}
-              disabled={locked || forbidden || band === 'dangerous'}
-              chosen={resolvedAction === 'approve-and-remember'}
-              onClick={() => handle('approve-and-remember')}
+        {/* When locked, the disabled action row is replaced by a single
+            compact status chip below (see "Locked status chip"). This keeps
+            the rehydrated conversation visually quiet and preserves the
+            decision as recognition-grade, not recall-grade, UI.
+            HITL best-practice (Nielsen H6 · Google PAIR explainability):
+            one primary CTA with label for Fitts-friendly tap, secondary
+            actions as icon buttons with tooltips for progressive
+            disclosure. */}
+        {!locked && (
+          <div className="flex flex-wrap items-center gap-2">
+            <PrimaryActionButton
+              dataTestid="host-approval-approve-once"
+              label={COPY.actions.approveOnce}
+              disabled={forbidden}
+              onClick={() => handle('approve-once')}
             />
-          )}
-          <span
-            aria-hidden="true"
-            className="mx-1 hidden sm:inline-block"
-            style={{
-              width: 1,
-              height: 18,
-              backgroundColor: 'var(--border-dim)',
-            }}
-          />
-          <ActionButton
-            dataTestid="host-approval-deny"
-            label={COPY.actions.deny}
-            tone="deny"
-            emphasis="soft"
-            disabled={locked}
-            chosen={resolvedAction === 'deny'}
-            onClick={() => handle('deny')}
-          />
-          <ActionButton
-            dataTestid="host-approval-deny-blacklist"
-            label={COPY.actions.denyBlacklist}
-            tone="deny"
-            emphasis="soft"
-            tooltip={COPY.tooltips.denyBlacklist}
-            disabled={locked}
-            chosen={resolvedAction === 'deny-and-blacklist'}
-            onClick={() => handle('deny-and-blacklist')}
-          />
-        </div>
+            {!rememberHidden && (
+              <IconActionButton
+                dataTestid="host-approval-approve-remember"
+                icon="star"
+                tone="approve"
+                ariaLabel={COPY.actions.approveRemember}
+                tooltip={COPY.tooltips.approveRemember}
+                disabled={forbidden || band === 'dangerous'}
+                onClick={() => handle('approve-and-remember')}
+              />
+            )}
+            <span
+              aria-hidden="true"
+              className="mx-1"
+              style={{
+                width: 1,
+                height: 18,
+                backgroundColor: 'var(--border-dim)',
+              }}
+            />
+            <IconActionButton
+              dataTestid="host-approval-deny"
+              icon="x"
+              tone="deny"
+              ariaLabel={COPY.actions.deny}
+              tooltip="Cancela este comando sin bloquear futuros intentos."
+              onClick={() => handle('deny')}
+            />
+            <IconActionButton
+              dataTestid="host-approval-deny-blacklist"
+              icon="ban"
+              tone="deny-strong"
+              ariaLabel={COPY.actions.denyBlacklist}
+              tooltip={COPY.tooltips.denyBlacklist}
+              onClick={() => handle('deny-and-blacklist')}
+            />
+          </div>
+        )}
 
         {/* Obsolete notice — AC-005 / §9.3. Rendered when a rehydrated pre-
             fix chat carries a surface with no live transition to back it.
@@ -631,19 +715,22 @@ export const HostApprovalCard = memo(function HostApprovalCard({
           </p>
         )}
 
-        {/* Locked status line — kept subtle; the ✓ on the chosen button is the primary cue. */}
+        {/* Locked status chip — compact single-line replacement for the
+            previous "Respondido: …" paragraph plus the row of disabled
+            buttons. Icon + label + time; recognition, not recall. */}
         {locked && resolvedAction && (
-          <p
-            className="text-[11px]"
-            data-testid="host-approval-resolved-state"
-            style={{
-              color: 'var(--text-muted)',
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            Respondido: {COPY.locked[resolvedAction!]}
-            {respondedAtLabel ? ` · ${respondedAtLabel}` : ''}
-          </p>
+          <LockedStatusChip
+            action={resolvedAction}
+            label={COPY.locked[resolvedAction]}
+            time={
+              resolvedAt
+                ? resolvedAt.toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : null
+            }
+          />
         )}
 
         {/* Error row */}

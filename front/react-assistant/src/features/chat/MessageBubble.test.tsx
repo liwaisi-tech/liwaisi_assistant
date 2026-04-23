@@ -362,7 +362,7 @@ describe('MessageBubble', () => {
     });
 
     it('"Rechazar" → (id, reject, {"action":"deny"})', async () => {
-      await clickAndAssert(/^Rechazar$/, [
+      await clickAndAssert(/^Rechazar\b(?! y )/, [
         't-host-1',
         'reject',
         '{"action":"deny"}',

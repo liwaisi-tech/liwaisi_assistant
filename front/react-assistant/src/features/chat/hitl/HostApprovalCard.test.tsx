@@ -115,15 +115,15 @@ describe('HostApprovalCard', () => {
       />,
       { wrapper },
     );
-    // Buttons are all disabled.
-    expect(screen.getByTestId('host-approval-approve-once')).toBeDisabled();
-    expect(screen.getByTestId('host-approval-deny')).toBeDisabled();
-    // The chosen one shows the check glyph + label.
-    expect(screen.getByTestId('host-approval-approve-once')).toHaveTextContent(/\u2713.*Aprobar solo esta vez/);
-    // "Respondido" line is present.
-    expect(screen.getByTestId('host-approval-resolved-state')).toHaveTextContent(/Respondido/);
-    // Clicking does NOT re-dispatch onRespond.
-    fireEvent.click(screen.getByTestId('host-approval-deny'));
+    // In the locked state the live action row is replaced by a single
+    // compact status chip (recognition, not recall). The raw action
+    // buttons are no longer rendered at all.
+    expect(screen.queryByTestId('host-approval-approve-once')).toBeNull();
+    expect(screen.queryByTestId('host-approval-deny')).toBeNull();
+    // The chip carries the chosen-action label + persists the decision.
+    // Resolved-state chip carries the chosen-action label.
+    expect(screen.getByTestId('host-approval-resolved-state')).toHaveTextContent(/Aprobaste esta vez/);
+    // No action buttons to click, so onRespond cannot re-fire.
     expect(onRespond).not.toHaveBeenCalled();
   });
 
@@ -324,10 +324,11 @@ describe('HostApprovalCard', () => {
     expect(screen.getByTestId('host-approval-obsolete-notice')).toHaveTextContent(
       /Obsolete approval|Aprobación obsoleta/,
     );
-    // Buttons lock so the user cannot retry against a dead transition.
-    expect(screen.getByTestId('host-approval-approve-once')).toBeDisabled();
-    expect(screen.getByTestId('host-approval-deny')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('host-approval-deny'));
+    // Action row is collapsed entirely in obsolete state — the user has
+    // no transition to respond to, so exposing disabled buttons would be
+    // noise. The obsolete notice above carries the explanation.
+    expect(screen.queryByTestId('host-approval-approve-once')).toBeNull();
+    expect(screen.queryByTestId('host-approval-deny')).toBeNull();
     expect(onRespond).not.toHaveBeenCalled();
   });
 
