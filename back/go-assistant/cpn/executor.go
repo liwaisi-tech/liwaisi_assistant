@@ -397,6 +397,9 @@ func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 	// Thread session ID so downstream HostGate.Check can resolve the
 	// AwakeningMode session (mirrors fireBash/fireLLM).
 	ctx = WithSessionID(ctx, c.SessionID)
+	// Install the ledger sink so state-changing tools can record their
+	// effect to the running CPN's history without holding a CPN handle.
+	ctx = WithLedgerSink(ctx, c.LedgerSink())
 
 	// Call the tool executor with the first consumed token.
 	result, err := t.Executor(ctx, consumed[0])
@@ -435,6 +438,7 @@ func fireTool(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]T
 // DIFFERENT output places. Stamps origin metadata on every deposited token.
 func fireToolHandler(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]TokenSnapshot, float64, error) {
 	ctx = WithSessionID(ctx, c.SessionID)
+	ctx = WithLedgerSink(ctx, c.LedgerSink())
 	results, err := t.ToolHandler(ctx, consumed)
 	if err != nil {
 		return nil, 0, err

@@ -110,21 +110,36 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 	}
 
 	// Step 1: Context assembly (Axiom A12).
-	ctxWindowSize := c.ContextWindowSize
-	if ctxWindowSize == 0 {
-		ctxWindowSize = DefaultContextWindowSize
+	//
+	// Resolve a per-transition ContextPolicy from the LLMConfig.Role hint.
+	// CPN.PolicyResolver overrides the default; nil uses the default.
+	// CPN.ContextWindowSize, when non-zero, overrides the resolved
+	// RawWindowTurns so existing topologies that set ContextWindowSize
+	// directly keep their pre-spec behaviour.
+	resolver := c.PolicyResolver
+	if resolver == nil {
+		resolver = NewDefaultPolicyResolver()
+	}
+	policy := resolver.For(TransitionRoleFromHint(t.LLMConfig.Role))
+	policy.SystemPrompt = renderSystemPrompt(t, c)
+	if c.ContextWindowSize != 0 {
+		policy.RawWindowTurns = c.ContextWindowSize
 	}
 	// SkipHistory: classifier transitions must classify each message
-	// independently without bias from prior conversation history.
+	// independently without bias from prior conversation history. This
+	// also disables the workspace preamble — its source is the ledger
+	// in history, which we are explicitly suppressing.
 	if t.LLMConfig.SkipHistory {
-		ctxWindowSize = 0
+		policy.RawWindowTurns = 0
+		policy.IncludeLedger = false
+		policy.IncludeWorkspacePreamble = false
 	}
 	// Snapshot history under read lock to avoid racing with concurrent appends.
 	c.mu.RLock()
 	historySnapshot := make([]*Message, len(c.History))
 	copy(historySnapshot, c.History)
 	c.mu.RUnlock()
-	cw := BuildContext(renderSystemPrompt(t, c), historySnapshot, ctxWindowSize)
+	cw := BuildContextWithPolicy(TransitionRoleFromHint(t.LLMConfig.Role), historySnapshot, policy)
 
 	// Assemble messages: system prompt + context window messages + consumed tokens.
 	messages := make([]*LLMMessage, 0, 1+len(cw.Messages)+1)
@@ -697,7 +712,12 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					Color:   ColorJSON,
 					Payload: string(tc.Arguments),
 				}
-				toolResult, err := toolTransition.Executor(ctx, toolInput)
+				// Install the ledger sink so file/write_file etc.
+				// can record durable artefacts even when invoked
+				// from the LLM tool-call loop (which bypasses
+				// fireTool's normal ctx setup).
+				toolCtx := WithLedgerSink(ctx, c.LedgerSink())
+				toolResult, err := toolTransition.Executor(toolCtx, toolInput)
 				execErr = err
 				if execErr != nil {
 					// REQ-009: Tool errors sent back to LLM for recovery.

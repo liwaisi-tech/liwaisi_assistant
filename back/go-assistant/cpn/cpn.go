@@ -45,7 +45,19 @@ type CPN struct {
 
 	// ContextWindowSize is the max conversational turns for the sliding window.
 	// Default: DefaultContextWindowSize (10).
+	//
+	// When PolicyResolver is set, ContextWindowSize is consulted only as a
+	// per-transition override hint (non-zero replaces the resolved policy's
+	// RawWindowTurns). This keeps existing topologies that set ContextWindowSize
+	// directly working unchanged while letting newer code lean on the resolver.
 	ContextWindowSize int
+
+	// PolicyResolver, when set, controls per-transition ContextPolicy
+	// resolution in fireLLM. Nil means "use NewDefaultPolicyResolver()".
+	// Wired at composition time so callers can swap policies without
+	// touching every transition.
+	// See spec-architecture-brae-context-and-tool-hygiene.md REQ-002.
+	PolicyResolver ContextPolicyResolver
 
 	// Group manages this CPN's sub-CPNs (ephemeral team).
 	// Nil for leaf CPNs that do not spawn sub-nets.

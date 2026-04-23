@@ -191,6 +191,10 @@ func fireBashOneShot(ctx context.Context, t *Transition, c *CPN, _ []Token) ([]T
 		ExitCode: result.ExitCode,
 	})
 
+	// Best-effort ledger emission for state-changing commands. No-op for
+	// read-only or unrecognised commands. See ledger_bash.go.
+	emitBashLedger(c, cfg.Command, cfg.Args, result.ExitCode, string(result.Stderr))
+
 	return snaps, 0, nil
 }
 
