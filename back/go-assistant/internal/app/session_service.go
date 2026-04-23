@@ -310,10 +310,20 @@ func NewSessionService(llm cpn.LLMClient, cost cpn.CostProvider, logger *slog.Lo
 	return svc
 }
 
-// CreateSession creates a new session bound to a CPN topology.
+// CreateSession creates a new session bound to the default CPN topology.
 func (s *SessionService) CreateSession(ctx context.Context, userID string, channel cpn.ChannelType) (*SessionInfo, error) {
+	return s.CreateSessionWithFactory(ctx, userID, channel, s.topologyFactory)
+}
+
+// CreateSessionWithFactory creates a session bound to a caller-supplied
+// topology factory. Used by POST /api/v1/flows/{hash}/run to start a session
+// on a library topology (e.g., tool-atelier) rather than the default assistant.
+func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID string, channel cpn.ChannelType, factory TopologyFactory) (*SessionInfo, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("%w: userID is required", ErrInvalidInput)
+	}
+	if factory == nil {
+		return nil, fmt.Errorf("%w: topology factory is required", ErrInvalidInput)
 	}
 
 	id, err := generateSessionID()
@@ -321,7 +331,7 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 		return nil, fmt.Errorf("generate session ID: %w", err)
 	}
 
-	root := s.topologyFactory(id)
+	root := factory(id)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
 	root.HostRuntime = s.hostRuntime

@@ -10,6 +10,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
 )
@@ -306,4 +307,10 @@ func WithToolApprovalBroker(broker *ToolApprovalBroker) ServerOption {
 // used by POST /api/v1/flows. When unset the endpoint returns 503.
 func WithFlowPlanner(p *architect.Planner) ServerOption {
 	return func(h *Handlers) { h.FlowPlanner = p }
+}
+
+// WithFlowBuilders injects the role→topology-factory map used by
+// POST /api/v1/flows/{hash}/run to start a session on a library topology.
+func WithFlowBuilders(b map[string]app.TopologyFactory) ServerOption {
+	return func(h *Handlers) { h.FlowBuilders = b }
 }

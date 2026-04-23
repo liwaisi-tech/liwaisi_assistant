@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
 
 // HandleListFlows returns all saved flows with stats.
@@ -128,6 +130,81 @@ func candidateToResponse(c *cpn.FlowLibraryEntry) FlowCandidateResponse {
 		Role:     role,
 		Hashtags: c.Signature.Hashtags,
 	}
+}
+
+// HandleRunFlow starts a new session bound to a library topology and
+// dispatches the user's intent as the first message.
+//
+// POST /api/v1/flows/{hash}/run
+//
+// Body: {"intent": "..."} — forwarded as the first user message so the CPN's
+// p-input place receives it like a regular chat turn.
+//
+// Response: {"session_id": "...", "role": "tool-atelier", "started_at": "..."}.
+// The caller subscribes to SSE on the returned session_id for live events.
+func (h *Handlers) HandleRunFlow(w http.ResponseWriter, r *http.Request) {
+	if h.FlowRepo == nil {
+		writeError(w, http.StatusServiceUnavailable, "persistence not enabled")
+		return
+	}
+	if len(h.FlowBuilders) == 0 {
+		writeError(w, http.StatusServiceUnavailable, "flow builders not enabled")
+		return
+	}
+
+	hash := r.PathValue("hash")
+	if hash == "" {
+		writeError(w, http.StatusBadRequest, "flow hash is required")
+		return
+	}
+
+	var req RunFlowRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Intent = strings.TrimSpace(req.Intent)
+	if req.Intent == "" {
+		writeError(w, http.StatusBadRequest, "intent is required")
+		return
+	}
+
+	flow, err := h.FlowRepo.GetByHash(r.Context(), hash)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "flow not found")
+		return
+	}
+
+	factory, ok := h.FlowBuilders[flow.Role]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "no builder registered for role "+flow.Role)
+		return
+	}
+
+	userID := ""
+	if user := auth.UserFromContext(r.Context()); user != nil {
+		userID = user.Sub
+	}
+	if userID == "" {
+		userID = "dev-user"
+	}
+
+	info, err := h.App.CreateSessionWithFactory(r.Context(), userID, cpn.ChannelWeb, factory)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create session: "+err.Error())
+		return
+	}
+
+	if err := h.App.SendMessage(r.Context(), info.ID, req.Intent); err != nil {
+		writeError(w, http.StatusInternalServerError, "send intent: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, RunFlowResponse{
+		SessionID: info.ID,
+		Role:      flow.Role,
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // HandleGetFlow returns a flow's full topology by hash.

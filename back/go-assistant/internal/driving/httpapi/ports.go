@@ -23,6 +23,7 @@ import (
 // The concrete implementation is *app.SessionService.
 type SessionPort interface {
 	CreateSession(ctx context.Context, userID string, channel cpn.ChannelType) (*app.SessionInfo, error)
+	CreateSessionWithFactory(ctx context.Context, userID string, channel cpn.ChannelType, factory app.TopologyFactory) (*app.SessionInfo, error)
 	GetSession(sessionID string) (*app.SessionInfo, error)
 	UpdateSession(ctx context.Context, sessionID string, title *string, softDelete bool) error
 	DeleteSession(sessionID string) error

@@ -25,6 +25,9 @@ type stubSessionPort struct {
 func (s *stubSessionPort) CreateSession(context.Context, string, cpn.ChannelType) (*app.SessionInfo, error) {
 	return s.info, nil
 }
+func (s *stubSessionPort) CreateSessionWithFactory(context.Context, string, cpn.ChannelType, app.TopologyFactory) (*app.SessionInfo, error) {
+	return s.info, nil
+}
 func (s *stubSessionPort) GetSession(string) (*app.SessionInfo, error) { return s.info, nil }
 func (s *stubSessionPort) UpdateSession(context.Context, string, *string, bool) error {
 	return nil

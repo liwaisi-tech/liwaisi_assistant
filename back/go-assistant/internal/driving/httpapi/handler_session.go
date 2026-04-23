@@ -118,6 +118,12 @@ type Handlers struct {
 	// FlowPlanner is the deterministic CPN Agent Architect planner backing
 	// POST /api/v1/flows. Optional — when nil the endpoint returns 503.
 	FlowPlanner *architect.Planner
+
+	// FlowBuilders maps a flow's `role` (persisted in the flows table) to the
+	// factory that builds a fresh per-session topology. Used by POST
+	// /api/v1/flows/{hash}/run to start a session on a library topology (e.g.,
+	// tool-atelier). Optional — when nil or missing a role the endpoint 503s.
+	FlowBuilders map[string]app.TopologyFactory
 }
 
 // HostPolicyReader is the minimal port the admin handlers use to inspect

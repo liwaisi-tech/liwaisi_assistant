@@ -548,6 +548,19 @@ func main() {
 	}
 	serverOpts = append(serverOpts, httpapi.WithFlowPlanner(flowPlanner))
 
+	// Persist built-in library topologies into the flows table so
+	// GET /api/v1/flows surfaces them and POST /api/v1/flows/{hash}/run
+	// can look them up. Idempotent: Save upserts on hash.
+	if store != nil {
+		persistBuiltinFlows(context.Background(), store.Flows(), flowLibrary, logger)
+	}
+
+	// Role→factory map for POST /api/v1/flows/{hash}/run. The handler
+	// looks up the flow by hash, then builds a fresh per-session topology
+	// via the factory registered under the flow's role.
+	flowBuilders := builtinFlowBuilders()
+	serverOpts = append(serverOpts, httpapi.WithFlowBuilders(flowBuilders))
+
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
 
 	// ── SC-13 synthesized-tool HITL broker ─────────────────────────────

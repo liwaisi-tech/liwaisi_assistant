@@ -30,6 +30,7 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers) {
 	mux.HandleFunc("POST /api/v1/flows", h.HandleCreateFlow)
 	mux.HandleFunc("GET /api/v1/flows/{hash}", h.HandleGetFlow)
 	mux.HandleFunc("GET /api/v1/flows/{hash}/executions", h.HandleGetFlowExecutions)
+	mux.HandleFunc("POST /api/v1/flows/{hash}/run", h.HandleRunFlow)
 
 	// Personality
 	mux.HandleFunc("GET /api/v1/personality", h.HandleGetPersonality)

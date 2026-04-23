@@ -198,6 +198,18 @@ type FlowDraftResponse struct {
 	Candidates   []FlowCandidateResponse `json:"candidates,omitempty"`
 }
 
+// RunFlowRequest is the body for POST /api/v1/flows/{hash}/run.
+type RunFlowRequest struct {
+	Intent string `json:"intent"`
+}
+
+// RunFlowResponse is the response for POST /api/v1/flows/{hash}/run.
+type RunFlowResponse struct {
+	SessionID string `json:"session_id"`
+	Role      string `json:"role"`
+	StartedAt string `json:"started_at"`
+}
+
 // BalanceResponse is the billing balance response.
 type BalanceResponse struct {
 	LimitRemaining *float64 `json:"limit_remaining"`
