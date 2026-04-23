@@ -107,3 +107,36 @@ export interface SessionExecutionResponse {
   session_id: string;
   events: ExecutionEvent[];
 }
+
+export interface CreateFlowRequest {
+  intent: string;
+  hashtags?: string[];
+  required_caps?: string[];
+  input_colors?: string[];
+  parallelism_hint?: 'fanout' | 'sequence' | '';
+}
+
+export type FlowStrategy = 'reuse' | 'extend' | 'compose' | 'toolforge' | 'reject';
+
+export interface FlowCandidate {
+  hash: string;
+  role: string;
+  hashtags: string[];
+}
+
+export interface ToolMatch {
+  qualified_name: string;
+  score: number;
+  hashtags: string[];
+}
+
+export interface FlowDraftResponse {
+  strategy: FlowStrategy;
+  base_flow_id?: string;
+  topology?: CPNTopology;
+  matches?: ToolMatch[];
+  missing_caps?: string[];
+  reason: string;
+  confidence: number;
+  candidates?: FlowCandidate[];
+}

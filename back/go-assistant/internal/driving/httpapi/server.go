@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/config"
@@ -299,4 +300,10 @@ func WithSkillManifest(svc SkillManifestPort) ServerOption {
 // internal/app, by toolapproval.Gate.
 func WithToolApprovalBroker(broker *ToolApprovalBroker) ServerOption {
 	return func(h *Handlers) { h.ToolApproval = broker }
+}
+
+// WithFlowPlanner injects the deterministic CPN Agent Architect planner
+// used by POST /api/v1/flows. When unset the endpoint returns 503.
+func WithFlowPlanner(p *architect.Planner) ServerOption {
+	return func(h *Handlers) { h.FlowPlanner = p }
 }

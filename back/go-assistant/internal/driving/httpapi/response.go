@@ -156,6 +156,47 @@ type SessionExecutionResponse struct {
 	Events    []EventResponse `json:"events"`
 }
 
+// CreateFlowRequest is the body for POST /api/v1/flows.
+// It expresses the user's intent in structured form so the deterministic
+// architect Planner can route to Reuse / Compose / ToolForge / Reject
+// without an LLM call.
+type CreateFlowRequest struct {
+	Intent          string   `json:"intent"`
+	Hashtags        []string `json:"hashtags"`
+	RequiredCaps    []string `json:"required_caps"`
+	InputColors     []string `json:"input_colors"`
+	ParallelismHint string   `json:"parallelism_hint"`
+}
+
+// FlowCandidateResponse is a library near-match surfaced in a draft.
+type FlowCandidateResponse struct {
+	Hash     string   `json:"hash"`
+	Role     string   `json:"role"`
+	Hashtags []string `json:"hashtags"`
+}
+
+// ToolMatchResponse is one retrieval match in a compose draft.
+type ToolMatchResponse struct {
+	QualifiedName string   `json:"qualified_name"`
+	Score         float64  `json:"score"`
+	Hashtags      []string `json:"hashtags"`
+}
+
+// FlowDraftResponse is the POST /api/v1/flows result: a single
+// Planner.Plan() iteration serialised for the frontend. The topology blob is
+// included verbatim when Strategy == "compose" so the UI can preview the
+// deterministic JIT output before the user chooses to instantiate it.
+type FlowDraftResponse struct {
+	Strategy     string                  `json:"strategy"`
+	BaseFlowID   string                  `json:"base_flow_id,omitempty"`
+	Topology     json.RawMessage         `json:"topology,omitempty"`
+	Matches      []ToolMatchResponse     `json:"matches,omitempty"`
+	MissingCaps  []string                `json:"missing_caps,omitempty"`
+	Reason       string                  `json:"reason"`
+	Confidence   float64                 `json:"confidence"`
+	Candidates   []FlowCandidateResponse `json:"candidates,omitempty"`
+}
+
 // BalanceResponse is the billing balance response.
 type BalanceResponse struct {
 	LimitRemaining *float64 `json:"limit_remaining"`

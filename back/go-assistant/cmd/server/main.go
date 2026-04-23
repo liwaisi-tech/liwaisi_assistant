@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis"
@@ -531,6 +532,19 @@ func main() {
 		)
 		serverOpts = append(serverOpts, httpapi.WithSkillManifest(skillManifest))
 	}
+
+	// ── CPN Agent Architect planner (spec-architecture-cpn-agent-architect
+	// slices 1–4). Deterministic, LLM-free: library lookup + hashtag retriever
+	// over the sealed tool registry, falling back to the JIT composer. Powers
+	// POST /api/v1/flows so the frontend can forge flows independently of a
+	// chat turn.
+	flowLibrary := cpn.NewFlowLibrary()
+	flowPlanner := &architect.Planner{
+		Library:      flowLibrary,
+		Retriever:    architect.NewHashtagRetriever(toolReg),
+		SafeRegistry: safeRegistry,
+	}
+	serverOpts = append(serverOpts, httpapi.WithFlowPlanner(flowPlanner))
 
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/host/gate"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
@@ -113,6 +114,10 @@ type Handlers struct {
 	// prompts to the A2UI SSE stream and back. Optional — when nil the
 	// POST /api/v1/sessions/{id}/tool-approvals endpoint returns 503.
 	ToolApproval *ToolApprovalBroker
+
+	// FlowPlanner is the deterministic CPN Agent Architect planner backing
+	// POST /api/v1/flows. Optional — when nil the endpoint returns 503.
+	FlowPlanner *architect.Planner
 }
 
 // HostPolicyReader is the minimal port the admin handlers use to inspect

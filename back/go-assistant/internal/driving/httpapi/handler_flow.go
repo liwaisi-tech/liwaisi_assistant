@@ -3,7 +3,10 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 )
 
@@ -40,6 +43,91 @@ func (h *Handlers) HandleListFlows(w http.ResponseWriter, r *http.Request) {
 		HasMore:    page.HasMore,
 		NextCursor: page.NextCursor,
 	})
+}
+
+// HandleCreateFlow runs the deterministic Architect Planner against a
+// user-supplied intent and returns a FlowDraftResponse. This is the explicit
+// "create flow" entry point — independent of a chat message — so the
+// frontend can let users forge new CPN topologies from the Flujos page.
+//
+// POST /api/v1/flows
+func (h *Handlers) HandleCreateFlow(w http.ResponseWriter, r *http.Request) {
+	if h.FlowPlanner == nil {
+		writeError(w, http.StatusServiceUnavailable, "flow planner not enabled")
+		return
+	}
+
+	var req CreateFlowRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Intent = strings.TrimSpace(req.Intent)
+	if req.Intent == "" && len(req.Hashtags) == 0 && len(req.RequiredCaps) == 0 {
+		writeError(w, http.StatusBadRequest, "intent, hashtags, or required_caps must be set")
+		return
+	}
+
+	archReq := architect.ArchitectRequest{
+		NL:              req.Intent,
+		Hashtags:        req.Hashtags,
+		RequiredCaps:    req.RequiredCaps,
+		InputColors:     req.InputColors,
+		ParallelismHint: req.ParallelismHint,
+	}
+
+	draft, err := h.FlowPlanner.Plan(r.Context(), archReq)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "planner failed: "+err.Error())
+		return
+	}
+
+	resp := FlowDraftResponse{
+		Strategy:    string(draft.Strategy),
+		BaseFlowID:  draft.BaseFlowID,
+		MissingCaps: draft.MissingCaps,
+		Reason:      draft.Reason,
+		Confidence:  draft.Confidence,
+	}
+	if len(draft.TopologyBlob) > 0 {
+		resp.Topology = json.RawMessage(draft.TopologyBlob)
+	}
+	if len(draft.MatchSet.Matches) > 0 {
+		resp.Matches = make([]ToolMatchResponse, 0, len(draft.MatchSet.Matches))
+		for _, m := range draft.MatchSet.Matches {
+			resp.Matches = append(resp.Matches, ToolMatchResponse{
+				QualifiedName: m.QualifiedName,
+				Score:         m.Score,
+				Hashtags:      m.Hashtags,
+			})
+		}
+	}
+	if len(draft.Candidates) > 0 {
+		resp.Candidates = make([]FlowCandidateResponse, 0, len(draft.Candidates))
+		for _, c := range draft.Candidates {
+			resp.Candidates = append(resp.Candidates, candidateToResponse(c))
+		}
+	}
+
+	// Always 200: Reject / ToolForge are legitimate draft outcomes that the
+	// frontend renders with a tailored UI. HTTP-error status codes are
+	// reserved for transport / server faults.
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func candidateToResponse(c *cpn.FlowLibraryEntry) FlowCandidateResponse {
+	if c == nil {
+		return FlowCandidateResponse{}
+	}
+	role := ""
+	if c.CPN != nil {
+		role = c.CPN.Role
+	}
+	return FlowCandidateResponse{
+		Hash:     c.Hash,
+		Role:     role,
+		Hashtags: c.Signature.Hashtags,
+	}
 }
 
 // HandleGetFlow returns a flow's full topology by hash.

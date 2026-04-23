@@ -1,5 +1,5 @@
 import type { SessionResponse, SessionDetailResponse, StatusResponse, CreateSessionRequest, SendMessageRequest, ResolveHITLRequest, BalanceResponse, SessionListResponse, UpdateSessionRequest, ForkSessionRequest, ForkSessionResponse } from '../types/api';
-import type { FlowListResponse, FlowDetail, SessionExecutionResponse } from '../types/flow';
+import type { FlowListResponse, FlowDetail, SessionExecutionResponse, CreateFlowRequest, FlowDraftResponse } from '../types/flow';
 import type { PersonalityResponse, UpdatePrincipleRequest, SetHierarchyRequest, PrincipleResponse, TensionResponse, ToolListResponse } from '../types/personality';
 import type { UserProfile, UpdatePreferencesPayload, OnboardingCompleteRequest, ModelsResponse, ModelRegistryEntry } from '../types/setup';
 import type { AdminConfigResponse, PlatformStatusResponse } from '../types/admin';
@@ -270,6 +270,13 @@ export async function getFlows(): Promise<FlowListResponse> {
 
 export async function getFlow(hash: string): Promise<FlowDetail> {
   return request<FlowDetail>(`/flows/${hash}`);
+}
+
+export async function createFlow(req: CreateFlowRequest): Promise<FlowDraftResponse> {
+  return request<FlowDraftResponse>('/flows', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }
 
 export async function getSessionExecution(sessionId: string): Promise<SessionExecutionResponse> {
