@@ -509,6 +509,22 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 							Payload:        "rejected",
 							Timestamp:      time.Now(),
 						})
+						// Close the tool transition lifecycle (host-gate reject).
+						c.emit(&Event{
+							Type:           EventTransitionCompleted,
+							TransitionID:   tc.ToolName,
+							TransitionKind: NodeKindTool,
+							SessionID:      c.SessionID,
+							CPNID:          c.ID,
+							CPNDepth:       c.Depth,
+							CPNRole:        c.Role,
+							Payload: TransitionCompletedPayload{
+								DurationMs:   time.Since(startTime).Milliseconds(),
+								Error:        "rejected by host gate",
+								DisplayLabel: resolveLabelForTransition(c, toolTransition),
+							},
+							Timestamp: time.Now(),
+						})
 						messages = append(messages, &LLMMessage{
 							Role: "tool",
 							ToolResult: &LLMToolResult{
@@ -638,6 +654,22 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 								Payload:        "rejected",
 								Timestamp:      time.Now(),
 							})
+							// Close the tool transition lifecycle (HITL reject).
+							c.emit(&Event{
+								Type:           EventTransitionCompleted,
+								TransitionID:   tc.ToolName,
+								TransitionKind: NodeKindTool,
+								SessionID:      c.SessionID,
+								CPNID:          c.ID,
+								CPNDepth:       c.Depth,
+								CPNRole:        c.Role,
+								Payload: TransitionCompletedPayload{
+									DurationMs:   time.Since(startTime).Milliseconds(),
+									Error:        "rejected by user",
+									DisplayLabel: resolveLabelForTransition(c, toolTransition),
+								},
+								Timestamp: time.Now(),
+							})
 							continue // Skip tool execution, proceed to next tool call.
 						}
 						// Approved — continue to tool execution.
@@ -700,6 +732,33 @@ func handleToolCalls(ctx context.Context, resp *LLMResponse, t *Transition, c *C
 					Success:    execErr == nil,
 					Error:      errorString(execErr),
 					Arguments:  tc.Arguments,
+				},
+				Timestamp: time.Now(),
+			})
+
+			// Close the transition lifecycle for the inline-tool path so the
+			// frontend (useExecutionMonitor) can clear bash_exec / file_read
+			// etc. from activeTransitions. Without this, every tool fired from
+			// inside an LLM loop stays "disparando" forever because only
+			// EventTransitionCompleted removes it from the active set.
+			c.emit(&Event{
+				Type:           EventTransitionCompleted,
+				TransitionID:   tc.ToolName,
+				TransitionKind: NodeKindTool,
+				SessionID:      c.SessionID,
+				CPNID:          c.ID,
+				CPNDepth:       c.Depth,
+				CPNRole:        c.Role,
+				Payload: TransitionCompletedPayload{
+					OutputTokens: []TokenSnapshot{{
+						Color:          string(ColorJSON),
+						PayloadPreview: formatPayloadPreview(resultContent),
+						OriginID:       tc.ToolName,
+						OriginKind:     string(NodeKindTool),
+					}},
+					DurationMs:   durationMs,
+					Error:        errorString(execErr),
+					DisplayLabel: resolveLabelForTransition(c, toolTransition),
 				},
 				Timestamp: time.Now(),
 			})
