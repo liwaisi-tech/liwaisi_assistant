@@ -16,6 +16,49 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 )
 
+// marshalTopologyShallow serializes just the structural skeleton of a CPN
+// (id/role + places + transitions with input/output wiring) for the flows
+// table. We skip persist.MarshalCPN because built-in topologies contain
+// inline guard/handler closures that aren't in the FuncRegistry; a faithful
+// round-trip isn't possible. The frontend visualizer only needs the graph
+// shape — execution rebuilds from code via FlowBuilders.
+func marshalTopologyShallow(c *cpn.CPN) ([]byte, error) {
+	places := make(map[string]map[string]string, len(c.Places))
+	for id, p := range c.Places {
+		places[id] = map[string]string{
+			"id":    p.ID,
+			"color": string(p.Color),
+			"space": string(p.Space),
+		}
+	}
+	transitions := make(map[string]map[string]any, len(c.Transitions))
+	for id, t := range c.Transitions {
+		transitions[id] = map[string]any{
+			"id":           t.ID,
+			"kind":         string(t.Kind),
+			"inputPlaces":  nonNilStrings(t.InputPlaces),
+			"outputPlaces": nonNilStrings(t.OutputPlaces),
+			"errorPlace":   t.ErrorPlace,
+		}
+	}
+	topo := map[string]any{
+		"id":          c.ID,
+		"role":        c.Role,
+		"depth":       0,
+		"mode":        "",
+		"places":      places,
+		"transitions": transitions,
+	}
+	return json.Marshal(topo)
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // builtinFlowBuilders returns the composition-root registry of built-in
 // topology factories, keyed by the flow's `role` (as persisted in the flows
 // table). Adding a new built-in CPN means adding one entry here.
@@ -43,16 +86,15 @@ func persistBuiltinFlows(ctx context.Context, repo persist.FlowRepository, lib *
 		if entry == nil || entry.CPN == nil || entry.Hash == "" {
 			continue
 		}
-		summary, _ := json.Marshal(map[string]any{
-			"role":     entry.CPN.Role,
-			"origin":   entry.Origin,
-			"template": entry.Signature.Template,
-			"hashtags": entry.Signature.Hashtags,
-		})
+		topoJSON, err := marshalTopologyShallow(entry.CPN)
+		if err != nil {
+			logger.Warn("persist builtin flow marshal", slog.String("role", entry.CPN.Role), slog.Any("error", err))
+			continue
+		}
 		rec := &persist.FlowRecord{
 			Hash:            entry.Hash,
 			Role:            entry.CPN.Role,
-			TopologyJSON:    summary,
+			TopologyJSON:    topoJSON,
 			FunctionMapping: json.RawMessage(`{}`),
 			CreatedAt:       now,
 			UpdatedAt:       now,

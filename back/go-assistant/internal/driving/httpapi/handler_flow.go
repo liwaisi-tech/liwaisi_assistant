@@ -117,6 +117,30 @@ func (h *Handlers) HandleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// ensureTopologyShape guarantees `places` and `transitions` are objects (not
+// null/missing) in the serialized response so the frontend's Object.entries
+// calls don't blow up on legacy or shallow-persisted rows.
+func ensureTopologyShape(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{"places":{},"transitions":{}}`)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return json.RawMessage(`{"places":{},"transitions":{}}`)
+	}
+	if p, ok := m["places"]; !ok || len(p) == 0 || string(p) == "null" {
+		m["places"] = json.RawMessage(`{}`)
+	}
+	if t, ok := m["transitions"]; !ok || len(t) == 0 || string(t) == "null" {
+		m["transitions"] = json.RawMessage(`{}`)
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
 func candidateToResponse(c *cpn.FlowLibraryEntry) FlowCandidateResponse {
 	if c == nil {
 		return FlowCandidateResponse{}
@@ -227,11 +251,10 @@ func (h *Handlers) HandleGetFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse topology_json into a raw object for the response.
-	var topology json.RawMessage
-	if len(flow.TopologyJSON) > 0 {
-		topology = flow.TopologyJSON
-	}
+	// Parse topology_json into a raw object for the response. Ensure the
+	// frontend always gets non-null `places` and `transitions` maps — the
+	// CPN visualizer calls Object.entries on both and crashes on null.
+	topology := ensureTopologyShape(flow.TopologyJSON)
 
 	writeJSON(w, http.StatusOK, FlowDetailResponse{
 		Hash:     flow.Hash,
