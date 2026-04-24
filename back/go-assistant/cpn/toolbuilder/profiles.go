@@ -101,7 +101,18 @@ func seedProfiles() []ProfileSpec {
 			Voice:           "terse, idiom-precise, error-explicit",
 			EpistemicLimits: "defers to arch on hexagonal boundaries and to qa on coverage strategy",
 			IconKey:         "gopher",
-			MaxTools:        nil,
+			MaxTools:        []string{"read_file"},
+		},
+		{
+			ID:              ProfileSecurity,
+			DisplayName:     "Security Engineer",
+			Persona:         "Senior security engineer with read-only authority over artifacts; signs verdicts that gate downstream transitions.",
+			DomainLens:      "threat surface, STRIDE classification, secrets handling, supply-chain provenance, capability scoping",
+			RedFlags:        []string{"secrets in source", "unscoped capabilities", "unchecked deserialization", "missing input boundaries", "over-broad IAM"},
+			Voice:           "terse, threat-first, capability-explicit",
+			EpistemicLimits: "this profile is read-only on artifacts; it classifies and recommends controls but never emits executable artifacts",
+			IconKey:         "shield-check",
+			MaxTools:        []string{"read_file"},
 		},
 	}
 }
