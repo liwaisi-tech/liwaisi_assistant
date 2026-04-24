@@ -64,13 +64,16 @@ const (
 	TrReviewQA            = "t-review-spec-qa"
 	TrReviewArch          = "t-review-spec-arch"
 	TrReviewPM            = "t-review-spec-pm"
-	TrAggregateApprove    = "t-aggregate-approve"
-	TrAggregateRefine     = "t-aggregate-refine"
-	TrRefineSpec          = "t-refine-spec"
-	TrDecomposeTotals     = "t-decompose-totals"
-	TrAuthorizeTotals     = "t-authorize-totals"
-	TrGateTotal           = "t-gate-total"
-	TrPlanSubtasks        = "t-plan-subtasks"
+	TrAggregateApprove = "t-aggregate-approve"
+	TrAggregateRefine  = "t-aggregate-refine"
+	// PR4: renamed to t-{action}-{profile}. These equal
+	// TransitionID(action, ProfileArch) — asserted at build time by
+	// buildSubAgentLLM. No aliases kept.
+	TrRefineSpec      = "t-refine-spec-arch"
+	TrDecomposeTotals = "t-decompose-totals-arch"
+	TrAuthorizeTotals = "t-authorize-totals"
+	TrGateTotal       = "t-gate-total"
+	TrPlanSubtasks    = "t-plan-subtasks-arch"
 	TrTDDLoop             = "t-tdd-loop"
 	TrPackage             = "t-package"
 	TrRegister            = "t-register"

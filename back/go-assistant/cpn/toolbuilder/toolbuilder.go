@@ -105,12 +105,56 @@ func buildPlaces() map[string]*cpn.Place {
 	}
 }
 
+// buildSubAgentLLM constructs an LLM transition for a (profile ×
+// action) sub-agent. Panics if the pair is unknown to the catalog or
+// denied by the allowlist matrix — both are build-time programmer
+// errors that must not ship. The returned transition has SystemPrompt
+// composed from the catalog, Meta populated for the visualizer, and
+// ErrorPlace wired for the engine.
+func buildSubAgentLLM(
+	catalog *SubAgentCatalog,
+	transitionID, profileID, actionID string,
+	inputPlaces, outputPlaces []string,
+	llmCfg *cpn.LLMConfig,
+	errorPlace string,
+) *cpn.Transition {
+	profile, ok := catalog.Profiles.Get(profileID)
+	if !ok {
+		panic(fmt.Sprintf("tool-atelier: sub-agent %s references unknown profile %q", transitionID, profileID))
+	}
+	action, ok := catalog.Actions.Get(actionID)
+	if !ok {
+		panic(fmt.Sprintf("tool-atelier: sub-agent %s references unknown action %q", transitionID, actionID))
+	}
+	if want := TransitionID(actionID, profileID); transitionID != want {
+		panic(fmt.Sprintf("tool-atelier: sub-agent id %q violates convention (want %q)", transitionID, want))
+	}
+	sysPrompt, err := catalog.Compose(profileID, actionID)
+	if err != nil {
+		panic(fmt.Sprintf("tool-atelier: compose %s×%s: %v", profileID, actionID, err))
+	}
+	t := cpn.NewTransition(transitionID, cpn.NodeKindLLM, inputPlaces, outputPlaces)
+	t.SystemPrompt = sysPrompt
+	t.LLMConfig = llmCfg
+	t.ErrorPlace = errorPlace
+	t.Meta = SubAgentMeta(profile, action)
+	return t
+}
+
 // buildTransitions declares every transition. Each transition's
 // configuration (SystemPrompt, BashConfig, ToolHandler) is set inline for
 // readability — reviewers should be able to scan one function top-to-bottom
 // and understand the whole pipeline.
 func buildTransitions(deps AtelierDeps) map[string]*cpn.Transition {
 	tr := make(map[string]*cpn.Transition)
+
+	// Sub-agent catalog — seeded once, used for every (profile × action)
+	// transition below (reviewers + refine-spec + decompose-totals +
+	// plan-subtasks). Seed failure is a build-time error.
+	catalog, err := NewSubAgentCatalog()
+	if err != nil {
+		panic(fmt.Sprintf("tool-atelier: sub-agent catalog seed failed: %v", err))
+	}
 
 	// ── t-triage (LLM) ────────────────────────────────────────────────
 	tTriage := cpn.NewTransition(TrTriage, cpn.NodeKindLLM,
@@ -197,33 +241,12 @@ Output ONLY valid JSON matching SpecDraft:
 	// profile text stays free of action coupling. Transition.Meta
 	// surfaces the sub-agent identity to the visualizer and event
 	// pipeline — see registry.go SubAgentMeta.
-	catalog, err := NewSubAgentCatalog()
-	if err != nil {
-		panic(fmt.Sprintf("tool-atelier: sub-agent catalog seed failed: %v", err))
-	}
 	for _, r := range reviewerRoles {
-		profile, ok := catalog.Profiles.Get(r.ProfileID)
-		if !ok {
-			panic(fmt.Sprintf("tool-atelier: reviewer %q references unknown profile %q", r.TransitionID, r.ProfileID))
-		}
-		action, ok := catalog.Actions.Get(r.ActionID)
-		if !ok {
-			panic(fmt.Sprintf("tool-atelier: reviewer %q references unknown action %q", r.TransitionID, r.ActionID))
-		}
-		if want := TransitionID(r.ActionID, r.ProfileID); r.TransitionID != want {
-			panic(fmt.Sprintf("tool-atelier: reviewer %q violates transition-id convention (want %q)", r.TransitionID, want))
-		}
-		sysPrompt, err := catalog.Compose(r.ProfileID, r.ActionID)
-		if err != nil {
-			panic(fmt.Sprintf("tool-atelier: compose %s×%s: %v", r.ProfileID, r.ActionID, err))
-		}
-		tRev := cpn.NewTransition(r.TransitionID, cpn.NodeKindLLM,
-			[]string{r.InputPlace}, []string{r.OutputPlace})
-		tRev.SystemPrompt = sysPrompt
-		tRev.LLMConfig = &cpn.LLMConfig{Role: "structured", MaxTokens: 800, RequireJSON: true}
-		tRev.ErrorPlace = PlaceErrors
-		tRev.Meta = SubAgentMeta(profile, action)
-		tr[r.TransitionID] = tRev
+		tr[r.TransitionID] = buildSubAgentLLM(catalog, r.TransitionID,
+			r.ProfileID, r.ActionID,
+			[]string{r.InputPlace}, []string{r.OutputPlace},
+			&cpn.LLMConfig{Role: "structured", MaxTokens: 800, RequireJSON: true},
+			PlaceErrors)
 	}
 
 	// ── t-aggregate-approve / t-aggregate-refine (Tool, mutually exclusive guards) ──
@@ -245,28 +268,22 @@ Output ONLY valid JSON matching SpecDraft:
 	tRefine.ErrorPlace = PlaceErrors
 	tr[TrAggregateRefine] = tRefine
 
-	// ── t-refine-spec (LLM; closes the review → refine loop) ──────────
-	tRefineLLM := cpn.NewTransition(TrRefineSpec, cpn.NodeKindLLM,
-		[]string{PlaceRefineRequest}, []string{PlaceSpecDraft})
-	tRefineLLM.SystemPrompt = `You are the tool-atelier spec refiner. Given a Verdict JSON (spec + blocking issues + suggestions),
-produce an improved SpecDraft that resolves every blocking issue. Preserve fields not in scope of the issues.
-Increment "refine_count" by 1 so the refinement loop terminates (cap is 2).
-Output ONLY valid SpecDraft JSON.`
-	tRefineLLM.LLMConfig = &cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true}
-	tRefineLLM.ErrorPlace = PlaceErrors
+	// ── t-refine-spec-arch (LLM sub-agent) ───────────────────────────
+	// Closes the review → refine loop. Arch profile owns the refine
+	// action (allowlist matrix: refine-spec is restricted to arch).
+	tRefineLLM := buildSubAgentLLM(catalog, TrRefineSpec,
+		ProfileArch, ActionRefineSpec,
+		[]string{PlaceRefineRequest}, []string{PlaceSpecDraft},
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true},
+		PlaceErrors)
 	tr[TrRefineSpec] = tRefineLLM
 
-	// ── t-decompose-totals (LLM) ──────────────────────────────────────
-	tDecompose := cpn.NewTransition(TrDecomposeTotals, cpn.NodeKindLLM,
-		[]string{PlaceSpecApproved}, []string{PlaceTotals})
-	tDecompose.SystemPrompt = fmt.Sprintf(`You are the tool-atelier decomposer.
-Given an approved SpecDraft, split the work into "totals" — independent high-level workstreams.
-Constraints: 1 ≤ N ≤ %d totals, each with a unique ID, non-empty deliverables, and a DAG of dependencies (no cycles).
-Mark parallel_safe=true when the total has no runtime-file conflict with others.
-Output ONLY valid JSON matching TotalsBatch:
-{"spec_name":"<name>","totals":[{"id":"T1","name":"...","deliverables":["..."],"parallel_safe":true,"depends_on":[]}]}`, MaxTotals)
-	tDecompose.LLMConfig = &cpn.LLMConfig{Role: "structured", MaxTokens: 1024, RequireJSON: true}
-	tDecompose.ErrorPlace = PlaceErrors
+	// ── t-decompose-totals-arch (LLM sub-agent) ──────────────────────
+	tDecompose := buildSubAgentLLM(catalog, TrDecomposeTotals,
+		ProfileArch, ActionDecomposeTotals,
+		[]string{PlaceSpecApproved}, []string{PlaceTotals},
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 1024, RequireJSON: true},
+		PlaceErrors)
 	tr[TrDecomposeTotals] = tDecompose
 
 	// ── t-authorize-totals (Tool, deterministic) ──────────────────────
@@ -283,17 +300,12 @@ Output ONLY valid JSON matching TotalsBatch:
 	tGate.ErrorPlace = PlaceErrors
 	tr[TrGateTotal] = tGate
 
-	// ── t-plan-subtasks (LLM) ─────────────────────────────────────────
-	tPlan := cpn.NewTransition(TrPlanSubtasks, cpn.NodeKindLLM,
-		[]string{PlaceTotalReady}, []string{PlaceSubtasks})
-	tPlan.SystemPrompt = `You are the tool-atelier subtask planner.
-For each TotalReady, produce an ordered list of subtasks. Each subtask carries ONLY the context
-strictly needed to write a single failing test + implementation: files_to_touch, test_name, one-line purpose.
-Mark parallel_safe=true when the subtask has no shared-file conflict.
-Output ONLY valid JSON matching SubtasksBatch:
-{"spec_name":"...","by_total":[{"total_id":"T1","subtasks":[{"id":"T1.s1","purpose":"...","files_to_touch":["..."],"test_name":"TestX","parallel_safe":true,"depends_on":[]}]}]}`
-	tPlan.LLMConfig = &cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true}
-	tPlan.ErrorPlace = PlaceErrors
+	// ── t-plan-subtasks-arch (LLM sub-agent) ─────────────────────────
+	tPlan := buildSubAgentLLM(catalog, TrPlanSubtasks,
+		ProfileArch, ActionPlanSubtasks,
+		[]string{PlaceTotalReady}, []string{PlaceSubtasks},
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true},
+		PlaceErrors)
 	tr[TrPlanSubtasks] = tPlan
 
 	// ── t-tdd-loop (Tool, v1 stub) ────────────────────────────────────

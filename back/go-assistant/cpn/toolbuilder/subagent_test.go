@@ -191,6 +191,40 @@ func TestEffectiveTools_IntersectionSemantics(t *testing.T) {
 	}
 }
 
+// TestToolAtelier_ArchSubAgentsMetaPopulated covers PR4: the 3
+// heterogeneous LLM transitions (refine-spec, decompose-totals,
+// plan-subtasks) must all be arch sub-agents with Meta populated.
+func TestToolAtelier_ArchSubAgentsMetaPopulated(t *testing.T) {
+	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+	cases := []struct {
+		tid, action string
+	}{
+		{TrRefineSpec, ActionRefineSpec},
+		{TrDecomposeTotals, ActionDecomposeTotals},
+		{TrPlanSubtasks, ActionPlanSubtasks},
+	}
+	for _, tc := range cases {
+		tr, ok := c.Transitions[tc.tid]
+		if !ok {
+			t.Errorf("transition %q missing", tc.tid)
+			continue
+		}
+		if tr.Meta["kind"] != "subagent" {
+			t.Errorf("%s kind=%q, want subagent", tc.tid, tr.Meta["kind"])
+		}
+		if tr.Meta["profile_id"] != ProfileArch {
+			t.Errorf("%s profile_id=%q, want %q", tc.tid, tr.Meta["profile_id"], ProfileArch)
+		}
+		if tr.Meta["action_id"] != tc.action {
+			t.Errorf("%s action_id=%q, want %q", tc.tid, tr.Meta["action_id"], tc.action)
+		}
+		// Transition-id convention check.
+		if tc.tid != TransitionID(tc.action, ProfileArch) {
+			t.Errorf("%s does not equal TransitionID(%s, %s)", tc.tid, tc.action, ProfileArch)
+		}
+	}
+}
+
 // TestNoOpValidator_Accepts_All keeps the PR2 contract honest: the
 // default validator must accept every payload so plumbing doesn't
 // silently reject output before PR2 lands real schemas.
