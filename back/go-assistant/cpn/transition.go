@@ -147,6 +147,17 @@ type Transition struct {
 
 	// DeprecateReason is a human-readable explanation for deprecation.
 	DeprecateReason string
+
+	// Meta is free-form key/value metadata surfaced to the visualizer and
+	// event pipeline. Nil-safe. Reserved keys used by the sub-agent model:
+	//   profile_id       — identity of the profile running this transition (e.g. "qa")
+	//   action_id        — task verb the profile performs (e.g. "review-spec")
+	//   subagent_label   — precomposed human-readable label (e.g. "QA · review-spec")
+	//   icon_key         — stable glyph key for the FE (e.g. "shield-check")
+	//   kind             — discriminator: "subagent" | "control" | "aggregator"
+	//   model_hint       — optional default model (e.g. "haiku", "sonnet")
+	// Other keys are permitted but not interpreted by the core engine.
+	Meta map[string]string
 }
 
 // ToolMeta carries tool metadata from the registry to the CPN execution layer.

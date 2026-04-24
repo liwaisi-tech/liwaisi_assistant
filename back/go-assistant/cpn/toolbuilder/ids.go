@@ -55,12 +55,15 @@ const (
 	TrDraftSpecV0         = "t-draft-spec-v0"
 	TrEnrichSpec          = "t-enrich-spec"
 	TrFanoutReviewers     = "t-fanout-reviewers"
-	TrReviewGo            = "t-review-go"
-	TrReviewAI            = "t-review-ai"
-	TrReviewDevOps        = "t-review-devops"
-	TrReviewQA            = "t-review-qa"
-	TrReviewArch          = "t-review-arch"
-	TrReviewPM            = "t-review-pm"
+	// Reviewer transition IDs follow t-{action}-{profile}. These values
+	// equal TransitionID(ActionReviewSpec, Profile*) — asserted by
+	// TestTransitionIDConvention. Renamed in PR1; no aliases kept.
+	TrReviewGo            = "t-review-spec-go-eng"
+	TrReviewAI            = "t-review-spec-ai-eng"
+	TrReviewDevOps        = "t-review-spec-devops"
+	TrReviewQA            = "t-review-spec-qa"
+	TrReviewArch          = "t-review-spec-arch"
+	TrReviewPM            = "t-review-spec-pm"
 	TrAggregateApprove    = "t-aggregate-approve"
 	TrAggregateRefine     = "t-aggregate-refine"
 	TrRefineSpec          = "t-refine-spec"

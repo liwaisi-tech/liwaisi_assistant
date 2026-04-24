@@ -85,15 +85,19 @@ func TestBuildToolAtelierTopology_ToolTransitionsHaveHandler(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_BashAndRegisterWired(t *testing.T) {
+func TestBuildToolAtelierTopology_ScaffoldPackageRegisterWired(t *testing.T) {
+	// t-scaffold-workspace and t-package are Tool stubs today: their
+	// output places carry non-shell colors (ARTIFACT, TOOL_MANIFEST), so
+	// NodeKindBash would fail validation. Swap to Bash once real scripts
+	// route through intermediate shell-result places.
 	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
 	for _, id := range []string{TrScaffoldWorkspace, TrPackage} {
 		tr := c.Transitions[id]
-		if tr.Kind != cpn.NodeKindBash {
-			t.Errorf("%s: Kind=%s, want Bash", id, tr.Kind)
+		if tr.Kind != cpn.NodeKindTool {
+			t.Errorf("%s: Kind=%s, want Tool", id, tr.Kind)
 		}
-		if tr.BashConfig == nil {
-			t.Errorf("%s: nil BashConfig", id)
+		if tr.ToolHandler == nil {
+			t.Errorf("%s: nil ToolHandler", id)
 		}
 	}
 	if c.Transitions[TrRegister].Kind != cpn.NodeKindRegisterTool {
@@ -131,7 +135,7 @@ func TestBuildToolAtelierTopology_AggregatorsMutuallyExclusive(t *testing.T) {
 	}
 	allApproved := make([]*cpn.Token, 0, 6)
 	for _, r := range reviewerRoles {
-		allApproved = append(allApproved, mk(r.Role, true, nil))
+		allApproved = append(allApproved, mk(r.ProfileID, true, nil))
 	}
 	if !app.Guard(allApproved) {
 		t.Error("approve guard should fire on all-approved")
@@ -142,7 +146,7 @@ func TestBuildToolAtelierTopology_AggregatorsMutuallyExclusive(t *testing.T) {
 
 	// One blocker → only refine fires.
 	oneBlocker := append([]*cpn.Token{}, allApproved...)
-	oneBlocker[0] = mk(reviewerRoles[0].Role, false, []string{"missing non-goals"})
+	oneBlocker[0] = mk(reviewerRoles[0].ProfileID, false, []string{"missing non-goals"})
 	if app.Guard(oneBlocker) {
 		t.Error("approve guard should NOT fire with a blocker")
 	}
@@ -299,7 +303,7 @@ func TestFanoutReviewers_ProducesSixClones(t *testing.T) {
 
 func TestReviewerRoles_StableOrder(t *testing.T) {
 	got := ReviewerRoles()
-	want := []string{"go-engineer", "ai-engineer", "devops-engineer", "qa-engineer", "architect", "product-manager"}
+	want := []string{ProfileGoEng, ProfileAIEng, ProfileDevOps, ProfileQA, ProfileArch, ProfilePM}
 	if len(got) != len(want) {
 		t.Fatalf("len got=%d want=%d", len(got), len(want))
 	}

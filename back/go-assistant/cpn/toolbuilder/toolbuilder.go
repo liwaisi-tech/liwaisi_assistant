@@ -17,7 +17,6 @@ package toolbuilder
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
@@ -117,10 +116,17 @@ func buildTransitions(deps AtelierDeps) map[string]*cpn.Transition {
 	tTriage := cpn.NewTransition(TrTriage, cpn.NodeKindLLM,
 		[]string{PlaceRequest}, []string{PlaceTriaged})
 	tTriage.SystemPrompt = `You are a senior Go software architect acting as a request-triage bot for the tool-atelier.
-Read the incoming ToolRequest JSON and decide if it is specific enough to start design:
-- "ready" when it has: a clear name (or one can be inferred), a one-line purpose, and at least one verb describing behaviour.
-- "not ready" when the request is too vague (e.g. "build something useful") or missing purpose.
-Echo the normalised request back in "request" for downstream transitions.
+Read the incoming ToolRequest JSON (field "description" carries the user's intent) and decide if it is specific enough to start design.
+
+DEFAULT TO "ready": true. A request is ready when you can identify at least:
+- A plausible tool name (infer one from the verb+noun if the user didn't name it, e.g. "html-to-markdown").
+- A one-line purpose you can paraphrase from the user's words.
+- At least one verb describing behaviour.
+
+Only return "ready": false when the request is genuinely unworkable (pure nonsense, empty, or "make something useful"-tier vague). Do NOT block on missing optional details like preferred libraries, module grouping, or author — infer sensible defaults and proceed.
+
+ALWAYS echo a fully-populated "request" object back — even when ready is false — inferring name/module/description/author from whatever context you have. The scaffold stage needs those fields.
+
 Output ONLY valid JSON: {"ready":bool,"clarify_question":"string","request":{"name":"...","module":"...","description":"...","author":"..."}}`
 	tTriage.LLMConfig = &cpn.LLMConfig{Role: "classifier", MaxTokens: 512, RequireJSON: true}
 	tTriage.ErrorPlace = PlaceErrors
@@ -141,18 +147,16 @@ Output ONLY valid JSON: {"ready":bool,"clarify_question":"string","request":{"na
 	tInvestigate.ErrorPlace = PlaceErrors
 	tr[TrInvestigate] = tInvestigate
 
-	// ── t-scaffold-workspace (Bash, placeholder) ──────────────────────
-	// The real bash script is composed at runtime (the scaffold is
-	// rendered in Go to a temp dir, the bash transition moves it into
-	// workspace/tools/src/<name>/, runs git init + go mod init).
-	// The placeholder keeps the transition structurally valid.
-	tScaffold := cpn.NewTransition(TrScaffoldWorkspace, cpn.NodeKindBash,
+	// ── t-scaffold-workspace (Tool, placeholder) ──────────────────────
+	// The real implementation renders template files to a temp dir and
+	// shells out (git init + go mod init). Kept as a Tool stub for now so
+	// it emits a ColorArtifact token — bash transitions are constrained
+	// to shell-family output colors and can't target p-workspace-ready
+	// directly. Swap to a NodeKindBash + intermediate shell-result place
+	// once the real scaffolder lands.
+	tScaffold := cpn.NewTransition(TrScaffoldWorkspace, cpn.NodeKindTool,
 		[]string{PlaceReqScaffold}, []string{PlaceWorkspaceReady})
-	tScaffold.BashConfig = &cpn.BashConfig{
-		Command: "bash",
-		Args:    []string{"-c", `echo '{"placeholder":"scaffold bash pending"}' ; exit 0`},
-		Timeout: 30 * time.Second,
-	}
+	tScaffold.ToolHandler = scaffoldWorkspaceStub()
 	tScaffold.ErrorPlace = PlaceErrors
 	tr[TrScaffoldWorkspace] = tScaffold
 
@@ -187,13 +191,38 @@ Output ONLY valid JSON matching SpecDraft:
 	tFanout.ErrorPlace = PlaceErrors
 	tr[TrFanoutReviewers] = tFanout
 
-	// ── t-review-* (6 × LLM) ──────────────────────────────────────────
+	// ── t-review-spec-* (6 × LLM sub-agents) ──────────────────────────
+	// Each reviewer is a sub-agent composed of (profile × action). The
+	// SystemPrompt is rendered deterministically from the catalog so
+	// profile text stays free of action coupling. Transition.Meta
+	// surfaces the sub-agent identity to the visualizer and event
+	// pipeline — see registry.go SubAgentMeta.
+	catalog, err := NewSubAgentCatalog()
+	if err != nil {
+		panic(fmt.Sprintf("tool-atelier: sub-agent catalog seed failed: %v", err))
+	}
 	for _, r := range reviewerRoles {
+		profile, ok := catalog.Profiles.Get(r.ProfileID)
+		if !ok {
+			panic(fmt.Sprintf("tool-atelier: reviewer %q references unknown profile %q", r.TransitionID, r.ProfileID))
+		}
+		action, ok := catalog.Actions.Get(r.ActionID)
+		if !ok {
+			panic(fmt.Sprintf("tool-atelier: reviewer %q references unknown action %q", r.TransitionID, r.ActionID))
+		}
+		if want := TransitionID(r.ActionID, r.ProfileID); r.TransitionID != want {
+			panic(fmt.Sprintf("tool-atelier: reviewer %q violates transition-id convention (want %q)", r.TransitionID, want))
+		}
+		sysPrompt, err := catalog.Compose(r.ProfileID, r.ActionID)
+		if err != nil {
+			panic(fmt.Sprintf("tool-atelier: compose %s×%s: %v", r.ProfileID, r.ActionID, err))
+		}
 		tRev := cpn.NewTransition(r.TransitionID, cpn.NodeKindLLM,
 			[]string{r.InputPlace}, []string{r.OutputPlace})
-		tRev.SystemPrompt = r.Prompt
+		tRev.SystemPrompt = sysPrompt
 		tRev.LLMConfig = &cpn.LLMConfig{Role: "structured", MaxTokens: 800, RequireJSON: true}
 		tRev.ErrorPlace = PlaceErrors
+		tRev.Meta = SubAgentMeta(profile, action)
 		tr[r.TransitionID] = tRev
 	}
 
@@ -274,14 +303,13 @@ Output ONLY valid JSON matching SubtasksBatch:
 	tTDD.ErrorPlace = PlaceErrors
 	tr[TrTDDLoop] = tTDD
 
-	// ── t-package (Bash, placeholder) ─────────────────────────────────
-	tPackage := cpn.NewTransition(TrPackage, cpn.NodeKindBash,
+	// ── t-package (Tool, placeholder) ─────────────────────────────────
+	// Kept as a Tool stub so it emits a ColorToolManifest token — same
+	// validator constraint as t-scaffold-workspace. Real implementation
+	// will run `go build` + sign + produce the manifest.
+	tPackage := cpn.NewTransition(TrPackage, cpn.NodeKindTool,
 		[]string{PlaceTested}, []string{PlacePackaged})
-	tPackage.BashConfig = &cpn.BashConfig{
-		Command: "bash",
-		Args:    []string{"-c", `echo '{"placeholder":"package bash pending"}' ; exit 0`},
-		Timeout: 60 * time.Second,
-	}
+	tPackage.ToolHandler = packageStub()
 	tPackage.ErrorPlace = PlaceErrors
 	tr[TrPackage] = tPackage
 

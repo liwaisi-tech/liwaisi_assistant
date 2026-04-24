@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -53,6 +54,10 @@ type TransitionTopology struct {
 
 	Retry          *RetryPolicyTopology `json:"retry,omitempty"`
 	SubNetTopology *CPNTopology         `json:"subNetTopology,omitempty"`
+
+	// Meta surfaces visualizer-facing metadata (profile_id, action_id,
+	// subagent_label, icon_key, kind, model_hint). Nil-safe on the wire.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // LLMConfigTopology is the serializable representation of LLMConfig.
@@ -205,6 +210,11 @@ func marshalTransition(t *cpn.Transition, reg *FuncRegistry) (TransitionTopology
 		ToolName:      t.ToolName,
 		LLMTools:      t.LLMTools,
 		ObservedCPNID: t.ObservedCPNID,
+	}
+
+	if len(t.Meta) > 0 {
+		tt.Meta = make(map[string]string, len(t.Meta))
+		maps.Copy(tt.Meta, t.Meta)
 	}
 
 	// Serialize ToolMeta parameters if present.
@@ -471,6 +481,11 @@ func unmarshalTransition(tt *TransitionTopology, reg *FuncRegistry) (*cpn.Transi
 		ToolName:      tt.ToolName,
 		LLMTools:      tt.LLMTools,
 		ObservedCPNID: tt.ObservedCPNID,
+	}
+
+	if len(tt.Meta) > 0 {
+		t.Meta = make(map[string]string, len(tt.Meta))
+		maps.Copy(t.Meta, tt.Meta)
 	}
 
 	// Restore ToolMeta from serialized parameters.
