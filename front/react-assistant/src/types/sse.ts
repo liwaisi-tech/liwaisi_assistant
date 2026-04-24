@@ -56,7 +56,34 @@ export type SSEEventType =
   | 'tool_executed'
   | 'personality_loaded'
   | 'personality_modified'
-  | 'conflict_detected';
+  | 'conflict_detected'
+  | 'subagent_started'
+  | 'subagent_finished';
+
+// Sub-agent lifecycle payloads. Mirror back/go-assistant/cpn/event.go
+// SubAgentStartedPayload / SubAgentFinishedPayload.
+export interface SubAgentStartedPayload {
+  profile_id: string;
+  action_id: string;
+  subagent_label?: string;
+  icon_key?: string;
+  firing_id: string;
+  model?: string;
+}
+
+export interface SubAgentFinishedPayload {
+  profile_id: string;
+  action_id: string;
+  subagent_label?: string;
+  icon_key?: string;
+  firing_id: string;
+  model?: string;
+  duration_ms: number;
+  ok: boolean;
+  stage?: 'validate' | 'gate' | string;
+  error?: string;
+  cost_usd: number;
+}
 
 // ── Tool Executed Payload ─────────────────────────────────────────────────
 // Mirrors back/go-assistant/cpn/event.go ToolExecutedPayload (REQ-FE-001).

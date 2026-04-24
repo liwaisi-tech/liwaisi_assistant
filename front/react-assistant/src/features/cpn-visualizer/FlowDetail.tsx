@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
 import { getFlow, getSessionExecution } from '../../services/api';
 import { TopologyGraph } from './TopologyGraph';
+import { SubAgentRollupBar } from './SubAgentRollupBar';
+import { useSubAgentRollup } from '../../hooks/useSubAgentRollup';
 import type { FlowDetail as FlowDetailType, ExecutionEvent, TransitionTopology } from '../../types/flow';
+import type { CPNEventData } from '../../types/sse';
 
 interface FlowDetailProps {
   hash: string;
@@ -30,6 +33,8 @@ export function FlowDetail({ hash, onBack }: FlowDetailProps) {
       .finally(() => setLoading(false));
   }, [hash]);
 
+  const rollup = useSubAgentRollup();
+
   const loadExecution = () => {
     if (!sessionId.trim()) return;
     getSessionExecution(sessionId.trim())
@@ -37,6 +42,28 @@ export function FlowDetail({ hash, onBack }: FlowDetailProps) {
         setEvents(exec.events);
         const fired = new Set(exec.events.map((e) => e.transition_id).filter(Boolean));
         setFiredTransitions(fired);
+        // Replay sub-agent events into the rollup so the per-profile
+        // pills reflect the loaded execution. Maps the ExecutionEvent
+        // shape to CPNEventData (lower → upper case key conversion is
+        // unnecessary; the reducer reads from .Payload only).
+        rollup.reset();
+        for (const ev of exec.events) {
+          if (ev.type !== 'subagent_started' && ev.type !== 'subagent_finished') continue;
+          const adapted: CPNEventData = {
+            ID: ev.id,
+            Type: ev.type,
+            SessionID: '',
+            CPNID: ev.cpn_id,
+            CPNDepth: ev.cpn_depth,
+            CPNRole: ev.cpn_role,
+            TransitionID: ev.transition_id,
+            TransitionKind: ev.transition_kind,
+            Payload: ev.payload,
+            Timestamp: ev.timestamp,
+          };
+          if (ev.type === 'subagent_started') rollup.handleStarted(adapted);
+          else rollup.handleFinished(adapted);
+        }
       })
       .catch(() => setEvents([]));
   };
@@ -149,7 +176,7 @@ export function FlowDetail({ hash, onBack }: FlowDetailProps) {
               {t('flowDetail.firedAndEvents', { fired: firedTransitions.size, events: events.length })}
             </span>
             <button
-              onClick={() => { setFiredTransitions(undefined); setEvents([]); }}
+              onClick={() => { setFiredTransitions(undefined); setEvents([]); rollup.reset(); }}
               className="text-[9px] px-1.5 py-0.5 rounded"
               style={{ color: 'var(--text-muted)', border: '1px solid var(--border-dim)' }}
             >
@@ -157,6 +184,17 @@ export function FlowDetail({ hash, onBack }: FlowDetailProps) {
             </button>
           </>
         )}
+      </div>
+
+      {/* Sub-agent rollup pills \u2014 empty until at least one sub-agent firing
+          is observed. Renders inline below the load row. */}
+      <div className="px-3 pb-2">
+        <SubAgentRollupBar
+          byProfile={rollup.byProfile}
+          totalCostUSD={rollup.totalCostUSD}
+          totalFirings={rollup.totalFirings}
+          failedFirings={rollup.failedFirings}
+        />
       </div>
 
       {/* Main area: graph + optional side panel */}

@@ -15,6 +15,8 @@ interface UseSSEOptions {
   onSubNetCompleted?: (data: CPNEventData) => void;
   onSubNetFailed?: (data: CPNEventData) => void;
   onToolExecuted?: (data: CPNEventData) => void;
+  onSubAgentStarted?: (data: CPNEventData) => void;
+  onSubAgentFinished?: (data: CPNEventData) => void;
   /**
    * Fired when the backend asks the user to approve a freshly synthesized
    * tool before its first run. Payload shape:
@@ -88,6 +90,8 @@ export function useSSE({
   onSubNetCompleted,
   onSubNetFailed,
   onToolExecuted,
+  onSubAgentStarted,
+  onSubAgentFinished,
   onToolApprovalRequested,
   onError,
   onSessionNotFound,
@@ -104,11 +108,11 @@ export function useSSE({
   // each render — `connect` only depends on stable values below.
   const callbacksRef = useRef({
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onToolApprovalRequested, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onSubAgentStarted, onSubAgentFinished, onToolApprovalRequested, onError, onSessionNotFound,
   });
   callbacksRef.current = {
     onStreamChunk, onSessionCompleted, onSessionFailed, onHITLRequested, onTransitionFired,
-    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onToolApprovalRequested, onError, onSessionNotFound,
+    onTransitionStarted, onTransitionCompleted, onSubNetStarted, onSubNetCompleted, onSubNetFailed, onToolExecuted, onSubAgentStarted, onSubAgentFinished, onToolApprovalRequested, onError, onSessionNotFound,
   };
 
   /**
@@ -248,6 +252,20 @@ export function useSSE({
       try {
         const data: CPNEventData = JSON.parse(evt.data);
         callbacksRef.current.onToolExecuted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('subagent_started', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onSubAgentStarted?.(data);
+      } catch { /* malformed SSE data — skip event */ }
+    });
+
+    es.addEventListener('subagent_finished', (evt) => {
+      try {
+        const data: CPNEventData = JSON.parse(evt.data);
+        callbacksRef.current.onSubAgentFinished?.(data);
       } catch { /* malformed SSE data — skip event */ }
     });
 
