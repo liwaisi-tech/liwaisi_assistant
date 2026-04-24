@@ -22,6 +22,7 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/synthesis/jit"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/toolbuilder"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/billing"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/infra/googleauth"
@@ -287,6 +288,7 @@ func main() {
 	// capability. Falls back to AllowAllHostGate when the policy file is
 	// missing or malformed — with a loud warning so operators notice.
 	var hostPolicyHolder *gate.Holder
+	var policyHostGate *gate.PolicyHostGate
 	var firstRunRepo persist.FirstRunRepository
 	var gateDecisionsRepo persist.GateDecisionRepository
 	var hostGateImpl cpn.HostGate = host.NewAllowAllHostGate()
@@ -313,6 +315,7 @@ func main() {
 			logger,
 		)
 		hostGateImpl = policyGate
+		policyHostGate = policyGate // captured for later sub-agent scanner wiring
 		logger.Info("host policy gate enabled", "path", policyPath)
 	}
 
@@ -430,6 +433,47 @@ func main() {
 	// factory map that backs POST /api/v1/flows/{hash}/run.
 	flowBuilders := builtinFlowBuilders()
 	serviceOpts = append(serviceOpts, app.WithFlowBuilders(flowBuilders))
+
+	// ── Sub-agent output hook (validator + artifact gate) ───────────────
+	// Validates every (profile × action) sub-agent's LLM output against
+	// its declared JSON schema and gates any artifact whose action
+	// declares EmitsCode/EmitsTests. A nil hook would fall open; a seed
+	// failure here is a programmer error, not a recoverable runtime fault.
+	subAgentHook, err := toolbuilder.NewOutputHook()
+	if err != nil {
+		logger.Error("subagent output hook seed failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	// YAML-externalized artifact gate rules: production deployments
+	// override the in-code defaults via SUBAGENT_RULES_PATH. A missing
+	// file is non-fatal — we keep the embedded DefaultArtifactGate.
+	subAgentRulesPath := envOr("SUBAGENT_RULES_PATH", "infra/host/policies/subagent-rules.yaml")
+	if f, openErr := os.Open(subAgentRulesPath); openErr == nil {
+		gate, parseErr := toolbuilder.LoadArtifactGate(f)
+		_ = f.Close()
+		if parseErr != nil {
+			logger.Error("subagent artifact-gate parse failed", slog.String("path", subAgentRulesPath), slog.Any("error", parseErr))
+			os.Exit(1)
+		}
+		subAgentHook.SetArtifactGate(gate)
+		logger.Info("subagent artifact-gate loaded", slog.String("path", subAgentRulesPath), slog.Int("rules", len(gate.Rules)))
+	} else if !os.IsNotExist(openErr) {
+		logger.Error("subagent artifact-gate open failed", slog.String("path", subAgentRulesPath), slog.Any("error", openErr))
+		os.Exit(1)
+	} else {
+		logger.Info("subagent artifact-gate using embedded defaults (rules file absent)", slog.String("path", subAgentRulesPath))
+	}
+	serviceOpts = append(serviceOpts, app.WithSubAgentHook(subAgentHook))
+
+	// Mirror the artifact gate into PolicyHostGate so sub-agent denials
+	// land in the same audit stream as command-side denials. The cpn-side
+	// hook still runs the scanner inline at firing time (that is the
+	// authoritative gate); the host-gate-side reference is for parallel
+	// audit + future shell-tool integrations that emit code.
+	if policyHostGate != nil {
+		policyHostGate.ArtifactScanner = subAgentHook
+		logger.Info("policy host gate: subagent artifact scanner attached")
+	}
 
 	// ── Application layer ───────────────────────────────────────────────
 	appService := app.NewSessionService(holder, costProvider, logger, topologyFactory, serviceOpts...)

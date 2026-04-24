@@ -200,6 +200,37 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		// If EstimateCost errors, graceful degradation — proceed with the call.
 	}
 
+	// Step 2.5: Sub-agent lifecycle — emit started event before the LLM
+	// call so the visualizer can show the sub-agent activating in real
+	// time. The firingID is the dedupe key consumers MUST honour.
+	var (
+		subAgentStart time.Time
+		subAgentFire  string
+		isSubAgent    = t.Meta != nil && t.Meta["kind"] == "subagent"
+	)
+	if isSubAgent {
+		subAgentStart = time.Now()
+		subAgentFire = fmt.Sprintf("%s-%s-%d", c.ID, t.ID, subAgentStart.UnixNano())
+		c.emit(&Event{
+			Type:           EventSubAgentStarted,
+			SessionID:      c.SessionID,
+			CPNID:          c.ID,
+			CPNDepth:       c.Depth,
+			CPNRole:        c.Role,
+			TransitionID:   t.ID,
+			TransitionKind: NodeKindLLM,
+			Timestamp:      subAgentStart,
+			Payload: SubAgentStartedPayload{
+				ProfileID:     t.Meta["profile_id"],
+				ActionID:      t.Meta["action_id"],
+				SubAgentLabel: t.Meta["subagent_label"],
+				IconKey:       t.Meta["icon_key"],
+				FiringID:      subAgentFire,
+				Model:         t.LLMConfig.Model,
+			},
+		})
+	}
+
 	// Step 3: LLM call.
 	var resp LLMResponse
 	var err error
@@ -380,6 +411,30 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		c.mu.Unlock()
 	}
 
+	// Step 4.5: Sub-agent output hook — validate JSON contract and gate
+	// any executable artifact BEFORE deposit. Routing on failure goes to
+	// ErrorPlace if configured; otherwise the firing fails noisily so
+	// downstream consumers cannot silently ingest a malformed token.
+	// Skipped when SubAgentHook is nil or the transition is not a
+	// sub-agent (the hook implementation no-ops on non-subagents).
+	if c.SubAgentHook != nil && isSubAgent {
+		raw := []byte(content)
+		if vErr := c.SubAgentHook.Validate(t, raw); vErr != nil {
+			emitSubAgentFinished(c, t, subAgentFire, subAgentStart, totalCostUSD, false, "validate", vErr)
+			if t.ErrorPlace != "" {
+				return nil, totalCostUSD, depositSubAgentError(c, t, vErr, "validate")
+			}
+			return nil, totalCostUSD, fmt.Errorf("transition %s: subagent validate: %w", t.ID, vErr)
+		}
+		if gErr := c.SubAgentHook.Gate(t, raw); gErr != nil {
+			emitSubAgentFinished(c, t, subAgentFire, subAgentStart, totalCostUSD, false, "gate", gErr)
+			if t.ErrorPlace != "" {
+				return nil, totalCostUSD, depositSubAgentError(c, t, gErr, "gate")
+			}
+			return nil, totalCostUSD, fmt.Errorf("transition %s: subagent gate: %w", t.ID, gErr)
+		}
+	}
+
 	// Step 5: Deposit output token.
 	// Output color is determined by REQ-012. Output places MUST have
 	// matching Color (ColorArtifact or ColorJSON for RequireJSON).
@@ -409,7 +464,79 @@ func fireLLM(ctx context.Context, t *Transition, c *CPN, consumed []Token) ([]To
 		}
 	}
 
+	if isSubAgent {
+		emitSubAgentFinished(c, t, subAgentFire, subAgentStart, totalCostUSD, true, "", nil)
+	}
+
 	return outputSnaps, totalCostUSD, nil
+}
+
+// emitSubAgentFinished writes a single coalesced subagent_finished
+// event per firing. Consumers dedupe on FiringID. Stage and Error are
+// populated only when OK is false.
+func emitSubAgentFinished(c *CPN, t *Transition, firingID string, start time.Time, costUSD float64, ok bool, stage string, cause error) {
+	if t.Meta == nil {
+		return
+	}
+	now := time.Now()
+	dur := int64(0)
+	if !start.IsZero() {
+		dur = now.Sub(start).Milliseconds()
+	}
+	errStr := ""
+	if cause != nil {
+		errStr = cause.Error()
+	}
+	c.emit(&Event{
+		Type:           EventSubAgentFinished,
+		SessionID:      c.SessionID,
+		CPNID:          c.ID,
+		CPNDepth:       c.Depth,
+		CPNRole:        c.Role,
+		TransitionID:   t.ID,
+		TransitionKind: NodeKindLLM,
+		Timestamp:      now,
+		Payload: SubAgentFinishedPayload{
+			ProfileID:     t.Meta["profile_id"],
+			ActionID:      t.Meta["action_id"],
+			SubAgentLabel: t.Meta["subagent_label"],
+			IconKey:       t.Meta["icon_key"],
+			FiringID:      firingID,
+			Model:         t.LLMConfig.Model,
+			DurationMs:    dur,
+			OK:            ok,
+			Stage:         stage,
+			Error:         errStr,
+			CostUSD:       costUSD,
+		},
+	})
+}
+
+// depositSubAgentError routes a sub-agent validation/gate failure to
+// the transition's ErrorPlace as a structured JSON token. Returning
+// nil from the caller (instead of an error) lets the downstream
+// aggregate-refine path consume the error payload and reroute.
+func depositSubAgentError(c *CPN, t *Transition, cause error, stage string) error {
+	p, ok := c.Places[t.ErrorPlace]
+	if !ok {
+		return fmt.Errorf("transition %s: subagent %s failed and ErrorPlace %q missing: %w", t.ID, stage, t.ErrorPlace, cause)
+	}
+	payload := fmt.Sprintf(`{"transition_id":%q,"profile_id":%q,"action_id":%q,"stage":%q,"error":%q}`,
+		t.ID, t.Meta["profile_id"], t.Meta["action_id"], stage, cause.Error())
+	tok := Token{
+		Color:       ColorError,
+		Space:       p.Space,
+		Payload:     payload,
+		OriginID:    c.ID,
+		OriginDepth: c.Depth,
+		OriginKind:  NodeKindLLM,
+		SessionID:   c.SessionID,
+		Timestamp:   time.Now(),
+	}
+	if err := p.Deposit(&tok); err != nil {
+		return fmt.Errorf("transition %s: subagent %s failed AND error-deposit failed: %w (cause: %v)", t.ID, stage, err, cause)
+	}
+	return nil
 }
 
 // handleToolCalls executes the agentic tool-call loop.

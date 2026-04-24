@@ -1,0 +1,32 @@
+# Sub-agent artifact gate rules.
+#
+# Authoritative spec: spec/spec-architecture-cpn-subagent-decomposition.md
+# Loaded by: cpn/toolbuilder.LoadArtifactGate(SUBAGENT_RULES_PATH).
+# Resolved on boot by cmd/server/main.go; falls back to
+# cpn/toolbuilder.DefaultArtifactGate() when the file is absent.
+#
+# This is the deterministic pre-runner gate. Actions whose Capabilities
+# declare EmitsCode/EmitsTests MUST have an entry here; deny-by-default
+# otherwise (an EmitsCode action with no matching rule is rejected at
+# gate time).
+#
+# Pattern writers: forbidden_patterns are Go `regexp.Regexp` strings.
+# Rules apply to the LLM output payload as a whole; LLMs commonly wrap
+# code inside JSON strings, so patterns SHOULD be tolerant of escapes.
+
+version: 1
+
+rules:
+  # review-code emits suggested_patches as unified diffs. The gate
+  # rejects diffs that introduce overtly dangerous markers (env reads,
+  # exec, network) without depending on a full Go parser.
+  review-code:
+    max_artifact_bytes: 131072  # 128 KiB
+    forbidden_patterns:
+      - "(?i)os\\.Setenv\\("
+      - "(?i)os/exec"
+      - "(?i)syscall\\.Exec"
+      - "(?i)net/http.*Get\\("
+    # Empty allowed_imports means "no import-allowlist enforcement";
+    # the artifact gate falls through to forbidden_patterns + size cap.
+    allowed_imports: []

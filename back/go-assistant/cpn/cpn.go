@@ -200,7 +200,30 @@ type CPN struct {
 	// identically to legacy executions.
 	RunProvenance RunProvenance
 
+	// SubAgentHook, when non-nil, is invoked by fireLLM after the LLM
+	// emits a content payload but BEFORE the token is deposited into
+	// the output place — only for transitions whose Meta declares
+	// kind=subagent. The hook validates the JSON shape and gates any
+	// executable artifact. A non-nil error from the hook routes the
+	// firing to ErrorPlace with a structured failure token. Nil is
+	// legal: legacy CPNs without sub-agents skip the hook entirely.
+	SubAgentHook SubAgentOutputHook
+
 	mu sync.RWMutex
+}
+
+// SubAgentOutputHook is the cpn-side interface implemented in
+// cpn/toolbuilder. Defined here to break the import cycle (the
+// toolbuilder package imports cpn for the Transition type, so the
+// interface MUST live in cpn).
+//
+// Validate runs JSON-schema validation against the action's contract.
+// Gate runs the deterministic artifact gate when the action's
+// capabilities declare EmitsCode/EmitsTests. Both return nil for
+// transitions that aren't sub-agents (Meta.kind != "subagent").
+type SubAgentOutputHook interface {
+	Validate(t *Transition, raw []byte) error
+	Gate(t *Transition, raw []byte) error
 }
 
 // RunProvenance is the architect-lane metadata stamped on an ExecutionRecord

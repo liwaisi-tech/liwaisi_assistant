@@ -163,6 +163,18 @@ type SessionService struct {
 	// tool HITL prompts (HTTP+SSE in production). Required alongside
 	// approvalStore for the SC-13 gate.
 	toolApprovalPrompter ToolApprovalPrompterPort
+
+	// subAgentHook validates and gates the output of every sub-agent
+	// LLM transition (Meta.kind == "subagent") before the token is
+	// deposited. Implemented by cpn/toolbuilder.OutputHook. Nil falls
+	// open: legacy CPNs without sub-agents see no behavioral change.
+	subAgentHook cpn.SubAgentOutputHook
+}
+
+// WithSubAgentHook injects the sub-agent output hook (validator + artifact
+// gate). Wired by cmd/server/main.go on boot.
+func WithSubAgentHook(hook cpn.SubAgentOutputHook) SessionServiceOption {
+	return func(s *SessionService) { s.subAgentHook = hook }
 }
 
 // sessionState tracks the CPN state safely from outside the cpn package.
@@ -344,6 +356,7 @@ func (s *SessionService) applyRootDependencies(ctx context.Context, root *cpn.CP
 	root.FlowRepository = s.authoredFlows
 	root.TopologyRouter = s.topologyRouter
 	root.MutationLog = s.mutationLog
+	root.SubAgentHook = s.subAgentHook
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
 

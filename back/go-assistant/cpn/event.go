@@ -82,7 +82,48 @@ const (
 
 	// EventTopologyMutationRejected is emitted when a topology mutation is rejected (GAP-7).
 	EventTopologyMutationRejected EventType = "topology_mutation_rejected"
+
+	// EventSubAgentStarted is emitted by fireLLM just before invoking the
+	// model for a transition whose Meta declares kind=subagent. Payload
+	// is SubAgentStartedPayload. Idempotency: each firing carries a
+	// stable FiringID so consumers can dedupe.
+	EventSubAgentStarted EventType = "subagent_started"
+
+	// EventSubAgentFinished is emitted after the sub-agent's output has
+	// been validated, gated, and deposited (or rejected). Payload is
+	// SubAgentFinishedPayload. The OK field is false when validate or
+	// gate routed the firing to ErrorPlace.
+	EventSubAgentFinished EventType = "subagent_finished"
 )
+
+// SubAgentStartedPayload accompanies EventSubAgentStarted.
+type SubAgentStartedPayload struct {
+	ProfileID     string `json:"profile_id"`
+	ActionID      string `json:"action_id"`
+	SubAgentLabel string `json:"subagent_label,omitempty"`
+	IconKey       string `json:"icon_key,omitempty"`
+	FiringID      string `json:"firing_id"`
+	Model         string `json:"model,omitempty"`
+}
+
+// SubAgentFinishedPayload accompanies EventSubAgentFinished.
+//
+// The payload coalesces start/usage/cost into a single per-firing
+// event so SSE volume stays bounded — one event per firing, dedupe
+// by FiringID.
+type SubAgentFinishedPayload struct {
+	ProfileID     string  `json:"profile_id"`
+	ActionID      string  `json:"action_id"`
+	SubAgentLabel string  `json:"subagent_label,omitempty"`
+	IconKey       string  `json:"icon_key,omitempty"`
+	FiringID      string  `json:"firing_id"`
+	Model         string  `json:"model,omitempty"`
+	DurationMs    int64   `json:"duration_ms"`
+	OK            bool    `json:"ok"`
+	Stage         string  `json:"stage,omitempty"` // "validate" or "gate" when !OK
+	Error         string  `json:"error,omitempty"`
+	CostUSD       float64 `json:"cost_usd"`
+}
 
 // TransitionStartedPayload captures input tokens consumed before firing.
 type TransitionStartedPayload struct {

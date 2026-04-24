@@ -60,6 +60,52 @@ type PolicyHostGate struct {
 	// auditWorkerCount and drops (with a metric) on queue full / shutdown.
 	auditPoolOnce sync.Once
 	auditPool     *auditWorkerPool
+
+	// ArtifactScanner, when non-nil, is consulted by CheckArtifact to
+	// gate sub-agent LLM outputs that declare EmitsCode/EmitsTests.
+	// Implemented by cpn/toolbuilder.OutputHook so PolicyHostGate stays
+	// free of sub-agent imports while still owning the audit boundary.
+	ArtifactScanner ArtifactScanner
+}
+
+// ArtifactScanner gates a sub-agent LLM artifact (raw bytes) against
+// per-action rules. Returns nil when the artifact is safe; otherwise
+// an error describing the first failed rule.
+//
+// Implemented in cpn/toolbuilder. The interface lives here so the host
+// gate can delegate without importing the toolbuilder package.
+type ArtifactScanner interface {
+	ScanArtifact(actionID string, raw []byte) error
+}
+
+// CheckArtifact gates a sub-agent artifact and audits the decision.
+// It is the single, observable choke point for sub-agent artifact
+// safety, parallel to Check() for shell ops.
+//
+// When ArtifactScanner is nil this is a no-op — the host gate is not
+// responsible for sub-agent artifacts in deployments that wire the
+// scanner only into the cpn-side OutputHook.
+func (g *PolicyHostGate) CheckArtifact(ctx context.Context, actionID string, raw []byte) error {
+	if g == nil || g.ArtifactScanner == nil {
+		return nil
+	}
+	if err := g.ArtifactScanner.ScanArtifact(actionID, raw); err != nil {
+		// Mirror PolicyHostGate's command-side audit pattern: a denial is
+		// always logged at WARN with the session id (when resolvable) so
+		// operators see sub-agent gate denials in the same stream as
+		// command-side denials.
+		sid := g.sessionID(ctx)
+		if g.Logger != nil {
+			g.Logger.WarnContext(ctx, "subagent artifact gate denied",
+				slog.String("session_id", sid),
+				slog.String("action_id", actionID),
+				slog.Int("payload_bytes", len(raw)),
+				slog.String("error", err.Error()),
+			)
+		}
+		return err
+	}
+	return nil
 }
 
 // auditWorkerCount caps concurrent audit DB writers. 16 matches the

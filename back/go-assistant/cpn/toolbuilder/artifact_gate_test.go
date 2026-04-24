@@ -5,6 +5,57 @@ import (
 	"testing"
 )
 
+func TestLoadArtifactGate_Roundtrip(t *testing.T) {
+	yaml := `
+version: 1
+rules:
+  review-code:
+    max_artifact_bytes: 65536
+    forbidden_patterns:
+      - "(?i)os\\.Setenv\\("
+    allowed_imports:
+      - fmt
+`
+	g, err := LoadArtifactGate(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("LoadArtifactGate: %v", err)
+	}
+	r, ok := g.Rules[ActionReviewCode]
+	if !ok {
+		t.Fatal("review-code rule missing")
+	}
+	if r.MaxArtifactBytes != 65536 {
+		t.Errorf("MaxArtifactBytes = %d, want 65536", r.MaxArtifactBytes)
+	}
+	if len(r.ForbiddenPatterns) != 1 {
+		t.Errorf("forbidden patterns = %d, want 1", len(r.ForbiddenPatterns))
+	}
+	if len(r.AllowedImports) != 1 || r.AllowedImports[0] != "fmt" {
+		t.Errorf("allowed imports = %v", r.AllowedImports)
+	}
+}
+
+func TestLoadArtifactGate_BadVersion(t *testing.T) {
+	yaml := `version: 99
+rules: {}
+`
+	if _, err := LoadArtifactGate(strings.NewReader(yaml)); err == nil {
+		t.Error("expected version mismatch to fail")
+	}
+}
+
+func TestLoadArtifactGate_BadPattern(t *testing.T) {
+	yaml := `version: 1
+rules:
+  review-code:
+    forbidden_patterns:
+      - "[invalid"
+`
+	if _, err := LoadArtifactGate(strings.NewReader(yaml)); err == nil {
+		t.Error("expected invalid regex to fail at load time")
+	}
+}
+
 func TestArtifactGate_AdvisoryActionsSkipGate(t *testing.T) {
 	g := DefaultArtifactGate()
 	action := ActionSpec{ID: ActionSecurityEval, Capabilities: ActionCapabilities{AdvisoryOnly: true}}

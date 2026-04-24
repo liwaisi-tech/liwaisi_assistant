@@ -3,8 +3,11 @@ package toolbuilder
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ArtifactGate enforces artifact-safety rules on outputs from actions
@@ -36,13 +39,14 @@ type ArtifactRules struct {
 
 // DefaultArtifactGate returns the built-in artifact gate. Rules are
 // tight: stdlib-only imports, no network, no exec, no env reads.
+//
+// This is the in-code fallback used when no YAML rules file is
+// configured. Production deployments load rules via LoadArtifactGate
+// from infra/host/policies/subagent-rules.yaml.
 func DefaultArtifactGate() *ArtifactGate {
 	return &ArtifactGate{
 		Rules: map[string]ArtifactRules{
 			ActionReviewCode: {
-				// review-code emits suggested_patches as diffs. Patches
-				// may reference any import; the gate here checks the
-				// patches for overtly dangerous markers only.
 				AllowedImports: nil,
 				ForbiddenPatterns: []string{
 					`(?i)os\.Setenv\(`,
@@ -54,6 +58,55 @@ func DefaultArtifactGate() *ArtifactGate {
 			},
 		},
 	}
+}
+
+// artifactGateYAML mirrors the on-disk shape of subagent-rules.yaml.
+// Kept private so the public API is just LoadArtifactGate.
+type artifactGateYAML struct {
+	Version int                            `yaml:"version"`
+	Rules   map[string]artifactGateRuleRow `yaml:"rules"`
+}
+
+type artifactGateRuleRow struct {
+	AllowedImports    []string `yaml:"allowed_imports"`
+	ForbiddenPatterns []string `yaml:"forbidden_patterns"`
+	MaxArtifactBytes  int      `yaml:"max_artifact_bytes"`
+}
+
+// LoadArtifactGate parses an artifact-gate rules file from r. Failures
+// at this layer are programmer errors (malformed YAML or schema): the
+// caller is expected to surface them at boot rather than silently
+// fall back to defaults. To explicitly opt into defaults on missing
+// file, the caller checks os.IsNotExist on its own and calls
+// DefaultArtifactGate.
+func LoadArtifactGate(r io.Reader) (*ArtifactGate, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("artifact-gate: read: %w", err)
+	}
+	var raw artifactGateYAML
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("artifact-gate: parse yaml: %w", err)
+	}
+	if raw.Version != 1 {
+		return nil, fmt.Errorf("artifact-gate: unsupported version %d (want 1)", raw.Version)
+	}
+	out := &ArtifactGate{Rules: make(map[string]ArtifactRules, len(raw.Rules))}
+	for actionID, row := range raw.Rules {
+		// Compile patterns at load time so a malformed regex fails the
+		// boot, not the first firing.
+		for _, pat := range row.ForbiddenPatterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return nil, fmt.Errorf("artifact-gate: action %q has invalid pattern %q: %w", actionID, pat, err)
+			}
+		}
+		out.Rules[actionID] = ArtifactRules{
+			AllowedImports:    row.AllowedImports,
+			ForbiddenPatterns: row.ForbiddenPatterns,
+			MaxArtifactBytes:  row.MaxArtifactBytes,
+		}
+	}
+	return out, nil
 }
 
 // Gate runs the artifact gate against a raw LLM output for an action
