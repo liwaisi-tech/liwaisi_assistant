@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -9,8 +10,41 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/architect"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/app"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/internal/auth"
 )
+
+// flowFactoryError is a typed error carrying the HTTP status that
+// HandleCreateSession / HandleRunFlow should surface to the client when
+// resolving a flow_hash to a TopologyFactory fails.
+type flowFactoryError struct {
+	status int
+	msg    string
+}
+
+func (e *flowFactoryError) Error() string { return e.msg }
+
+// resolveFlowFactory looks up a flow by hash, validates a builder exists for
+// its role, and returns the corresponding TopologyFactory. It centralises the
+// error mapping so both the create-session and run-flow paths return
+// consistent 404/400/503 codes.
+func (h *Handlers) resolveFlowFactory(ctx context.Context, hash string) (app.TopologyFactory, *flowFactoryError) {
+	if h.FlowRepo == nil {
+		return nil, &flowFactoryError{http.StatusServiceUnavailable, "persistence not enabled"}
+	}
+	if len(h.FlowBuilders) == 0 {
+		return nil, &flowFactoryError{http.StatusServiceUnavailable, "flow builders not enabled"}
+	}
+	flow, err := h.FlowRepo.GetByHash(ctx, hash)
+	if err != nil {
+		return nil, &flowFactoryError{http.StatusNotFound, "flow not found"}
+	}
+	factory, ok := h.FlowBuilders[flow.Role]
+	if !ok {
+		return nil, &flowFactoryError{http.StatusBadRequest, "no builder registered for role " + flow.Role}
+	}
+	return factory, nil
+}
 
 // HandleListFlows returns all saved flows with stats.
 // GET /api/v1/flows
@@ -167,15 +201,6 @@ func candidateToResponse(c *cpn.FlowLibraryEntry) FlowCandidateResponse {
 // Response: {"session_id": "...", "role": "tool-atelier", "started_at": "..."}.
 // The caller subscribes to SSE on the returned session_id for live events.
 func (h *Handlers) HandleRunFlow(w http.ResponseWriter, r *http.Request) {
-	if h.FlowRepo == nil {
-		writeError(w, http.StatusServiceUnavailable, "persistence not enabled")
-		return
-	}
-	if len(h.FlowBuilders) == 0 {
-		writeError(w, http.StatusServiceUnavailable, "flow builders not enabled")
-		return
-	}
-
 	hash := r.PathValue("hash")
 	if hash == "" {
 		writeError(w, http.StatusBadRequest, "flow hash is required")
@@ -193,15 +218,14 @@ func (h *Handlers) HandleRunFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	factory, ferr := h.resolveFlowFactory(r.Context(), hash)
+	if ferr != nil {
+		writeError(w, ferr.status, ferr.msg)
+		return
+	}
 	flow, err := h.FlowRepo.GetByHash(r.Context(), hash)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "flow not found")
-		return
-	}
-
-	factory, ok := h.FlowBuilders[flow.Role]
-	if !ok {
-		writeError(w, http.StatusBadRequest, "no builder registered for role "+flow.Role)
 		return
 	}
 

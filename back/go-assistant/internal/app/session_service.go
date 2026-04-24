@@ -63,6 +63,10 @@ type SessionService struct {
 	logger          *slog.Logger
 	onEvent         func(sessionID string, evt cpn.Event)
 	topologyFactory TopologyFactory
+	// flowBuilders is the optional role→factory registry that backs the
+	// SendMessage hashtag dispatcher. Keys match the `role` field of the
+	// CPN each factory produces.
+	flowBuilders map[string]TopologyFactory
 	persist         *PersistDeps
 	tokenLedger     TokenLedgerReader
 	toolRegistry    SessionToolRegistry
@@ -293,6 +297,15 @@ func WithPersonalityCache(c awakens.PersonalityCache) SessionServiceOption {
 	return func(s *SessionService) { s.personalityCache = c }
 }
 
+// WithFlowBuilders wires the role→topology-factory map used by SendMessage's
+// hashtag dispatcher: when a user message starts with or contains a
+// `#<role>` / `/<role>` marker, the session's Root CPN is rebuilt from the
+// matching factory before the message fires. Nil disables dispatch and
+// preserves legacy single-topology behaviour.
+func WithFlowBuilders(b map[string]TopologyFactory) SessionServiceOption {
+	return func(s *SessionService) { s.flowBuilders = b }
+}
+
 // NewSessionService creates a SessionService with the given dependencies.
 func NewSessionService(llm cpn.LLMClient, cost cpn.CostProvider, logger *slog.Logger, factory TopologyFactory, opts ...SessionServiceOption) *SessionService {
 	svc := &SessionService{
@@ -310,28 +323,20 @@ func NewSessionService(llm cpn.LLMClient, cost cpn.CostProvider, logger *slog.Lo
 	return svc
 }
 
-// CreateSession creates a new session bound to the default CPN topology.
-func (s *SessionService) CreateSession(ctx context.Context, userID string, channel cpn.ChannelType) (*SessionInfo, error) {
-	return s.CreateSessionWithFactory(ctx, userID, channel, s.topologyFactory)
-}
-
-// CreateSessionWithFactory creates a session bound to a caller-supplied
-// topology factory. Used by POST /api/v1/flows/{hash}/run to start a session
-// on a library topology (e.g., tool-atelier) rather than the default assistant.
-func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID string, channel cpn.ChannelType, factory TopologyFactory) (*SessionInfo, error) {
-	if userID == "" {
-		return nil, fmt.Errorf("%w: userID is required", ErrInvalidInput)
+// applyRootDependencies wires framework-level collaborators (LLM client,
+// cost provider, host runtime, safe registry, authored-flow repo, event
+// sink, metrics recorder, regional variant, user-model preferences, cached
+// host snapshot) into a freshly-built root CPN.
+//
+// Extracted so both CreateSessionWithFactory and the SendMessage hashtag
+// dispatcher can produce a fully-wired Root. Without this, a retargeted
+// CPN gets a nil LLMClient / HostRuntime and `t-triage` (or any LLM/Bash
+// transition) can't fire, manifesting as "no enabled transitions and no
+// terminal marking".
+func (s *SessionService) applyRootDependencies(ctx context.Context, root *cpn.CPN, userID, sessionID string) {
+	if root == nil {
+		return
 	}
-	if factory == nil {
-		return nil, fmt.Errorf("%w: topology factory is required", ErrInvalidInput)
-	}
-
-	id, err := generateSessionID()
-	if err != nil {
-		return nil, fmt.Errorf("generate session ID: %w", err)
-	}
-
-	root := factory(id)
 	root.LLMClient = s.llm
 	root.Cost = s.cost
 	root.HostRuntime = s.hostRuntime
@@ -342,33 +347,33 @@ func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID st
 	root.RegionalVariant = s.resolveRegionalVariant(ctx, userID)
 	s.applyUserModelPreferences(ctx, root, userID)
 
-	// brae-awakens. When configured, the awakening topology runs
-	// asynchronously (see runAwakeningAsync below) and — on success —
-	// emits the first assistant message (cpn_role="awakening"), persists
-	// a snapshot (source="awakening"), and seeds p-host-capabilities.
-	// First-boot awakening has no fallback: failures are logged and the
-	// session remains without a fresh snapshot.
-	// Fast path: seed from an existing DB snapshot if one is fresh. We
-	// never block session creation on discovery — the full awakening runs
-	// asynchronously below after the session row exists.
+	// Fast path: seed from an existing DB snapshot if one is fresh.
 	s.seedHostCapabilitiesFromCache(ctx, root)
 
-	_ = channel // channel is consumed by the topology; every current ChannelType is interactive
-	runAwakeningAsync := s.awakensFactory != nil
 	root.EventSink = func(e *cpn.Event) {
 		s.mu.RLock()
 		cb := s.onEvent
 		s.mu.RUnlock()
 		if cb != nil {
-			cb(id, *e)
+			cb(sessionID, *e)
 		}
-		s.persistEvent(id, e)
+		s.persistEvent(sessionID, e)
 	}
 
 	// Enable execution metrics collection.
 	root.Metrics = cpn.NewMetricsRecorder()
+}
 
-	session := cpn.NewSession(id, userID, channel, root)
+// applySessionBindings runs the per-session wiring that depends on an
+// existing *cpn.Session: HITL channels for NodeKindHITL transitions,
+// personality injection, tool-registry materialisation + injection, and
+// tool/host HITL channel registration for LLM / Bash transitions. Called
+// after applyRootDependencies both on session create and on hashtag
+// retargeting so the replacement Root is fully usable.
+func (s *SessionService) applySessionBindings(ctx context.Context, root *cpn.CPN, session *cpn.Session, userID string) {
+	if root == nil || session == nil {
+		return
+	}
 
 	// Wire HITL channels: walk transitions, create channels, register with session.
 	for _, t := range root.Transitions {
@@ -390,29 +395,15 @@ func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID st
 
 	// Inject tool metadata (Parameters, Description, Executor) into transitions.
 	if s.toolRegistry != nil {
-		// Synthesise NodeKindTool transitions for every user-authored
-		// catalogue entry BEFORE InjectIntoCPN so user tools are first-class
-		// in the LLM surface of every new session
-		// (spec/spec-architecture-user-tool-session-surface.md).
 		materialiseUserTools(root, s.toolRegistry, s.hostRuntime, s.logger)
 		s.toolRegistry.InjectIntoCPN(root)
-		// GAP-3: CPN gets a handle to the registry so
-		// NodeKindRegisterTool can publish new tools at runtime.
 		root.ToolRegistry = s.toolRegistry
-		// JIT sub-CPN plan Phase 2: surface the toolbox catalogue to the
-		// synthesize transition's prompt. *tools.Registry implements both
-		// SessionToolRegistry and cpn.ToolboxCatalogPort; the assertion
-		// succeeds in production and is a tidy no-op for tests that pass
-		// a thinner fake.
 		if catalog, ok := any(s.toolRegistry).(cpn.ToolboxCatalogPort); ok {
 			root.ToolboxCatalog = catalog
 		}
 	}
 
 	// Wire HITL channels to LLM transitions that call RequiresHITL tools.
-	// Must run after InjectIntoCPN so ToolMeta is populated on tool transitions.
-	// Uses RegisterToolHITL (not RegisterHITL) because LLM transitions are
-	// NodeKindLLM, not NodeKindHITL, and RegisterHITL enforces the latter.
 	for _, t := range root.Transitions {
 		if t.Kind != cpn.NodeKindLLM || len(t.LLMTools) == 0 {
 			continue
@@ -439,11 +430,7 @@ func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID st
 		}
 	}
 
-	// Wire HOST·HITL channels to NodeKindBash transitions so the gate's
-	// SessionHITLRouter can publish an approval surface and block on the
-	// same hitlInject bus the LLM-level tool-HITL flow uses. We pre-wire
-	// unconditionally because the gate decides per-op whether HITL is
-	// required; a channel that is never written to is free.
+	// Wire HOST·HITL channels to NodeKindBash transitions.
 	for _, t := range root.Transitions {
 		if t.Kind != cpn.NodeKindBash {
 			continue
@@ -460,6 +447,37 @@ func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID st
 			s.logger.Error("register host-HITL channel", "transition", t.ID, "err", err)
 		}
 	}
+}
+
+// CreateSession creates a new session bound to the default CPN topology.
+func (s *SessionService) CreateSession(ctx context.Context, userID string, channel cpn.ChannelType) (*SessionInfo, error) {
+	return s.CreateSessionWithFactory(ctx, userID, channel, s.topologyFactory)
+}
+
+// CreateSessionWithFactory creates a session bound to a caller-supplied
+// topology factory. Used by POST /api/v1/flows/{hash}/run to start a session
+// on a library topology (e.g., tool-atelier) rather than the default assistant.
+func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID string, channel cpn.ChannelType, factory TopologyFactory) (*SessionInfo, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("%w: userID is required", ErrInvalidInput)
+	}
+	if factory == nil {
+		return nil, fmt.Errorf("%w: topology factory is required", ErrInvalidInput)
+	}
+
+	id, err := generateSessionID()
+	if err != nil {
+		return nil, fmt.Errorf("generate session ID: %w", err)
+	}
+
+	root := factory(id)
+	s.applyRootDependencies(ctx, root, userID, id)
+
+	_ = channel // channel is consumed by the topology; every current ChannelType is interactive
+	runAwakeningAsync := s.awakensFactory != nil
+
+	session := cpn.NewSession(id, userID, channel, root)
+	s.applySessionBindings(ctx, root, session, userID)
 
 	st := &sessionState{state: cpn.StateIdle}
 
@@ -515,6 +533,33 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 		return fmt.Errorf("%w: %s", ErrSessionBusy, sessionID)
 	}
 
+	// Hashtag dispatch: if the user targets a specific flow via
+	// `#<role>` or `/<role>` and the session is currently bound to a
+	// different topology, rebuild Root from the registered factory.
+	// Safe here because the state check above guarantees no CPN run is
+	// in flight, and Reset below will clear any residual tokens from
+	// the previous topology before the new token is deposited.
+	if targetRole, rewritten := s.dispatchRole(content); targetRole != "" {
+		if factory, ok := s.flowBuilders[targetRole]; ok && session.Root.Role != targetRole {
+			newRoot := factory(sessionID)
+			if newRoot != nil {
+				// Critical: a bare factory() product has nil LLMClient /
+				// HostRuntime / EventSink / Metrics and unregistered HITL
+				// channels — firing a single transition would fail. Wire
+				// framework-level deps and per-session bindings just like
+				// CreateSessionWithFactory does for a fresh session.
+				s.applyRootDependencies(ctx, newRoot, session.UserID, sessionID)
+				session.Root = newRoot
+				s.applySessionBindings(ctx, newRoot, session, session.UserID)
+				s.logger.Info("session retargeted via hashtag",
+					"session_id", sessionID,
+					"role", targetRole,
+				)
+			}
+		}
+		content = rewritten
+	}
+
 	msg := &cpn.Message{
 		ID:        sessionID + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
 		Role:      cpn.RoleUser,
@@ -563,24 +608,38 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID, content str
 	session.Root.History = history
 	historyLen := len(session.Root.History)
 
-	tok := &cpn.Token{
-		Color:     cpn.ColorString,
-		Payload:   content,
-		Space:     cpn.SpaceSurface,
-		SessionID: sessionID,
-		Timestamp: time.Now(),
-	}
-
 	// REQ-FIX-001: look up p-input directly; findSourcePlace is non-deterministic
 	// when SeedHostSnapshot has added p-host-capabilities to the map.
 	source := session.Root.Places["p-input"]
 	if source == nil {
+		// Per-role known entry places — topologies whose input isn't the
+		// conventional "p-input" declare their own. findSourcePlace is
+		// map-iteration-nondeterministic, so we pin the expected entry
+		// explicitly to avoid it picking p-errors or a seed place.
+		if entry := knownEntryPlace(session.Root.Role); entry != "" {
+			source = session.Root.Places[entry]
+		}
+	}
+	if source == nil {
 		source = findSourcePlace(session.Root)
 	}
 	if source != nil {
+		tok := buildInputToken(source, sessionID, content)
+		s.logger.Info("deposit user token",
+			"session_id", sessionID,
+			"cpn_role", session.Root.Role,
+			"place", source.ID,
+			"place_color", string(source.Color),
+			"place_space", string(source.Space),
+		)
 		if err := source.Deposit(tok); err != nil {
 			return fmt.Errorf("deposit token: %w", err)
 		}
+	} else {
+		s.logger.Warn("no source place found for user input",
+			"session_id", sessionID,
+			"cpn_role", session.Root.Role,
+		)
 	}
 
 	// FIX-HITL-PERSIST: Wire flush callbacks so that messages accumulated
@@ -2016,6 +2075,58 @@ func generateSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// dispatchRole scans a user message for a role marker and, when the role is
+// registered in flowBuilders, returns the role plus the message with the
+// marker stripped so the downstream CPN sees a clean intent.
+//
+// Supported markers (case-insensitive, matched against registered roles):
+//   - `/role rest...`   — leading slash prefix
+//   - `#role rest...`   — leading hashtag
+//   - `... #role ...`   — hashtag anywhere in the body
+//
+// Returns ("", content) when no marker matches.
+func (s *SessionService) dispatchRole(content string) (string, string) {
+	if len(s.flowBuilders) == 0 || content == "" {
+		return "", content
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return "", content
+	}
+	lower := strings.ToLower(trimmed)
+	for role := range s.flowBuilders {
+		if role == "" {
+			continue
+		}
+		r := strings.ToLower(role)
+		// Leading `/role` or `#role` prefix (requires whitespace or EOL after).
+		for _, prefix := range []string{"/" + r, "#" + r} {
+			if strings.HasPrefix(lower, prefix) {
+				rest := trimmed[len(prefix):]
+				if rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n' {
+					return role, strings.TrimSpace(rest)
+				}
+			}
+		}
+		// Hashtag anywhere in the body, bounded by non-alphanumeric chars.
+		marker := "#" + r
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			end := idx + len(marker)
+			okBefore := idx == 0 || !isIdentChar(lower[idx-1])
+			okAfter := end == len(lower) || !isIdentChar(lower[end])
+			if okBefore && okAfter {
+				cleaned := strings.TrimSpace(trimmed[:idx] + trimmed[end:])
+				return role, cleaned
+			}
+		}
+	}
+	return "", content
+}
+
+func isIdentChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-' || b == '_'
+}
+
 // autoTitle generates a session title from the first user message.
 // Truncates to 80 characters at a word boundary.
 func autoTitle(content string) string {
@@ -2039,6 +2150,53 @@ func autoTitle(content string) string {
 }
 
 // findSourcePlace returns the first place with no incoming transitions (source).
+// buildInputToken constructs the token deposited into the CPN's source
+// place on every user turn. It matches the place's Color and Space so
+// multi-topology sessions (e.g. hashtag-dispatched tool-atelier) don't
+// deadlock the CPN on a color/space mismatch.
+//
+// Encoding rules:
+//   - ColorString: payload is the raw trimmed user content.
+//   - ColorJSON:   payload is `{"description": <content>}` as
+//     json.RawMessage so downstream triage/classifier transitions can
+//     treat the first message as a ToolRequest envelope.
+//   - anything else: payload is the raw content (best-effort; topology
+//     authors are responsible for documenting unusual input colors).
+func buildInputToken(source *cpn.Place, sessionID, content string) *cpn.Token {
+	tok := &cpn.Token{
+		Color:     source.Color,
+		Space:     source.Space,
+		SessionID: sessionID,
+		Timestamp: time.Now(),
+	}
+	switch source.Color {
+	case cpn.ColorJSON:
+		// json.Marshal a string escapes quotes/backslashes for us.
+		encoded, err := json.Marshal(struct {
+			Description string `json:"description"`
+		}{Description: content})
+		if err == nil {
+			tok.Payload = json.RawMessage(encoded)
+		} else {
+			tok.Payload = content
+		}
+	default:
+		tok.Payload = content
+	}
+	return tok
+}
+
+// knownEntryPlace returns the deterministic user-input place for topologies
+// that don't use the default "p-input" convention. When a role isn't in
+// this map, callers fall through to findSourcePlace.
+func knownEntryPlace(role string) string {
+	switch role {
+	case "tool-atelier":
+		return "p-request"
+	}
+	return ""
+}
+
 func findSourcePlace(c *cpn.CPN) *cpn.Place {
 	outputRefs := make(map[string]bool)
 	for _, t := range c.Transitions {
@@ -2047,9 +2205,22 @@ func findSourcePlace(c *cpn.CPN) *cpn.Place {
 		}
 	}
 	for id, p := range c.Places {
-		if !outputRefs[id] {
-			return p
+		if outputRefs[id] {
+			continue
 		}
+		// Skip well-known sink/seed places that look like sources because
+		// no transition writes to them, but which are never the intended
+		// user-input entry point:
+		//   - p-host-capabilities is seeded by SeedHostSnapshot.
+		//   - Any ColorError place is a terminal error sink fed only via
+		//     the ErrorPlace routing mechanism.
+		if id == cpn.WellKnownHostCapabilitiesPlace {
+			continue
+		}
+		if p.Color == cpn.ColorError {
+			continue
+		}
+		return p
 	}
 	return nil
 }

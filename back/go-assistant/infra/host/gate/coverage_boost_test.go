@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -381,18 +382,44 @@ func TestEvaluate_ReadFileUnknownFallsToHITL(t *testing.T) {
 	}
 }
 
-func TestEvaluate_FirstRunApprovedThenSafe(t *testing.T) {
-	// For a safe-band op like "ls", exec+FirstRun should trigger first-run
-	// HITL. After Approve, subsequent call should allow.
+func TestEvaluate_FirstRunSkippedForSafeBand(t *testing.T) {
+	// Safe-band commands (e.g. `ls`) skip the first-run ledger entirely —
+	// the pattern IS the trust statement, so a fresh container should not
+	// HITL on its first `ls`. Regression guard for the brae friction on
+	// 2026-04-23 where every fresh binary stalled on first_run_unapproved.
 	p := defaultTestPolicy(t)
 	g, _, fr := newGateForTest(t, p)
 	op := cpn.GateOp{Kind: "exec", Command: "ls", Sandbox: cpn.SandboxNone}
-	// Resolve ls to a real binary; first call should require HITL via first-run.
+
+	dec := g.Evaluate(context.Background(), op)
+	if dec.Verdict != VerdictAllow {
+		t.Fatalf("safe-band verdict = %s (%s); want Allow", dec.Verdict, dec.Reason)
+	}
+	if dec.RiskBand != RiskSafe {
+		t.Fatalf("band = %s; want RiskSafe", dec.RiskBand)
+	}
+	// Ledger should NOT have recorded the binary — safe-band bypasses lookup.
+	entries, _ := fr.List(context.Background(), 10)
+	if len(entries) != 0 {
+		t.Fatalf("expected no ledger entries for safe-band skip, got %d", len(entries))
+	}
+}
+
+func TestEvaluate_FirstRunApprovedThenAllow(t *testing.T) {
+	// Non-safe-band binary still goes through first-run → HITL, then
+	// Approve flips future evaluations. Uses `curl` (caution-band in the
+	// default policy) which is present in Go CI images.
+	bin := "curl"
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("%s not in PATH", bin)
+	}
+	p := defaultTestPolicy(t)
+	g, _, fr := newGateForTest(t, p)
+	op := cpn.GateOp{Kind: "exec", Command: bin, Sandbox: cpn.SandboxNone}
 	dec := g.Evaluate(context.Background(), op)
 	if dec.Verdict != VerdictRequireHITL {
 		t.Fatalf("initial verdict = %s", dec.Verdict)
 	}
-	// Approve the recorded SHA
 	entries, _ := fr.List(context.Background(), 10)
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 recorded entry, got %d", len(entries))
@@ -401,15 +428,25 @@ func TestEvaluate_FirstRunApprovedThenSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	dec = g.Evaluate(context.Background(), op)
-	if dec.Verdict != VerdictAllow {
-		t.Fatalf("post-approval verdict = %s (%s)", dec.Verdict, dec.Reason)
+	// Post-approval the caution band still requires HITL on every call;
+	// approval here only clears the first-run ledger barrier, not the
+	// caution_patterns gate.
+	if dec.Verdict != VerdictRequireHITL {
+		t.Fatalf("post-approval verdict = %s (%s); expected caution-band HITL", dec.Verdict, dec.Reason)
+	}
+	if dec.Reason == "first_run_unapproved" {
+		t.Fatalf("reason still cites first-run after approval: %s", dec.Reason)
 	}
 }
 
 func TestEvaluate_FirstRunRevokedRequiresHITL(t *testing.T) {
+	bin := "curl"
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("%s not in PATH", bin)
+	}
 	p := defaultTestPolicy(t)
 	g, _, fr := newGateForTest(t, p)
-	op := cpn.GateOp{Kind: "exec", Command: "ls", Sandbox: cpn.SandboxNone}
+	op := cpn.GateOp{Kind: "exec", Command: bin, Sandbox: cpn.SandboxNone}
 	_ = g.Evaluate(context.Background(), op)
 	entries, _ := fr.List(context.Background(), 10)
 	_ = fr.Approve(context.Background(), entries[0].HostID, entries[0].BinarySHA256, "u")

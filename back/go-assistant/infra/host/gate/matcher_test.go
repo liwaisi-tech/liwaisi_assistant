@@ -149,12 +149,23 @@ func TestClassify_ShellWrapperUnwrap(t *testing.T) {
 		{"safe inner via bash -c", "bash -c 'ls /tmp'", RiskSafe},
 		{"caution inner via sh -c", "/bin/sh -c gcc hello.c", RiskCaution},
 		{"forbidden inner still forbidden", "/bin/sh -c rm -rf /", RiskForbidden},
-		{"compound && stays unknown", "/bin/sh -c which python3 && ls", RiskUnknown},
-		{"compound ; stays unknown", "/bin/sh -c which x; which y", RiskUnknown},
-		{"pipe stays unknown", "/bin/sh -c ls | grep foo", RiskUnknown},
+		// Compound of all-safe segments is now safe (brae needs to run
+		// `touch x && rm x` inside its container without HITL). The test
+		// policy's SafePat list only covers ls/cat/pwd/echo/uname/whoami/
+		// id/hostname/which/env, so stick to those for compound tests.
+		{"compound && all safe", "/bin/sh -c which python3 && ls", RiskSafe},
+		{"compound ; all safe", "/bin/sh -c which x; which y", RiskSafe},
+		{"pipe all safe", "/bin/sh -c ls | cat", RiskSafe},
+		// One taint propagates to the whole compound.
+		{"compound with caution taints", "/bin/sh -c ls && gcc hello.c", RiskCaution},
+		{"compound with forbidden taints", "/bin/sh -c ls && rm -rf /", RiskForbidden},
+		{"compound with unknown taints", "/bin/sh -c ls && do-weird-thing", RiskUnknown},
 		{"redirect stays unknown", "/bin/sh -c echo hi > /tmp/x", RiskUnknown},
-		{"cmd substitution stays unknown", "/bin/sh -c echo $(whoami)", RiskUnknown},
-		{"backtick stays unknown", "/bin/sh -c echo `whoami`", RiskUnknown},
+		// Substitutions with safe inners are now stripped so the outer
+		// compound classifies by its visible commands only.
+		{"safe cmd substitution", "/bin/sh -c echo $(whoami)", RiskSafe},
+		{"safe backtick", "/bin/sh -c echo `whoami`", RiskSafe},
+		{"dangerous cmd substitution short-circuits", "/bin/sh -c echo $(rm -rf /)", RiskForbidden},
 		{"wrong flag no unwrap", "/bin/sh -x ls", RiskUnknown},
 		{"non-shell binary no unwrap", "gcc -c hello.c", RiskCaution},
 		{"zsh not recognised as wrapper", "zsh -c ls", RiskUnknown},

@@ -25,19 +25,81 @@ func (p *HostPolicy) Classify(command string) (RiskBand, int) {
 		return RiskUnknown, -1
 	}
 	norm := normaliseCommand(command)
+	// Preprocess idiomatic opaque constructs BEFORE unwrap so that a
+	// stderr-suppressing `bash -c "cmd 2>/dev/null"` can still unwrap
+	// to its safe inner. Without this step the `>` inside the redirect
+	// makes unwrap refuse and the whole wrapper drops to Unknown.
+	s, preprocessBand := p.preprocessShellSubstitutions(norm)
+	if bandSeverity(preprocessBand) > bandSeverity(RiskSafe) {
+		return preprocessBand, -1
+	}
 	// Shell-wrapper unwrap: when the command is `sh -c <inner>` (or bash,
 	// any -c / -lc variant), classify the INNER script's intent — not the
 	// literal wrapper. A `which python3` wrapped in `sh -c` should be as
-	// safe as `which python3` directly. Compound scripts (pipes, chains,
-	// redirects, command substitution) refuse to unwrap and fall through
-	// to RiskUnknown so the operator still sees a HITL prompt for
-	// anything non-trivial. Wrappers like `sh -c "rm -rf /"` keep firing
-	// the forbidden short-circuit because the inner still matches
+	// safe as `which python3` directly. Wrappers like `sh -c "rm -rf /"`
+	// still fire the forbidden short-circuit because the inner matches
 	// forbidden_patterns after unwrap.
-	if inner, ok := unwrapShellWrapper(norm); ok {
-		norm = inner
+	if inner, ok := unwrapShellWrapper(s); ok {
+		s = inner
 	}
+	return p.classifyMaybeCompound(s)
+}
 
+// classifyMaybeCompound classifies s, splitting on safe compound
+// operators (&&, ||, ;, |) so `touch a && rm a && echo ok` can stay
+// safe instead of HITL-ing the whole pipeline. The band returned is the
+// MAX severity across all segments — one dangerous segment taints the
+// compound. Redirects (>, <, >>) and command substitution ($(, `) still
+// refuse to split and fall through as a single literal: their targets
+// aren't tokenised here so we cannot reason about them statically.
+func (p *HostPolicy) classifyMaybeCompound(s string) (RiskBand, int) {
+	// Whole-string forbidden short-circuit. Some forbidden_patterns span
+	// compound operators (e.g. `curl ... | sh`, `wget ... | bash`) — they
+	// describe an IDIOM, not two independent segments. Evaluating those
+	// against the full literal preserves their semantics even though
+	// splitting on `|` would rate each half more leniently.
+	if ok, idx := p.forbidden.matches(s); ok {
+		return RiskForbidden, idx
+	}
+	// Classify is the sole entry point that runs preprocessing; recursive
+	// calls from the substitution resolver also flow through Classify so
+	// by the time we land here the null-redirects and safe $(…) subs are
+	// already stripped. Any remaining opaque composition (unresolved $(…),
+	// backticks, or genuine write-redirects) forces single-literal
+	// classification.
+	if containsOpaqueComposition(s) {
+		return p.classifySingle(s)
+	}
+	segs := splitCompoundSegments(s)
+	if len(segs) <= 1 {
+		return p.classifySingle(s)
+	}
+	maxBand, maxIdx := RiskSafe, -1
+	sawAny := false
+	for _, seg := range segs {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		sawAny = true
+		// Recurse so nested `bash -c "x && y"` segments still unwrap.
+		if inner, ok := unwrapShellWrapper(seg); ok {
+			seg = inner
+		}
+		b, i := p.classifySingle(seg)
+		if bandSeverity(b) > bandSeverity(maxBand) {
+			maxBand, maxIdx = b, i
+		}
+	}
+	if !sawAny {
+		return RiskUnknown, -1
+	}
+	return maxBand, maxIdx
+}
+
+// classifySingle is the original single-command classifier: it walks the
+// pattern buckets in priority order and returns the first match.
+func (p *HostPolicy) classifySingle(norm string) (RiskBand, int) {
 	if ok, idx := p.forbidden.matches(norm); ok {
 		return RiskForbidden, idx
 	}
@@ -57,6 +119,27 @@ func (p *HostPolicy) Classify(command string) (RiskBand, int) {
 		return RiskSafe, idx
 	}
 	return RiskUnknown, -1
+}
+
+// bandSeverity orders the risk bands for compound aggregation. Forbidden
+// beats everything so `ok && rm -rf /` classifies as forbidden. Unknown
+// beats safe so a compound with one unclassified segment still surfaces
+// a HITL card — we don't silently upgrade unknown → safe just because
+// the other legs happened to match the allowlist.
+func bandSeverity(b RiskBand) int {
+	switch b {
+	case RiskForbidden:
+		return 5
+	case RiskDangerous:
+		return 4
+	case RiskCaution:
+		return 3
+	case RiskUnknown:
+		return 2
+	case RiskSafe:
+		return 1
+	}
+	return 0
 }
 
 // ClassifyWritePath evaluates a write_file op by constructing the
@@ -177,6 +260,16 @@ func unwrapShellWrapper(normCmd string) (string, bool) {
 	return inner, true
 }
 
+// isShellWrapperCommand reports whether the first token of command is a
+// recognised shell wrapper (bash/sh/absolute variants). Used by the gate
+// to skip the first-run SHA ledger for shell invocations — the binary's
+// hash carries no classification signal because the matcher already
+// evaluated the INNER script via unwrapShellWrapper.
+func isShellWrapperCommand(command string) bool {
+	head, _, _ := splitFirstToken(strings.TrimSpace(command))
+	return isShellWrapperBinary(unquote(head))
+}
+
 // isShellWrapperBinary reports whether head is one of the POSIX shell
 // binaries we recognise for unwrap. Kept deliberately narrow: exotic
 // shells (zsh, fish, ksh) fall through to literal classification so
@@ -192,18 +285,162 @@ func isShellWrapperBinary(head string) bool {
 }
 
 // containsShellComposition reports whether s uses any shell composition
-// operator that would execute MORE than the single command implied by the
-// first token. These are precisely the primitives that could smuggle a
-// dangerous call past the pattern-based classifier if we unwrapped them
-// (e.g., `which python3 && rm -rf /`). Matches awakens.introspectionDenyTokens
-// but lives here to keep infra/host/gate free of cpn/awakens imports.
+// operator that would change classification from the single-command view.
+// Historically this included `&&`/`||`/`;`/`|` and refused to unwrap them;
+// those are now handled by classifyMaybeCompound (which splits and takes
+// the max severity) so the wrapper unwrap only guards against shapes we
+// genuinely cannot reason about statically: redirects (target is an
+// arbitrary path) and command substitution (inner execution).
 func containsShellComposition(s string) bool {
-	for _, tok := range []string{"&&", "||", ";", "|", ">>", ">", "<", "$(", "`"} {
+	return containsOpaqueComposition(s)
+}
+
+// preprocessShellSubstitutions strips idioms that are statically safe
+// (null-redirects, substitutions with all-safe inners) so a compound
+// that would otherwise fall to Unknown via the opaque check can still
+// classify via the normal segment path.
+//
+// Returns (cleanedString, worstInnerBand). When worstInnerBand is
+// anything above RiskSafe the caller short-circuits — we discovered a
+// dangerous substitution inside an otherwise-innocent outer shell.
+func (p *HostPolicy) preprocessShellSubstitutions(s string) (string, RiskBand) {
+	// 1. Strip well-known null-redirects. Order matters: longer forms
+	//    before their shorter prefixes so we don't leave dangling chars.
+	for _, idiom := range []string{
+		" 2>/dev/null", " 2>&1", " &>/dev/null", " >/dev/null", " 1>/dev/null",
+		"2>/dev/null", "2>&1", "&>/dev/null", ">/dev/null", "1>/dev/null",
+	} {
+		s = strings.ReplaceAll(s, idiom, "")
+	}
+	// 2. Resolve $(…) recursively (single level of nesting; deeper is rare
+	//    in day-to-day shell). Inner is classified via Classify — if it
+	//    comes back RiskSafe we drop the substitution; otherwise we bubble
+	//    the worst band out so the caller can short-circuit.
+	worst := RiskSafe
+	for pass := 0; pass < 8; pass++ { // bounded loop; 8 nestings is generous
+		start := strings.Index(s, "$(")
+		if start < 0 {
+			break
+		}
+		depth := 1
+		end := -1
+		for i := start + 2; i < len(s); i++ {
+			switch s[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					end = i
+				}
+			}
+			if end >= 0 {
+				break
+			}
+		}
+		if end < 0 {
+			break // unmatched paren; leave it so opaque check still catches it
+		}
+		inner := s[start+2 : end]
+		innerBand, _ := p.Classify(inner)
+		if bandSeverity(innerBand) > bandSeverity(worst) {
+			worst = innerBand
+		}
+		if innerBand != RiskSafe {
+			// Leave the substitution in place; the caller will see a
+			// non-safe worst band and short-circuit without running the
+			// segment classifier on a string that contains $(…).
+			break
+		}
+		s = s[:start] + s[end+1:]
+	}
+	// 3. Backtick substitution — same treatment as $(…). No nesting support.
+	for pass := 0; pass < 4; pass++ {
+		start := strings.IndexByte(s, '`')
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(s[start+1:], '`')
+		if end < 0 {
+			break
+		}
+		end += start + 1
+		inner := s[start+1 : end]
+		innerBand, _ := p.Classify(inner)
+		if bandSeverity(innerBand) > bandSeverity(worst) {
+			worst = innerBand
+		}
+		if innerBand != RiskSafe {
+			break
+		}
+		s = s[:start] + s[end+1:]
+	}
+	return s, worst
+}
+
+// containsOpaqueComposition reports whether s uses shell primitives whose
+// effect depends on arguments the regex classifier cannot see: redirect
+// targets (`>`, `>>`, `<`), command substitution (`$(...)`), backticks.
+// When present we fall back to literal classification — a dangerous
+// pattern on the whole string still matches, otherwise the command stays
+// Unknown and HITL gates it.
+func containsOpaqueComposition(s string) bool {
+	for _, tok := range []string{">>", ">", "<", "$(", "`"} {
 		if strings.Contains(s, tok) {
 			return true
 		}
 	}
 	return false
+}
+
+// splitCompoundSegments splits s on the top-level shell chain operators
+// `&&`, `||`, `;`, `|`. Quoted regions (matching `'` or `"`) are skipped
+// so `echo "a && b"` is one segment. This is a minimal shell-aware split,
+// not a full parser — it intentionally does not handle escapes or nested
+// shells; callers that need those refuse to split via the opaque check
+// above.
+func splitCompoundSegments(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var segs []string
+	var cur strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			cur.WriteByte(c)
+			continue
+		}
+		// Two-char operators first.
+		if i+1 < len(s) {
+			two := s[i : i+2]
+			if two == "&&" || two == "||" {
+				segs = append(segs, cur.String())
+				cur.Reset()
+				i++
+				continue
+			}
+		}
+		if c == ';' || c == '|' {
+			segs = append(segs, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	if cur.Len() > 0 {
+		segs = append(segs, cur.String())
+	}
+	return segs
 }
 
 // CommandKey is the stable hashing input for the audit log's

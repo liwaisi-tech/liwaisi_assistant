@@ -377,7 +377,16 @@ func (g *PolicyHostGate) Evaluate(ctx context.Context, op cpn.GateOp) Decision {
 
 	// ── 5. First-run ledger (REQ-011 + AC-008) ──────────────────────
 	// Only applies to exec/spawn_pty (binaries); write_file has no SHA.
-	if g.FirstRun != nil && (op.Kind == "exec" || op.Kind == "spawn_pty") && op.Command != "" {
+	// Safe-band commands skip the ledger: the pattern already declared
+	// the binary trusted for its classification (e.g. `ls`, `cat`, `go`).
+	// Shell wrappers (`bash -c …`, `sh -c …`) also skip: their SHA carries
+	// no classification signal because the matcher's unwrap has already
+	// evaluated the INNER script (or the inner is too opaque to split,
+	// in which case the band falls to RiskUnknown and step 8 HITLs it on
+	// its own merits). Without these skips every fresh container HITLs
+	// on its first `ls` or `bash -c` because no prior host has seen that
+	// busybox / bash SHA — the friction brae hit repeatedly on 2026-04-23.
+	if g.FirstRun != nil && band != RiskSafe && !isShellWrapperCommand(op.Command) && (op.Kind == "exec" || op.Kind == "spawn_pty") && op.Command != "" {
 		sum, entry, err := g.firstRunLookup(ctx, op.Command)
 		if err == nil && (entry == nil || entry.Revoked || entry.FirstApprovedAt == nil) {
 			dec.Verdict = VerdictRequireHITL

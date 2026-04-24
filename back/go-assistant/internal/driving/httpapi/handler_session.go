@@ -186,7 +186,20 @@ func (h *Handlers) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	info, err := h.App.CreateSession(r.Context(), userID, cpn.ChannelType(req.Channel))
+	var (
+		info *app.SessionInfo
+		err  error
+	)
+	if req.FlowHash != "" {
+		factory, ferr := h.resolveFlowFactory(r.Context(), req.FlowHash)
+		if ferr != nil {
+			writeError(w, ferr.status, ferr.msg)
+			return
+		}
+		info, err = h.App.CreateSessionWithFactory(r.Context(), userID, cpn.ChannelType(req.Channel), factory)
+	} else {
+		info, err = h.App.CreateSession(r.Context(), userID, cpn.ChannelType(req.Channel))
+	}
 	if err != nil {
 		if errors.Is(err, app.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, err.Error())

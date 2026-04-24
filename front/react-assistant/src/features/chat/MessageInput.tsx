@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SessionState } from '../../types/api';
 import type { AwakeningPhase } from '../../hooks/useChat';
+import { FlowHashtagChips } from './FlowHashtagChips';
 
 interface MessageInputProps {
   onSend: (content: string) => void;
@@ -37,6 +38,27 @@ export function MessageInput({ onSend, disabled, sessionState, awakeningPhase, e
     }
   }, [onSend, disabled]);
 
+  const handleInsertMarker = useCallback((marker: string) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const current = ta.value;
+    // If the marker already leads the composer, don't duplicate it.
+    if (current.trimStart().toLowerCase().startsWith(marker.trim().toLowerCase())) {
+      ta.focus();
+      return;
+    }
+    const start = ta.selectionStart ?? current.length;
+    const end = ta.selectionEnd ?? current.length;
+    const before = current.slice(0, start);
+    const after = current.slice(end);
+    const needsLeadingSpace = before.length > 0 && !/\s$/.test(before);
+    const insertion = (needsLeadingSpace ? ' ' : '') + marker;
+    ta.value = before + insertion + after;
+    const caret = before.length + insertion.length;
+    ta.setSelectionRange(caret, caret);
+    ta.focus();
+  }, []);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -64,6 +86,8 @@ export function MessageInput({ onSend, disabled, sessionState, awakeningPhase, e
             {error}
           </div>
         )}
+
+        <FlowHashtagChips onInsert={handleInsertMarker} disabled={disabled} />
 
         <div className="flex items-end gap-2 rounded-xl px-3 py-2 glow-border transition-shadow focus-within:shadow-[0_0_0_1px_var(--accent),0_0_20px_-4px_var(--accent-glow)]"
              style={{ backgroundColor: 'var(--bg-input)' }}>

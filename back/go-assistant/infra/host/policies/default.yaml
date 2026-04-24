@@ -39,32 +39,78 @@ forbidden_patterns:
   - ".*wget\\s+.*\\s*\\|\\s*(sh|bash)\\s*$"
   - "^dd\\s+.*of=/dev/(sd|nvme|hd|xvd)"
 
-# ── Safe (allow without HITL unless first-run) ───────────────────────────
-# REQ-050 "safe" baseline: read-only inspection commands.
+# ── Safe (allow without HITL, no first-run gate) ─────────────────────────
+# REQ-050 "safe" baseline. The brae container IS the sandbox boundary:
+# the filesystem jail lives in the container, network egress is still
+# caution-gated (curl/wget/ssh below), and destructive patterns stay
+# dangerous/forbidden. So the safe list intentionally covers the full
+# read + $HOME-jailed-write + build toolkit so the agent can navigate,
+# author files, and compile inside its own container without a HITL card
+# for every `mkdir` / `go build` / `./main`. Anything that could escape
+# the container (package managers, remote shells, world-writable chmod)
+# stays in caution/dangerous.
 safe_patterns:
-  - "^(/(usr/)?bin/)?(ls|cat|pwd|echo|uname|whoami|id|hostname|which|env)(\\s|$)"
-  - "^(/(usr/)?bin/)?(head|tail|wc|grep|find|basename|dirname)(\\s|$)"
-  - "^(/(usr/)?bin/)?(date|uptime|df|du|free)(\\s|$)"
-  # Awakening introspection class (spec §4.5, SEC-001..SEC-004).
-  # Auto-approved, no HITL surface, used by the `brae-awakens` flow.
-  - "^(printenv|arch|getconf|busybox\\s+--list)(\\s|$)"
-  - "^command\\s+-v\\s+[A-Za-z0-9_.-]+\\s*$"
+  # Navigation + environment introspection.
+  - "^(/(usr/)?bin/)?(ls|cat|pwd|echo|uname|whoami|id|hostname|which|env|printenv|arch|getconf)(\\s|$)"
+  - "^(/(usr/)?bin/)?(head|tail|wc|grep|egrep|fgrep|find|basename|dirname|realpath|readlink)(\\s|$)"
+  - "^(/(usr/)?bin/)?(date|uptime|df|du|free|stat|tree|file|xxd|od|less|more|diff|cmp|jq|yq)(\\s|$)"
+  # Text stream processing (all read-from-stdin/file, write to stdout).
+  - "^(/(usr/)?bin/)?(awk|gawk|sed|cut|tr|sort|uniq|paste|column|fold|rev|nl|tac|split|tee)(\\s|$)"
+  # Binary inspection — read-only introspection of ELF/so files.
+  - "^(/(usr/)?bin/)?(strings|nm|readelf|objdump|ldd|size|addr2line)(\\s|$)"
+  - "^(/(usr/)?bin/)?(cksum|md5sum|sha1sum|sha256sum|sha512sum|b2sum)(\\s|$)"
+  # Process / system inspection — no state change.
+  - "^(/(usr/)?bin/)?(ps|pgrep|pstree|top|htop|vmstat|iostat|mpstat|mountpoint|lsof|lsmod|lspci|lsusb|lsblk)(\\s|$)"
+  # Network introspection (read-only: no data sent off-host by these).
+  - "^(/(usr/)?bin/)?(ss|netstat|ip|ifconfig|route|arp|getent|dig|nslookup|host)(\\s|$)"
+  # Filesystem ops constrained by path_jail.write=$HOME at the OSAdapter
+  # layer (os_adapter.go:checkPathJail). Anything these could do outside
+  # $HOME is rejected there regardless of the gate verdict.
+  - "^(/(usr/)?bin/)?(mkdir|rmdir|touch|cp|mv|ln|rm)(\\s|$)"
+  - "^(/(usr/)?bin/)?(tar|gzip|gunzip|zip|unzip|bzip2|bunzip2|xz|unxz|lz4|zstd)(\\s|$)"
+  # Build toolchain — user owns the container, so `go build`, `make`,
+  # and running the resulting binary are baseline. Package managers and
+  # network fetchers stay in caution below.
+  - "^(/(usr/)?bin/)?(go|make)(\\s|$)"
+  # Running a binary under the agent's home or the current workdir.
+  # `./foo`, `~/workspace/bin/foo`, `/home/brae/bin/foo` all match. Keeps
+  # arbitrary /usr/local/bin/{whatever} out of the safe lane.
+  - "^\\./[A-Za-z0-9_./-]+(\\s|$)"
+  - "^~/[A-Za-z0-9_./-]+(\\s|$)"
+  - "^/home/[^/]+/[A-Za-z0-9_./-]+(\\s|$)"
+  # Awakening introspection probes (spec §4.5, SEC-001..SEC-004).
+  - "^(busybox\\s+--list)(\\s|$)"
+  - "^command\\s+-v(\\s+[A-Za-z0-9_.-]+)+\\s*$"
   - "^cat\\s+/etc/[A-Za-z0-9_./-]+\\s*$"
   - "^cat\\s+/proc/[A-Za-z0-9_./-]+\\s*$"
   - "^head\\s+-n\\s+[0-9]+\\s+/[A-Za-z0-9_./-]+\\s*$"
   - "^tail\\s+-n\\s+[0-9]+\\s+/[A-Za-z0-9_./-]+\\s*$"
+  # write_file targeting $HOME or /tmp — dangerous paths (/etc, /root,
+  # .ssh, authorized_keys, /boot) are matched earlier by dangerous_patterns
+  # and short-circuit before this. Kept explicit so the default-deny path
+  # never catches a legitimate `authored file → $HOME/...` round-trip.
+  - "^write_file:\\s*/home/[^/]+/.*"
+  - "^write_file:\\s*(\\$HOME|~)/.*"
+  - "^write_file:\\s*/tmp/.*"
+  # read_file is jailed by path_jail.read=/ at the adapter; classification
+  # here just avoids the default-deny HITL card.
+  - "^read_file:\\s*.*"
 
 # ── Caution (HITL every run unless "approve-and-remember") ───────────────
 # REQ-050: compilers, package managers, network clients.
 caution_patterns:
+  # Compilers stay in caution: they can link system libraries and drop
+  # SUID binaries. `go` and `make` moved to safe_patterns (user owns the
+  # container; Go toolchain is sandboxed to $GOPATH under $HOME).
   - "^(/(usr/)?bin/)?(gcc|cc|clang|g\\+\\+|clang\\+\\+)(\\s|$)"
-  - "^(/(usr/)?bin/)?(go|cargo|rustc|javac|python3?|node|ruby|perl)(\\s|$)"
-  - "^(/(usr/)?bin/)?(apt|apt-get|dnf|yum|pacman|zypper)(\\s|$)"
+  - "^(/(usr/)?bin/)?(cargo|rustc|javac|python3?|node|ruby|perl)(\\s|$)"
+  - "^(/(usr/)?bin/)?(apt|apt-get|dnf|yum|pacman|zypper|apk)(\\s|$)"
   - "^(/(usr/)?bin/)?(pip|pip3|npm|yarn|pnpm|bundler|gem)(\\s|$)"
-  - "^(/(usr/)?bin/)?(curl|wget|ssh|scp|rsync|nc|ncat)(\\s|$)"
+  # Network egress — even from inside the container we still want the
+  # user to greenlight outbound requests.
+  - "^(/(usr/)?bin/)?(curl|wget|ssh|scp|rsync|nc|ncat|ping|telnet|ftp)(\\s|$)"
   - "^(/(usr/)?bin/)?(git)(\\s|$)"
   - "^(/(usr/)?bin/)?(docker|podman|kubectl)(\\s|$)"
-  - "^make(\\s|$)"
 
 # ── Dangerous (HITL always, never cached) ────────────────────────────────
 # REQ-050: filesystem-state-changing patterns. A remembered approval is

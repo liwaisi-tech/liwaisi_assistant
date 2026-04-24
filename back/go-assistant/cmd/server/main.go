@@ -424,6 +424,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// ── Flow builders (shared by service + HTTP) ───────────────────────
+	// Built before the service so hashtag dispatch (`#tool-atelier ...`)
+	// inside SendMessage can rebuild the session's Root CPN via the same
+	// factory map that backs POST /api/v1/flows/{hash}/run.
+	flowBuilders := builtinFlowBuilders()
+	serviceOpts = append(serviceOpts, app.WithFlowBuilders(flowBuilders))
+
 	// ── Application layer ───────────────────────────────────────────────
 	appService := app.NewSessionService(holder, costProvider, logger, topologyFactory, serviceOpts...)
 
@@ -557,8 +564,8 @@ func main() {
 
 	// Role→factory map for POST /api/v1/flows/{hash}/run. The handler
 	// looks up the flow by hash, then builds a fresh per-session topology
-	// via the factory registered under the flow's role.
-	flowBuilders := builtinFlowBuilders()
+	// via the factory registered under the flow's role. Same map already
+	// wired into the SessionService above for in-chat hashtag dispatch.
 	serverOpts = append(serverOpts, httpapi.WithFlowBuilders(flowBuilders))
 
 	srv := httpapi.NewServer(cfg, appService, logger, billingClient, serverOpts...)

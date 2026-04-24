@@ -31,8 +31,18 @@ func dispatchHandler() cpnToolHandler {
 		if err != nil {
 			return nil, fmt.Errorf("t-dispatch: %w", err)
 		}
+		// Pragmatic fallback: if the LLM set ready=false but still echoed a
+		// usable normalised request (name OR non-trivial description), we
+		// proceed rather than deadlocking the CPN. The atelier currently
+		// has no clarify round-trip, and the feedback_minimize_hitl
+		// preference applies: better a best-effort pass than a hard stop.
+		// Only an empty/nonsense request aborts.
 		if !verdict.Ready {
-			return nil, fmt.Errorf("t-dispatch: triage not ready (question=%q)", verdict.ClarifyQuestion)
+			hasName := verdict.NormalisedRequest.Name != ""
+			hasDesc := len(verdict.NormalisedRequest.Description) > 8
+			if !hasName && !hasDesc {
+				return nil, fmt.Errorf("t-dispatch: triage not ready and request empty (question=%q)", verdict.ClarifyQuestion)
+			}
 		}
 		reqJSON, err := json.Marshal(verdict.NormalisedRequest)
 		if err != nil {
@@ -74,23 +84,44 @@ func enrichSpecHandler() cpnToolHandler {
 			workspacePath string
 			haveDraft     bool
 		)
+		// Pass 1: find the token that looks most like a SpecDraft. We
+		// consider any ColorJSON token where at least one of the core
+		// spec fields decodes non-empty (name / purpose / domain_model)
+		// instead of requiring name to be populated specifically — LLMs
+		// sometimes drop a field or rename it under autocorrection, and
+		// demanding Name was the root cause of a hard deadlock here when
+		// the atelier received a token whose Name got truncated/omitted.
+		for _, t := range consumed {
+			if t.Color != cpn.ColorJSON {
+				continue
+			}
+			var candidate SpecDraft
+			if err := decodeAs(t.Payload, &candidate); err != nil {
+				continue
+			}
+			if candidate.Name != "" || candidate.Purpose != "" || candidate.DomainModel != "" {
+				draft = candidate
+				haveDraft = true
+				break
+			}
+		}
+		// Pass 2: artefacts + existing-tools collection.
 		for _, t := range consumed {
 			switch t.Color {
 			case cpn.ColorJSON:
-				// Try as SpecDraft first, then existing-tools list.
-				if !haveDraft {
-					if err := decodeAs(t.Payload, &draft); err == nil && draft.Name != "" {
-						haveDraft = true
-						continue
-					}
-				}
 				_ = decodeAs(t.Payload, &existing)
 			case cpn.ColorArtifact:
 				workspacePath = fmt.Sprintf("%v", t.Payload)
 			}
 		}
 		if !haveDraft {
-			return nil, errors.New("t-enrich-spec: no SpecDraft token in input")
+			// Last-resort stub: keep the CPN moving rather than dead-
+			// locking. Reviewers will flag the empty fields as blocking
+			// issues and the refine loop gets a chance to recover.
+			draft = SpecDraft{
+				Name:    "unnamed-tool",
+				Purpose: "SpecDraft could not be parsed from upstream; refine loop must reconstruct.",
+			}
 		}
 		draft.ExistingTools = existing
 		draft.WorkspacePath = workspacePath
@@ -335,16 +366,37 @@ func decodeAs(payload any, dst any) error {
 	return json.Unmarshal(b, dst)
 }
 
-// parseReviews extracts Review structs from the 6 consumed review tokens
-// in reviewerRoles order. Also returns the spec draft carried in the
-// reviews (reviewers echo the spec back so the refine loop has context).
+// parseReviews extracts Review structs from the consumed review tokens.
+// Lenient by design: a malformed token (e.g., an LLM that wraps output in
+// a `tool_code` envelope and breaks the expected schema) does NOT fail
+// the whole batch. Instead, a synthetic "malformed-output" review is
+// substituted so the aggregate guards can still evaluate and the refine
+// transition can consume the full input set. This matches the
+// feedback_minimize_hitl principle: keep the CPN moving, surface the
+// problem as a blocking issue, let the refine stage try to recover.
 func parseReviews(consumed []cpn.Token) ([]Review, SpecDraft, error) {
 	reviews := make([]Review, 0, len(consumed))
 	var spec SpecDraft
-	for _, tok := range consumed {
+	for i, tok := range consumed {
 		var r Review
 		if err := decodeAs(tok.Payload, &r); err != nil {
-			return nil, spec, fmt.Errorf("parse review: %w", err)
+			reviews = append(reviews, Review{
+				Role:           fmt.Sprintf("reviewer-%d", i),
+				Approved:       false,
+				BlockingIssues: []string{fmt.Sprintf("reviewer returned unparseable output: %v", err)},
+			})
+			continue
+		}
+		// A token that parses but carries no role at all is suspect — if
+		// every field is zero-valued the LLM probably hallucinated a
+		// different schema. Treat it like a malformed response.
+		if r.Role == "" && !r.Approved && len(r.BlockingIssues) == 0 && len(r.Suggestions) == 0 {
+			reviews = append(reviews, Review{
+				Role:           fmt.Sprintf("reviewer-%d", i),
+				Approved:       false,
+				BlockingIssues: []string{"reviewer returned empty/off-schema output"},
+			})
+			continue
 		}
 		reviews = append(reviews, r)
 	}
@@ -432,4 +484,36 @@ func validateTotalsBatch(b TotalsBatch) error {
 		return errors.New("totals form a dependency cycle")
 	}
 	return nil
+}
+
+// ── placeholder stubs: scaffold + package ────────────────────────────────
+
+// scaffoldWorkspaceStub deposits a canned ColorArtifact token into
+// p-workspace-ready so the pipeline reaches the spec-draft stage. Swap
+// for the real template-renderer handler once it's ready.
+func scaffoldWorkspaceStub() cpnToolHandler {
+	return func(_ context.Context, _ []cpn.Token) (map[string]cpn.Token, error) {
+		return map[string]cpn.Token{
+			PlaceWorkspaceReady: {
+				Color:   cpn.ColorArtifact,
+				Space:   cpn.SpaceComputation,
+				Payload: `{"placeholder":"scaffold pending","path":""}`,
+			},
+		}, nil
+	}
+}
+
+// packageStub deposits a canned ColorToolManifest token so t-register has
+// something to consume. Real packager will run `go build` and emit a
+// signed manifest.
+func packageStub() cpnToolHandler {
+	return func(_ context.Context, _ []cpn.Token) (map[string]cpn.Token, error) {
+		return map[string]cpn.Token{
+			PlacePackaged: {
+				Color:   cpn.ColorToolManifest,
+				Space:   cpn.SpaceComputation,
+				Payload: `{"placeholder":"package pending"}`,
+			},
+		}, nil
+	}
 }
