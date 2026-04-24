@@ -59,6 +59,34 @@ export interface TransitionTopology {
   llmConfig?: LLMConfigTopology;
   hitlConfig?: HITLConfigTopology;
   subNetTopology?: CPNTopology;
+  // Sub-agent metadata surfaced by the BE when this transition is a
+  // (profile × action) sub-agent. Optional and forward-compatible:
+  // legacy transitions without meta render as plain TransitionNode.
+  meta?: Record<string, string>;
+}
+
+// SubAgentMeta is the typed view over TransitionTopology.meta for
+// sub-agent transitions (meta.kind === "subagent"). Use
+// `subAgentMeta(transition)` to extract a typed copy or null.
+export interface SubAgentMeta {
+  profileId: string;
+  actionId: string;
+  subagentLabel: string;
+  iconKey: string;
+  modelHint?: string;
+}
+
+export function subAgentMeta(transition: TransitionTopology): SubAgentMeta | null {
+  const m = transition.meta;
+  if (!m || m['kind'] !== 'subagent') return null;
+  if (!m['profile_id'] || !m['action_id']) return null;
+  return {
+    profileId: m['profile_id'],
+    actionId: m['action_id'],
+    subagentLabel: m['subagent_label'] ?? `${m['profile_id']} · ${m['action_id']}`,
+    iconKey: m['icon_key'] ?? 'circle',
+    modelHint: m['model_hint'],
+  };
 }
 
 export interface LLMConfigTopology {

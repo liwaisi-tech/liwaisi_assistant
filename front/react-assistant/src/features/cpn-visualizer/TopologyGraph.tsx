@@ -13,11 +13,14 @@ import '@xyflow/react/dist/style.css';
 
 import { PlaceNode } from './nodes/PlaceNode';
 import { TransitionNode } from './nodes/TransitionNode';
+import { SubAgentNode } from './nodes/SubAgentNode';
 import type { CPNTopology, TransitionTopology } from '../../types/flow';
+import { subAgentMeta } from '../../types/flow';
 
 const nodeTypes = {
   place: PlaceNode,
   transition: TransitionNode,
+  subagent: SubAgentNode,
 };
 
 type Direction = 'LR' | 'TB';
@@ -40,8 +43,8 @@ function layoutGraph(nodes: Node[], edges: Edge[], direction: Direction): Node[]
   g.setDefaultEdgeLabel(() => ({}));
 
   for (const node of nodes) {
-    const w = node.type === 'place' ? 76 : 180;
-    const h = node.type === 'place' ? 76 : 80;
+    const w = node.type === 'place' ? 76 : node.type === 'subagent' ? 200 : 180;
+    const h = node.type === 'place' ? 76 : node.type === 'subagent' ? 110 : 80;
     g.setNode(node.id, { width: w, height: h });
   }
   for (const edge of edges) {
@@ -52,8 +55,8 @@ function layoutGraph(nodes: Node[], edges: Edge[], direction: Direction): Node[]
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
-    const w = node.type === 'place' ? 76 : 180;
-    const h = node.type === 'place' ? 76 : 80;
+    const w = node.type === 'place' ? 76 : node.type === 'subagent' ? 200 : 180;
+    const h = node.type === 'place' ? 76 : node.type === 'subagent' ? 110 : 80;
     return { ...node, position: { x: pos.x - w / 2, y: pos.y - h / 2 } };
   });
 }
@@ -90,12 +93,15 @@ function GraphInner({ topology, firedTransitions, onSelectTransition }: Topology
       });
     }
 
-    // Transitions + edges
+    // Transitions + edges. Sub-agent transitions render as SubAgentNode;
+    // everything else stays on the legacy TransitionNode. The discriminator
+    // is meta.kind === "subagent" — surfaced by the BE topology JSON.
     for (const [id, transition] of Object.entries(topology.transitions)) {
       const fired = firedTransitions ? firedTransitions.has(id) : undefined;
+      const isSubAgent = subAgentMeta(transition) != null;
       rawNodes.push({
         id,
-        type: 'transition',
+        type: isSubAgent ? 'subagent' : 'transition',
         position: { x: 0, y: 0 },
         data: {
           transition,
