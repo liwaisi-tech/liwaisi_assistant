@@ -198,7 +198,7 @@ func candidateToResponse(c *cpn.FlowLibraryEntry) FlowCandidateResponse {
 // Body: {"intent": "..."} — forwarded as the first user message so the CPN's
 // p-input place receives it like a regular chat turn.
 //
-// Response: {"session_id": "...", "role": "tool-atelier", "started_at": "..."}.
+// Response: {"session_id": "...", "role": "tool-creator", "started_at": "..."}.
 // The caller subscribes to SSE on the returned session_id for live events.
 func (h *Handlers) HandleRunFlow(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")

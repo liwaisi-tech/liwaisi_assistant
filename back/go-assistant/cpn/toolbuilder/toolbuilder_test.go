@@ -8,16 +8,17 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
-func TestBuildToolAtelierTopology_AllPlacesPresent(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestBuildToolCreatorTopology_AllPlacesPresent(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	expected := []string{
 		PlaceRequest, PlaceTriaged, PlaceReqInvestigate, PlaceReqScaffold, PlaceReqDraft,
 		PlaceExistingTools, PlaceWorkspaceReady, PlaceSpecV0, PlaceSpecDraft,
-		PlaceSpecForGo, PlaceSpecForAI, PlaceSpecForDevOps, PlaceSpecForQA, PlaceSpecForArch, PlaceSpecForPM,
-		PlaceReviewGo, PlaceReviewAI, PlaceReviewDevOps, PlaceReviewQA, PlaceReviewArch, PlaceReviewPM,
+		PlaceSpecForGo, PlaceSpecForDevOps, PlaceSpecForArch,
+		PlaceReviewGo, PlaceReviewDevOps, PlaceReviewArch,
 		PlaceSpecApproved, PlaceRefineRequest,
 		PlaceTotals, PlaceDoIt, PlaceTotalsEcho, PlaceTotalReady, PlaceSubtasks, PlaceTested,
-		PlacePackaged, PlaceRegistered, PlaceErrors,
+		PlacePackaged, PlaceInstallResult, PlaceRegistered,
+		PlaceErrors, PlaceFailed,
 	}
 	for _, id := range expected {
 		if _, ok := c.Places[id]; !ok {
@@ -29,15 +30,15 @@ func TestBuildToolAtelierTopology_AllPlacesPresent(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_AllTransitionsPresent(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestBuildToolCreatorTopology_AllTransitionsPresent(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	expected := []string{
 		TrTriage, TrDispatch, TrInvestigate, TrScaffoldWorkspace, TrDraftSpecV0,
 		TrEnrichSpec, TrFanoutReviewers,
-		TrReviewGo, TrReviewAI, TrReviewDevOps, TrReviewQA, TrReviewArch, TrReviewPM,
+		TrReviewGo, TrReviewDevOps, TrReviewArch,
 		TrAggregateApprove, TrAggregateRefine, TrRefineSpec,
 		TrDecomposeTotals, TrAuthorizeTotals, TrGateTotal, TrPlanSubtasks,
-		TrTDDLoop, TrPackage, TrRegister,
+		TrTDDLoop, TrPackage, TrInstall, TrFinalizeInstall, TrHandleError,
 	}
 	for _, id := range expected {
 		if _, ok := c.Transitions[id]; !ok {
@@ -46,11 +47,11 @@ func TestBuildToolAtelierTopology_AllTransitionsPresent(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_LLMTransitionsHaveConfig(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestBuildToolCreatorTopology_LLMTransitionsHaveConfig(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	llmIDs := []string{
 		TrTriage, TrDraftSpecV0,
-		TrReviewGo, TrReviewAI, TrReviewDevOps, TrReviewQA, TrReviewArch, TrReviewPM,
+		TrReviewGo, TrReviewDevOps, TrReviewArch,
 		TrRefineSpec, TrDecomposeTotals, TrPlanSubtasks,
 	}
 	for _, id := range llmIDs {
@@ -67,12 +68,13 @@ func TestBuildToolAtelierTopology_LLMTransitionsHaveConfig(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_ToolTransitionsHaveHandler(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestBuildToolCreatorTopology_ToolTransitionsHaveHandler(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	toolIDs := []string{
 		TrDispatch, TrInvestigate, TrEnrichSpec, TrFanoutReviewers,
 		TrAggregateApprove, TrAggregateRefine,
 		TrAuthorizeTotals, TrGateTotal, TrTDDLoop,
+		TrFinalizeInstall, TrHandleError,
 	}
 	for _, id := range toolIDs {
 		tr := c.Transitions[id]
@@ -85,12 +87,11 @@ func TestBuildToolAtelierTopology_ToolTransitionsHaveHandler(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_ScaffoldPackageRegisterWired(t *testing.T) {
+func TestBuildToolCreatorTopology_ScaffoldPackageInstallWired(t *testing.T) {
 	// t-scaffold-workspace and t-package are Tool stubs today: their
 	// output places carry non-shell colors (ARTIFACT, TOOL_MANIFEST), so
-	// NodeKindBash would fail validation. Swap to Bash once real scripts
-	// route through intermediate shell-result places.
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+	// NodeKindBash would fail validation.
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	for _, id := range []string{TrScaffoldWorkspace, TrPackage} {
 		tr := c.Transitions[id]
 		if tr.Kind != cpn.NodeKindTool {
@@ -100,14 +101,25 @@ func TestBuildToolAtelierTopology_ScaffoldPackageRegisterWired(t *testing.T) {
 			t.Errorf("%s: nil ToolHandler", id)
 		}
 	}
-	if c.Transitions[TrRegister].Kind != cpn.NodeKindRegisterTool {
-		t.Errorf("%s: Kind=%s, want RegisterTool", TrRegister, c.Transitions[TrRegister].Kind)
+	if c.Transitions[TrInstall].Kind != cpn.NodeKindBash {
+		t.Errorf("%s: Kind=%s, want Bash", TrInstall, c.Transitions[TrInstall].Kind)
+	}
+	if c.Transitions[TrInstall].BashConfig == nil {
+		t.Errorf("%s: nil BashConfig", TrInstall)
 	}
 }
 
-func TestBuildToolAtelierTopology_ErrorRouting(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestBuildToolCreatorTopology_ErrorRouting(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	for id, tr := range c.Transitions {
+		// t-handle-error is itself the PlaceErrors consumer; it has no
+		// ErrorPlace of its own.
+		if id == TrHandleError {
+			if tr.ErrorPlace != "" {
+				t.Errorf("%s: ErrorPlace should be empty, got %q", id, tr.ErrorPlace)
+			}
+			continue
+		}
 		if tr.ErrorPlace == "" {
 			t.Errorf("%s: missing ErrorPlace", id)
 			continue
@@ -118,8 +130,44 @@ func TestBuildToolAtelierTopology_ErrorRouting(t *testing.T) {
 	}
 }
 
-func TestBuildToolAtelierTopology_AggregatorsMutuallyExclusive(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+// TestHandleErrorTransition_WiredAndConsumesErrors asserts the
+// halt-bug fix: a failed sub-agent deposits a token into PlaceErrors
+// (via depositSubAgentError) and t-handle-error drains it into
+// PlaceFailed so the CPN reaches an explicit terminal state instead of
+// deadlocking.
+func TestHandleErrorTransition_WiredAndConsumesErrors(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
+	tr, ok := c.Transitions[TrHandleError]
+	if !ok {
+		t.Fatal("t-handle-error is not registered")
+	}
+	if len(tr.InputPlaces) != 1 || tr.InputPlaces[0] != PlaceErrors {
+		t.Errorf("t-handle-error inputs=%v, want [%s]", tr.InputPlaces, PlaceErrors)
+	}
+	if len(tr.OutputPlaces) != 1 || tr.OutputPlaces[0] != PlaceFailed {
+		t.Errorf("t-handle-error outputs=%v, want [%s]", tr.OutputPlaces, PlaceFailed)
+	}
+
+	// Simulate a validator failure deposit and assert the handler
+	// transforms it into a PlaceFailed token.
+	failurePayload := `{"transition_id":"t-review-spec-go-eng","profile_id":"go-eng","action_id":"review-spec","stage":"validate","error":"missing required fields: role"}`
+	out, err := tr.ToolHandler(context.Background(), []cpn.Token{
+		{Color: cpn.ColorError, Space: cpn.SpaceComputation, Payload: failurePayload},
+	})
+	if err != nil {
+		t.Fatalf("handle-error handler returned error: %v", err)
+	}
+	failedTok, ok := out[PlaceFailed]
+	if !ok {
+		t.Fatal("handler did not emit a PlaceFailed token")
+	}
+	if failedTok.Color != cpn.ColorError {
+		t.Errorf("failed token color=%s, want %s", failedTok.Color, cpn.ColorError)
+	}
+}
+
+func TestBuildToolCreatorTopology_AggregatorsMutuallyExclusive(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	app := c.Transitions[TrAggregateApprove]
 	ref := c.Transitions[TrAggregateRefine]
 	if app.Guard == nil {
@@ -128,12 +176,12 @@ func TestBuildToolAtelierTopology_AggregatorsMutuallyExclusive(t *testing.T) {
 	if ref.Guard == nil {
 		t.Fatal("refine aggregator has no guard")
 	}
-	// Construct 6 approved reviews → only approve fires.
+	// Construct N approved reviews → only approve fires.
 	mk := func(role string, approved bool, blocking []string) *cpn.Token {
 		b, _ := json.Marshal(Review{Role: role, Approved: approved, BlockingIssues: blocking})
 		return &cpn.Token{Color: cpn.ColorJSON, Payload: string(b)}
 	}
-	allApproved := make([]*cpn.Token, 0, 6)
+	allApproved := make([]*cpn.Token, 0, len(reviewerRoles))
 	for _, r := range reviewerRoles {
 		allApproved = append(allApproved, mk(r.ProfileID, true, nil))
 	}
@@ -283,7 +331,7 @@ func TestGateTotalHandler_PairsByTotalID(t *testing.T) {
 	}
 }
 
-func TestFanoutReviewers_ProducesSixClones(t *testing.T) {
+func TestFanoutReviewers_ProducesClonesForEveryReviewer(t *testing.T) {
 	draft := SpecDraft{Name: "echo-tool", Purpose: "prints args"}
 	b, _ := json.Marshal(draft)
 	out, err := fanoutReviewersHandler()(context.Background(),
@@ -303,7 +351,7 @@ func TestFanoutReviewers_ProducesSixClones(t *testing.T) {
 
 func TestReviewerRoles_StableOrder(t *testing.T) {
 	got := ReviewerRoles()
-	want := []string{ProfileGoEng, ProfileAIEng, ProfileDevOps, ProfileQA, ProfileArch, ProfilePM}
+	want := []string{ProfileGoEng, ProfileDevOps, ProfileArch}
 	if len(got) != len(want) {
 		t.Fatalf("len got=%d want=%d", len(got), len(want))
 	}
@@ -315,7 +363,42 @@ func TestReviewerRoles_StableOrder(t *testing.T) {
 }
 
 func TestFlowName(t *testing.T) {
-	if FlowName != "tool-atelier" {
-		t.Errorf("FlowName = %q, want tool-atelier", FlowName)
+	if FlowName != "tool-creator" {
+		t.Errorf("FlowName = %q, want tool-creator", FlowName)
+	}
+}
+
+func TestFinalizeInstallHandler_HappyPath(t *testing.T) {
+	result := cpn.ShellResultPayload{
+		ExitCode:   0,
+		Stdout:     "building...\ninstalled: /home/brae/workspace/tools/bin/echo-tool\n",
+		DurationMs: 42,
+	}
+	b, _ := json.Marshal(result)
+	h := finalizeInstallHandler()
+	out, err := h(context.Background(), []cpn.Token{{Color: cpn.ColorShellResult, Payload: string(b)}})
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	tok, ok := out[PlaceRegistered]
+	if !ok {
+		t.Fatal("missing PlaceRegistered")
+	}
+	if tok.Color != cpn.ColorArtifact {
+		t.Errorf("color=%s, want ColorArtifact", tok.Color)
+	}
+	var manifest map[string]any
+	_ = json.Unmarshal([]byte(tok.Payload.(string)), &manifest)
+	if got, want := manifest["binary_path"], "/home/brae/workspace/tools/bin/echo-tool"; got != want {
+		t.Errorf("binary_path=%v, want %q", got, want)
+	}
+}
+
+func TestFinalizeInstallHandler_NonZeroExitFails(t *testing.T) {
+	result := cpn.ShellResultPayload{ExitCode: 1, Stderr: "boom"}
+	b, _ := json.Marshal(result)
+	h := finalizeInstallHandler()
+	if _, err := h(context.Background(), []cpn.Token{{Color: cpn.ColorShellResult, Payload: string(b)}}); err == nil {
+		t.Fatal("expected error on non-zero exit")
 	}
 }

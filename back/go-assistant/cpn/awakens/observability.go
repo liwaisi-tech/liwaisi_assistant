@@ -89,7 +89,7 @@ func slogAttrToOTEL(prefix string, a slog.Attr) attribute.KeyValue {
 	case slog.KindInt64:
 		return attribute.Int64(key, v.Int64())
 	case slog.KindUint64:
-		return attribute.Int64(key, int64(v.Uint64()))
+		return attribute.Int64(key, int64(v.Uint64())) //nolint:gosec // intentional: OTel Int64 is the closest type; high-bit truncation is acceptable for telemetry counters
 	case slog.KindFloat64:
 		return attribute.Float64(key, v.Float64())
 	case slog.KindBool:

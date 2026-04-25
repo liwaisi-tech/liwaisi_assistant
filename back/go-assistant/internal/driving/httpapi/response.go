@@ -188,14 +188,14 @@ type ToolMatchResponse struct {
 // included verbatim when Strategy == "compose" so the UI can preview the
 // deterministic JIT output before the user chooses to instantiate it.
 type FlowDraftResponse struct {
-	Strategy     string                  `json:"strategy"`
-	BaseFlowID   string                  `json:"base_flow_id,omitempty"`
-	Topology     json.RawMessage         `json:"topology,omitempty"`
-	Matches      []ToolMatchResponse     `json:"matches,omitempty"`
-	MissingCaps  []string                `json:"missing_caps,omitempty"`
-	Reason       string                  `json:"reason"`
-	Confidence   float64                 `json:"confidence"`
-	Candidates   []FlowCandidateResponse `json:"candidates,omitempty"`
+	Strategy    string                  `json:"strategy"`
+	BaseFlowID  string                  `json:"base_flow_id,omitempty"`
+	Topology    json.RawMessage         `json:"topology,omitempty"`
+	Matches     []ToolMatchResponse     `json:"matches,omitempty"`
+	MissingCaps []string                `json:"missing_caps,omitempty"`
+	Reason      string                  `json:"reason"`
+	Confidence  float64                 `json:"confidence"`
+	Candidates  []FlowCandidateResponse `json:"candidates,omitempty"`
 }
 
 // RunFlowRequest is the body for POST /api/v1/flows/{hash}/run.

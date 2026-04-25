@@ -50,11 +50,6 @@ var rulesByAction = map[string]StructuralRules{
 		TopLevelAllowed:  []string{"role", "approved", "blocking_issues", "suggestions", "confidence"},
 		MaxBytes:         16 * 1024,
 	},
-	ActionSecurityEval: {
-		TopLevelRequired: []string{"role", "approved", "threats", "required_controls"},
-		TopLevelAllowed:  []string{"role", "approved", "threats", "required_controls"},
-		MaxBytes:         32 * 1024,
-	},
 	ActionReviewCode: {
 		TopLevelRequired: []string{"role", "approved", "findings"},
 		TopLevelAllowed:  []string{"role", "approved", "findings", "style_notes", "suggested_patches"},

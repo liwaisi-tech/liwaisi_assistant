@@ -16,9 +16,9 @@ type stubUserToolRegistry struct {
 	entries []*tools.ToolEntry
 }
 
-func (s *stubUserToolRegistry) InjectIntoCPN(*cpn.CPN)                    {}
-func (s *stubUserToolRegistry) Resolve(string) (*tools.ToolEntry, bool)   { return nil, false }
-func (s *stubUserToolRegistry) ListUserAuthored() []*tools.ToolEntry      { return s.entries }
+func (s *stubUserToolRegistry) InjectIntoCPN(*cpn.CPN)                  {}
+func (s *stubUserToolRegistry) Resolve(string) (*tools.ToolEntry, bool) { return nil, false }
+func (s *stubUserToolRegistry) ListUserAuthored() []*tools.ToolEntry    { return s.entries }
 func (s *stubUserToolRegistry) RegisterManifest(context.Context, cpn.ToolManifest) (cpn.ToolManifestResult, error) {
 	return cpn.ToolManifestResult{}, nil
 }

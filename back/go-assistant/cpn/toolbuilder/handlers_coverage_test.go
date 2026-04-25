@@ -158,7 +158,9 @@ func TestBuildVerdict_AggregatesIssues(t *testing.T) {
 }
 
 func TestDecodeAs_AllFormats(t *testing.T) {
-	type x struct{ A int `json:"a"` }
+	type x struct {
+		A int `json:"a"`
+	}
 
 	// string
 	var v1 x

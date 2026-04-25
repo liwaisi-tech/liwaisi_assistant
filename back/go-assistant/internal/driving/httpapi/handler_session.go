@@ -122,7 +122,7 @@ type Handlers struct {
 	// FlowBuilders maps a flow's `role` (persisted in the flows table) to the
 	// factory that builds a fresh per-session topology. Used by POST
 	// /api/v1/flows/{hash}/run to start a session on a library topology (e.g.,
-	// tool-atelier). Optional — when nil or missing a role the endpoint 503s.
+	// tool-creator). Optional — when nil or missing a role the endpoint 503s.
 	FlowBuilders map[string]app.TopologyFactory
 }
 

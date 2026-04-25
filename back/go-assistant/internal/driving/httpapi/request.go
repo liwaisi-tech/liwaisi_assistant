@@ -14,7 +14,7 @@ type CreateSessionRequest struct {
 	UserID  string `json:"user_id"`
 	Channel string `json:"channel"`
 	// FlowHash optionally binds the session to a non-default CPN
-	// (e.g. tool-atelier). When empty the server builds the default unified
+	// (e.g. tool-creator). When empty the server builds the default unified
 	// topology. The hash must exist in the flows table AND in the server's
 	// FlowBuilders map for the resolution to succeed.
 	FlowHash string `json:"flow_hash,omitempty"`

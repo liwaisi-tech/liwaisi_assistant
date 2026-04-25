@@ -218,17 +218,17 @@ func overlapFraction(needles, haystack []string) float64 {
 	return float64(overlapCount(needles, haystack)) / float64(len(needles))
 }
 
-// missingCaps returns caps present in the request but not in any match's
-// union. Placeholder for v1: per-tool cap metadata is not yet persisted on
+// missingCaps reports whether caps are missing from the match set.
+// Placeholder for v1: per-tool cap metadata is not yet persisted on
 // ToolEntry; once it is, refactor this to cross-check against the real cap
 // set rather than conflating "covered" with "has any hashtag overlap".
-func missingCaps(reqCaps []string, set cpn.ToolMatchSet) []string {
+// v1 heuristic: if any tool matched at all, assume the retriever has
+// the caps covered. Always returns nil until CapsFor plug-in is wired.
+func missingCaps(reqCaps []string, set cpn.ToolMatchSet) []string { //nolint:unparam // v1 stub: always nil until CapsFor plug-in is wired; return kept for future use
 	if len(reqCaps) == 0 || len(set.Matches) == 0 {
 		return nil
 	}
 	// v1 heuristic: if any tool matched at all, assume the retriever has
-	// the caps covered. This avoids falsely flagging ToolForge when the
-	// caller did not provide cap-level metadata. When the retriever's
-	// CapsFor plug-in is wired, this becomes authoritative.
+	// the caps covered.
 	return nil
 }

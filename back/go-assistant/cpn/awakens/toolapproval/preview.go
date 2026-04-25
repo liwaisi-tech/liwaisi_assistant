@@ -104,22 +104,23 @@ func extractExamples(helpText string) []string {
 	inExamples := false
 	start := 0
 	for i := 0; i <= len(helpText); i++ {
-		if i == len(helpText) || helpText[i] == '\n' {
-			line := helpText[start:i]
-			start = i + 1
-			if line == "Examples:" {
-				inExamples = true
-				continue
-			}
-			if !inExamples {
-				continue
-			}
-			if len(line) >= 2 && line[:2] == "  " {
-				out = append(out, line[2:])
-				continue
-			}
-			inExamples = false
+		if i < len(helpText) && helpText[i] != '\n' {
+			continue
 		}
+		line := helpText[start:i]
+		start = i + 1
+		if line == "Examples:" {
+			inExamples = true
+			continue
+		}
+		if !inExamples {
+			continue
+		}
+		if len(line) >= 2 && line[:2] == "  " {
+			out = append(out, line[2:])
+			continue
+		}
+		inExamples = false
 	}
 	return out
 }

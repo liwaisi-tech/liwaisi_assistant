@@ -65,7 +65,7 @@ func nonNilStrings(s []string) []string {
 func builtinFlowBuilders() map[string]app.TopologyFactory {
 	return map[string]app.TopologyFactory{
 		toolbuilder.FlowName: func(sessionID string) *cpn.CPN {
-			return toolbuilder.BuildToolAtelierTopology(sessionID, toolbuilder.AtelierDeps{})
+			return toolbuilder.BuildToolCreatorTopology(sessionID, toolbuilder.ToolCreatorDeps{})
 		},
 	}
 }

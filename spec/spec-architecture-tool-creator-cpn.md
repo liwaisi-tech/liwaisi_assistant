@@ -1,4 +1,4 @@
-# spec-architecture-tool-atelier-cpn
+# spec-architecture-tool-creator-cpn
 
 Status: draft
 Owner: liwaisi
@@ -8,12 +8,12 @@ Related: spec-architecture-cpn-agent-architect, spec-architecture-brae-context-a
 
 Give brae the ability to **author full Go micro-backend tools** end-to-end, autonomously, from a user request or an autonomous decision to build one. Output is a hexagonal-architecture Go project in `workspace/tools/src/<name>/` (git-initialised, `go mod init`-ed, scaffolded) that builds with `make`, tests with ≥85% coverage, installs with `./install.sh`, and ends up registered in brae's tool registry — callable in the main conversation CPN on the next turn.
 
-**Distinct from `tool-forge` (GAP-5)**, which produces single-source, single-binary scripts from one LLM prompt. The atelier produces **projects**: versioned, testable, hexagonal Go modules with a proper SDLC (spec → team review → totals → TDD → package → register).
+**Distinct from `tool-forge` (GAP-5)**, which produces single-source, single-binary scripts from one LLM prompt. tool-creator produces **projects**: versioned, testable, hexagonal Go modules with a proper SDLC (spec → team review → totals → TDD → package → register).
 
 ## 2. Non-goals
 
-- **HITL gates.** The container sandbox + policy gate is the safety boundary. The atelier runs autonomously; every decision is LLM- or code-made, never human-gated. (See `feedback_minimize_hitl.md`.)
-- **Replacing tool-forge.** Forge stays for fast single-binary cases; the atelier is for tools that warrant a project structure.
+- **HITL gates.** The container sandbox + policy gate is the safety boundary. tool-creator runs autonomously; every decision is LLM- or code-made, never human-gated. (See `feedback_minimize_hitl.md`.)
+- **Replacing tool-forge.** Forge stays for fast single-binary cases; tool-creator is for tools that warrant a project structure.
 - **Cross-language.** Go only in v1. The scaffold templates, Makefile, golangci config are Go-shaped.
 - **Remote execution.** All build/test steps run inside brae's container via the existing `NodeKindBash` + policy gate.
 - **Self-modifying templates.** v1 ships with fixed `embed.FS` templates; future work may let brae evolve them.
@@ -25,7 +25,7 @@ Two entry conditions, both flow to a single sub-CPN instantiation:
 1. **Explicit user intent.** "build me a tool that X", "create a brae tool for Y". Classified by the main conversation CPN's intent router (existing transition, extended).
 2. **Autonomous need.** During tool-match in the main CPN, if the Architect (spec §11) concludes no existing tool covers a required capability *and* forge's single-binary shape is insufficient (multi-file logic, persistence, non-trivial parsing), it emits a `TaskSpec` token that routes here instead of to forge.
 
-Routing is a `NodeKindInstantiate` against `ToolAtelierFlowName = "tool-atelier"`, persisted once at server start, identical to how `tool-forge` is registered.
+Routing is a `NodeKindInstantiate` against `ToolCreatorFlowName = "tool-creator"`, persisted once at server start, identical to how `tool-forge` is registered.
 
 ## 4. Topology
 
@@ -243,7 +243,7 @@ RegisterToolConfig{
     BinaryPath: "workspace/tools/bin/<name>",
     BinarySHA256: <sha>,
     Origin: "agent-authored",
-    RegisteredBy: "tool-atelier",
+    RegisteredBy: "tool-creator",
 }
 ```
 
@@ -281,13 +281,13 @@ test-coverage:
 - **Policy gate** (`infra/host/gate`): all bash transitions (`t-scaffold-workspace`, `t-tdd-loop`'s internal `go test`, `t-package`) route through it. `go build`, `go test`, `git init`, `git commit`, `mkdir`, `cp` are already in the safe-band. `go mod init` is added if missing.
 - **LLM client**: injected via existing `LLMClient` port. Each LLM transition has its own `LLMConfig` and minimal `ContextPolicy` (new role constants: `RoleArchitect`, `RoleGoEngineer`, `RoleDevOps`, `RoleQA`, `RolePM`, `RoleAIEngineer`).
 - **Tool registry** (`cpn/tools`): `t-register` publishes into the same registry used by the main conversation CPN. The tool becomes callable on the very next turn (registry is live-mutable, GAP-3).
-- **Flow registry** (`cpn/persist.FlowRepository`): `ToolAtelierFlowName` registered at startup like `ToolForgeFlowName`.
-- **Intent router in main CPN**: existing classifier gains two new output labels: `intent:build-tool-atelier` (rich project) and `intent:build-tool-forge` (single binary). Router decides based on complexity heuristics in the prompt.
+- **Flow registry** (`cpn/persist.FlowRepository`): `ToolCreatorFlowName` registered at startup like `ToolForgeFlowName`.
+- **Intent router in main CPN**: existing classifier gains two new output labels: `intent:build-tool-creator` (rich project) and `intent:build-tool-forge` (single binary). Router decides based on complexity heuristics in the prompt.
 
 ## 9. Requirements
 
-- **REQ-A01** The atelier topology is registered at server start as `tool-atelier`.
-- **REQ-A02** A user request `"build me a tool that …"` routes to the atelier via the main CPN's intent router when the request implies multi-file logic; else to forge.
+- **REQ-A01** tool-creator topology is registered at server start as `tool-creator`.
+- **REQ-A02** A user request `"build me a tool that …"` routes to tool-creator via the main CPN's intent router when the request implies multi-file logic; else to forge.
 - **REQ-A03** Triage emits at most one clarify question per session per tool request.
 - **REQ-A04** `t-scaffold-workspace` refuses name collisions in `workspace/tools/src/`.
 - **REQ-A05** Scaffolded project compiles (`go build ./...`) and tests (`go test ./...`) on a fresh render with zero modifications.
@@ -297,7 +297,7 @@ test-coverage:
 - **REQ-A09** TDD loop enforces Red → Green ordering and per-package coverage ≥85% before emitting success.
 - **REQ-A10** `t-package` fails loud if `make test-coverage` fails; failure routes to `p-errors`, not silently proceeds.
 - **REQ-A11** Newly registered tool is callable in the main conversation CPN on the next user turn (no restart).
-- **REQ-A12** No `NodeKindHITL` transitions in the atelier.
+- **REQ-A12** No `NodeKindHITL` transitions in tool-creator.
 - **REQ-A13** All bash executions route through the policy gate and bubble gate errors up.
 
 ## 10. Expert-team prompts (roles used by t-review-*)
@@ -323,7 +323,7 @@ Each role prompt is ≤800 chars and the reviewer sees ONLY the spec — no hist
 
 - v1 (this spec): topology + scaffold + in-line TDD loop + register. No GAP-4 synthesis of per-total TDD sub-CPNs — the `t-tdd-loop` handler runs the loop procedurally.
 - v2: replace `t-tdd-loop` with `NodeKindSynthesize`+`NodeKindInstantiate` so each total spins up a per-total TDD sub-CPN (better observability; each iteration becomes a proper transition firing with events).
-- v3: let the atelier author its own templates by learning from the last M accepted projects.
+- v3: let tool-creator author its own templates by learning from the last M accepted projects.
 
 ## 13. Open questions
 

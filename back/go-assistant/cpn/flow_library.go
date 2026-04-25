@@ -15,9 +15,9 @@ import (
 // Uses sync.RWMutex — read-heavy (Get/FindBy*), write-infrequent
 // (Register*) (GUD-003).
 type FlowLibrary struct {
-	mu      sync.RWMutex
-	flows   map[string]*FlowLibraryEntry // hash → entry
-	byDigest map[string]string           // signature digest → hash
+	mu       sync.RWMutex
+	flows    map[string]*FlowLibraryEntry // hash → entry
+	byDigest map[string]string            // signature digest → hash
 }
 
 // FlowLibraryEntry bundles a crystallised topology with its structural
@@ -147,7 +147,7 @@ func (fl *FlowLibrary) FindByDigest(digest string) (*FlowLibraryEntry, bool) {
 func (fl *FlowLibrary) FindCovering(hashtags, caps, inputColors []string) []*FlowLibraryEntry {
 	fl.mu.RLock()
 	defer fl.mu.RUnlock()
-	var out []*FlowLibraryEntry
+	out := make([]*FlowLibraryEntry, 0, len(fl.flows))
 	for _, entry := range fl.flows {
 		if entry == nil {
 			continue

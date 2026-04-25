@@ -9,16 +9,17 @@ import "fmt"
 //
 // Rows: action IDs. Values: the profiles allowed to run that action.
 // The empty-map case (action not present) denies ALL profiles.
+//
+// tool-creator collapses the catalog to 3 profiles (arch, go-eng,
+// devops). review-spec is open to all three; refine-spec /
+// decompose-totals / plan-subtasks are arch-only; review-code is
+// restricted to engineering reviewers.
 var allowlistMatrix = map[string]map[string]struct{}{
 	ActionReviewSpec: setOf(
-		ProfilePM, ProfileArch, ProfileQA, ProfileDevOps,
-		ProfileAIEng, ProfileGoEng, ProfileSecurity,
-	),
-	ActionSecurityEval: setOf(
-		ProfileSecurity,
+		ProfileArch, ProfileGoEng, ProfileDevOps,
 	),
 	ActionReviewCode: setOf(
-		ProfileGoEng, ProfileArch, ProfileQA, ProfileSecurity,
+		ProfileGoEng, ProfileArch,
 	),
 	ActionRefineSpec: setOf(
 		ProfileArch,

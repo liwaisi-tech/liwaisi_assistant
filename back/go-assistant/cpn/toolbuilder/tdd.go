@@ -145,13 +145,9 @@ func runSubtask(ctx context.Context, runner TDDRunner, workspace string, st Subt
 			return false, iter, bestCov, "write test: " + err.Error()
 		}
 		// Red step: test should currently fail.
-		passed, _, _, err := runner.RunTest(ctx, workspace, st.TestName)
+		_, _, _, err := runner.RunTest(ctx, workspace, st.TestName)
 		if err != nil {
 			return false, iter, bestCov, "red run: " + err.Error()
-		}
-		if passed {
-			// Non-failing "failing" test — LLM didn't produce a real red test.
-			// Move on to implementation anyway; this is a soft warning.
 		}
 
 		if _, err := runner.WriteImplementation(ctx, workspace, st); err != nil {

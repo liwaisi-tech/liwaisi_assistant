@@ -114,7 +114,7 @@ func TestHelpParse_Integration_GitRGSucceedFakeFails(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	var results []HelpResult
+	results := make([]HelpResult, 0, 3)
 	for _, bin := range []string{"git", "rg", "fakenohelp"} {
 		p, ok := c.Places[PlaceHelpResultPrefix+bin]
 		if !ok {

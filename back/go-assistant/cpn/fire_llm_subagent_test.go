@@ -78,7 +78,9 @@ func TestFireLLM_SubAgentHook_HappyPath(t *testing.T) {
 // fireLLM returns nil (not an error) so the executor keeps running.
 func TestFireLLM_SubAgentHook_ValidateFail(t *testing.T) {
 	mock := &mockLLMClient{
-		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) { return LLMResponse{Content: `{"junk":1}`}, nil },
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			return LLMResponse{Content: `{"junk":1}`}, nil
+		},
 	}
 	hook := &fakeSubAgentHook{validateErr: errBoom("missing required: role")}
 	c, tr := newSubAgentTestCPN(mock, hook)
@@ -109,7 +111,9 @@ func TestFireLLM_SubAgentHook_ValidateFail(t *testing.T) {
 // TestFireLLM_SubAgentHook_GateFail: Gate failure routes the same way.
 func TestFireLLM_SubAgentHook_GateFail(t *testing.T) {
 	mock := &mockLLMClient{
-		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) { return LLMResponse{Content: `{"role":"go-eng","approved":false,"findings":[],"suggested_patches":[{"path":"x","diff":"+os.Setenv(\"x\",\"y\")"}]}`}, nil },
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			return LLMResponse{Content: `{"role":"go-eng","approved":false,"findings":[],"suggested_patches":[{"path":"x","diff":"+os.Setenv(\"x\",\"y\")"}]}`}, nil
+		},
 	}
 	hook := &fakeSubAgentHook{gateErr: errBoom("forbidden pattern: os.Setenv")}
 	c, tr := newSubAgentTestCPN(mock, hook)
@@ -137,7 +141,9 @@ func TestFireLLM_SubAgentHook_GateFail(t *testing.T) {
 // transitions whose Meta.kind != "subagent".
 func TestFireLLM_SubAgentHook_NotASubAgent(t *testing.T) {
 	mock := &mockLLMClient{
-		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) { return LLMResponse{Content: `{"x":1}`}, nil },
+		completeFunc: func(_ context.Context, _ *LLMRequest) (LLMResponse, error) {
+			return LLMResponse{Content: `{"x":1}`}, nil
+		},
 	}
 	hook := &fakeSubAgentHook{validateErr: errBoom("would fire if called")}
 	c, tr := newSubAgentTestCPN(mock, hook)

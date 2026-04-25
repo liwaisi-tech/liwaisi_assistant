@@ -57,9 +57,9 @@ func (h *HashtagRetriever) Match(req ArchitectRequest) (cpn.ToolMatchSet, error)
 	// Collect candidate entries keyed by qualified name — a tool listed
 	// under several matching hashtags must only appear once.
 	type cand struct {
-		entry    *tools.ToolEntry
-		matched  map[string]struct{}
-		capHits  int
+		entry   *tools.ToolEntry
+		matched map[string]struct{}
+		capHits int
 	}
 	candidates := make(map[string]*cand)
 

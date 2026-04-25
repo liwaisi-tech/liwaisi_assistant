@@ -1,5 +1,5 @@
 // Package scaffold materialises a hexagonal Go project skeleton into a
-// target directory. Used by the tool-atelier CPN's t-scaffold-workspace
+// target directory. Used by the tool-creator CPN's t-scaffold-workspace
 // transition before it hands off to git init + go mod init.
 //
 // All templates are embedded at build time; rendering is deterministic given

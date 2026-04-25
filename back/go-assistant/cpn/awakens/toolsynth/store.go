@@ -25,9 +25,9 @@ type PendingToolStore interface {
 // Keyed by ToolManifest.Name; session membership is indexed separately so
 // List(sessionID) returns the staging subset deterministically.
 type MemoryPendingToolStore struct {
-	mu      sync.RWMutex
-	byName  map[string]PendingTool
-	bySess  map[string]map[string]struct{}
+	mu     sync.RWMutex
+	byName map[string]PendingTool
+	bySess map[string]map[string]struct{}
 }
 
 // NewMemoryPendingToolStore returns an empty in-memory store.

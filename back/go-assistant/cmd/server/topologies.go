@@ -1270,7 +1270,7 @@ func extractJSONObject(s string) string {
 // It does not try to fix semantically broken JSON (wrong types, duplicate
 // keys, etc.) — those cases still fall through to the caller's error path.
 func repairTruncatedJSONObject(s string) (string, bool) {
-	if len(s) == 0 || s[0] != '{' {
+	if s == "" || s[0] != '{' {
 		return "", false
 	}
 	var stack []byte
@@ -1318,7 +1318,7 @@ func repairTruncatedJSONObject(s string) (string, bool) {
 		// If the unterminated string ends with a lone backslash, drop it
 		// so we don't escape our closing quote.
 		raw := b.String()
-		if len(raw) > 0 && raw[len(raw)-1] == '\\' {
+		if raw != "" && raw[len(raw)-1] == '\\' {
 			b.Reset()
 			b.WriteString(raw[:len(raw)-1])
 		}

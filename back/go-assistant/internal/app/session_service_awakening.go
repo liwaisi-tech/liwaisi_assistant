@@ -16,8 +16,8 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/helpparse"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolapproval"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/awakens/toolsynth"
-	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/persist"
+	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/tools"
 )
 
 // awakeningDeadline is the hard upper-bound for the `brae-awakens` topology.

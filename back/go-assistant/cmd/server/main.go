@@ -428,7 +428,7 @@ func main() {
 	}
 
 	// ── Flow builders (shared by service + HTTP) ───────────────────────
-	// Built before the service so hashtag dispatch (`#tool-atelier ...`)
+	// Built before the service so hashtag dispatch (`#tool-creator ...`)
 	// inside SendMessage can rebuild the session's Root CPN via the same
 	// factory map that backs POST /api/v1/flows/{hash}/run.
 	flowBuilders := builtinFlowBuilders()
@@ -579,7 +579,7 @@ func main() {
 			toolReg.Repository(),
 			hostCapRepo,
 			resolvedHostID,
-			[]string{"classifier", "host-discovery", "tool-forge", "tool-atelier"},
+			[]string{"classifier", "host-discovery", "tool-forge", "tool-creator"},
 		)
 		serverOpts = append(serverOpts, httpapi.WithSkillManifest(skillManifest))
 	}
@@ -591,7 +591,7 @@ func main() {
 	// chat turn.
 	flowLibrary := cpn.NewFlowLibrary()
 	// Register built-in topologies so the architect planner can select them.
-	registerToolAtelier(flowLibrary)
+	registerToolCreator(flowLibrary)
 	flowPlanner := &architect.Planner{
 		Library:      flowLibrary,
 		Retriever:    architect.NewHashtagRetriever(toolReg),

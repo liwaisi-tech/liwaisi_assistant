@@ -14,30 +14,30 @@ type Request struct {
 	// Author is optional; used for README provenance only.
 	Author string `json:"author,omitempty"`
 
-	// SessionID threads the originating session through the atelier for
+	// SessionID threads the originating session through tool-creator for
 	// telemetry and event correlation.
 	SessionID string `json:"session_id,omitempty"`
 }
 
 // TriageVerdict is the payload on p-triaged. Produced by t-triage (LLM).
 type TriageVerdict struct {
-	Ready            bool    `json:"ready"`
-	ClarifyQuestion  string  `json:"clarify_question,omitempty"`
+	Ready             bool    `json:"ready"`
+	ClarifyQuestion   string  `json:"clarify_question,omitempty"`
 	NormalisedRequest Request `json:"request"`
 }
 
 // SpecDraft is the payload circulating through p-spec-v0, p-spec-draft,
-// p-spec-for-*, and p-spec-approved. The atelier's core representation.
+// p-spec-for-*, and p-spec-approved. tool-creator's core representation.
 type SpecDraft struct {
-	Name        string       `json:"name"`
-	Purpose     string       `json:"purpose"`
-	NonGoals    []string     `json:"non_goals,omitempty"`
-	DomainModel string       `json:"domain_model"`
-	Ports       []PortSpec   `json:"ports"`
+	Name        string        `json:"name"`
+	Purpose     string        `json:"purpose"`
+	NonGoals    []string      `json:"non_goals,omitempty"`
+	DomainModel string        `json:"domain_model"`
+	Ports       []PortSpec    `json:"ports"`
 	Adapters    []AdapterSpec `json:"adapters"`
-	CLISurface  string       `json:"cli_surface"`
-	TestPlan    []string     `json:"test_plan"`
-	Risks       []string     `json:"risks,omitempty"`
+	CLISurface  string        `json:"cli_surface"`
+	TestPlan    []string      `json:"test_plan"`
+	Risks       []string      `json:"risks,omitempty"`
 
 	// RefineCount tracks how many times this draft has been through the
 	// review → refine loop. Capped by MaxRefineCount per REQ-A06.
@@ -74,20 +74,20 @@ type ExistingTool struct {
 
 // Review is the output of any t-review-* transition.
 type Review struct {
-	Role            string   `json:"role"`
-	Approved        bool     `json:"approved"`
-	BlockingIssues  []string `json:"blocking_issues,omitempty"`
-	Suggestions     []string `json:"suggestions,omitempty"`
+	Role           string   `json:"role"`
+	Approved       bool     `json:"approved"`
+	BlockingIssues []string `json:"blocking_issues,omitempty"`
+	Suggestions    []string `json:"suggestions,omitempty"`
 }
 
 // Verdict is the payload on p-spec-approved OR p-refine-request, depending
 // on which aggregator transition fired. Always carries the reviews for
 // downstream introspection + refinement context.
 type Verdict struct {
-	Approved       bool     `json:"approved"`
-	BlockingIssues []string `json:"blocking_issues,omitempty"`
-	Suggestions    []string `json:"suggestions,omitempty"`
-	Reviews        []Review `json:"reviews"`
+	Approved       bool      `json:"approved"`
+	BlockingIssues []string  `json:"blocking_issues,omitempty"`
+	Suggestions    []string  `json:"suggestions,omitempty"`
+	Reviews        []Review  `json:"reviews"`
 	SpecDraft      SpecDraft `json:"spec_draft"`
 }
 
@@ -164,10 +164,10 @@ type Subtask struct {
 
 // TestedArtifact is the payload on p-tested — one per spec (batch) for v1.
 type TestedArtifact struct {
-	SpecName      string         `json:"spec_name"`
-	WorkspacePath string         `json:"workspace_path"`
-	CoveragePct   float64        `json:"coverage_pct"`
-	PerTotal      []TotalTested  `json:"per_total"`
+	SpecName      string        `json:"spec_name"`
+	WorkspacePath string        `json:"workspace_path"`
+	CoveragePct   float64       `json:"coverage_pct"`
+	PerTotal      []TotalTested `json:"per_total"`
 }
 
 // TotalTested is the per-total outcome of the TDD loop.

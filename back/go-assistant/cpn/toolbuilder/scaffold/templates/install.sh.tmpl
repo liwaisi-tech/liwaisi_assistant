@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — copies bin/{{.Name}} into brae's tool-bin directory so the
-# tool-atelier's t-register transition can pick it up by path.
+# install.sh — copies bin/{{.Name}} into brae's tool-bin directory so
+# tool-creator's t-install Makefile target can publish the binary.
 set -euo pipefail
 
 BINARY="{{.Name}}"

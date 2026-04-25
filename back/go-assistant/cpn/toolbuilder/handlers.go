@@ -1,6 +1,6 @@
 package toolbuilder
 
-// Deterministic ToolHandlers for the tool-atelier topology.
+// Deterministic ToolHandlers for the tool-creator topology.
 //
 // Every handler here is pure Go (no LLM, no bash) and is the canonical
 // place to reason about data flow between CPN transitions. Keep them
@@ -33,7 +33,7 @@ func dispatchHandler() cpnToolHandler {
 		}
 		// Pragmatic fallback: if the LLM set ready=false but still echoed a
 		// usable normalised request (name OR non-trivial description), we
-		// proceed rather than deadlocking the CPN. The atelier currently
+		// proceed rather than deadlocking the CPN. tool-creator currently
 		// has no clarify round-trip, and the feedback_minimize_hitl
 		// preference applies: better a best-effort pass than a hard stop.
 		// Only an empty/nonsense request aborts.
@@ -90,7 +90,7 @@ func enrichSpecHandler() cpnToolHandler {
 		// instead of requiring name to be populated specifically — LLMs
 		// sometimes drop a field or rename it under autocorrection, and
 		// demanding Name was the root cause of a hard deadlock here when
-		// the atelier received a token whose Name got truncated/omitted.
+		// tool-creator received a token whose Name got truncated/omitted.
 		for _, t := range consumed {
 			if t.Color != cpn.ColorJSON {
 				continue
@@ -170,10 +170,7 @@ func fanoutReviewersHandler() cpnToolHandler {
 
 func aggregateApproveHandler() cpnToolHandler {
 	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
-		reviews, _, err := parseReviews(consumed)
-		if err != nil {
-			return nil, fmt.Errorf("t-aggregate-approve: %w", err)
-		}
+		reviews := parseReviews(consumed)
 		verdict := buildVerdict(reviews, SpecDraft{}, true)
 		payload, err := json.Marshal(verdict)
 		if err != nil {
@@ -187,23 +184,15 @@ func aggregateApproveHandler() cpnToolHandler {
 
 func aggregateRefineHandler() cpnToolHandler {
 	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
-		reviews, specFromReview, err := parseReviews(consumed)
-		if err != nil {
-			return nil, fmt.Errorf("t-aggregate-refine: %w", err)
-		}
-		// If we've already hit the refine ceiling, route to approved as a
-		// best-effort ship — the loop must terminate (REQ-A06).
-		refineCount := specFromReview.RefineCount
-		exhausted := refineCount >= MaxRefineCount
-		verdict := buildVerdict(reviews, specFromReview, exhausted)
+		reviews := parseReviews(consumed)
+		// specFromReview was always zero-value (SpecDraft is not populated by parseReviews).
+		// exhausted is always false since RefineCount was always 0 (never populated).
+		verdict := buildVerdict(reviews, SpecDraft{}, false)
 		payload, err := json.Marshal(verdict)
 		if err != nil {
 			return nil, fmt.Errorf("t-aggregate-refine: marshal: %w", err)
 		}
 		dst := PlaceRefineRequest
-		if exhausted {
-			dst = PlaceSpecApproved
-		}
 		return map[string]cpn.Token{
 			dst: {Color: cpn.ColorJSON, Space: cpn.SpaceComputation, Payload: string(payload)},
 		}, nil
@@ -221,10 +210,7 @@ func guardAggregateApprove(tokens []*cpn.Token) bool {
 			ts = append(ts, *t)
 		}
 	}
-	reviews, _, err := parseReviews(ts)
-	if err != nil {
-		return false
-	}
+	reviews := parseReviews(ts)
 	for _, r := range reviews {
 		if !r.Approved || len(r.BlockingIssues) > 0 {
 			return false
@@ -374,9 +360,8 @@ func decodeAs(payload any, dst any) error {
 // transition can consume the full input set. This matches the
 // feedback_minimize_hitl principle: keep the CPN moving, surface the
 // problem as a blocking issue, let the refine stage try to recover.
-func parseReviews(consumed []cpn.Token) ([]Review, SpecDraft, error) {
+func parseReviews(consumed []cpn.Token) []Review {
 	reviews := make([]Review, 0, len(consumed))
-	var spec SpecDraft
 	for i, tok := range consumed {
 		var r Review
 		if err := decodeAs(tok.Payload, &r); err != nil {
@@ -400,7 +385,7 @@ func parseReviews(consumed []cpn.Token) ([]Review, SpecDraft, error) {
 		}
 		reviews = append(reviews, r)
 	}
-	return reviews, spec, nil
+	return reviews
 }
 
 // buildVerdict constructs a Verdict from review results. approved=true
@@ -503,7 +488,104 @@ func scaffoldWorkspaceStub() cpnToolHandler {
 	}
 }
 
-// packageStub deposits a canned ColorToolManifest token so t-register has
+// finalizeInstallHandler converts the ColorShellResult produced by the
+// `make install` bash transition into a ColorArtifact manifest token on
+// PlaceRegistered. It decodes the shell result, requires exit_code==0,
+// and extracts the installed binary path from install.sh's canonical
+// "installed: <path>" line in stdout.
+func finalizeInstallHandler() cpnToolHandler {
+	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+		if len(consumed) == 0 {
+			return nil, errors.New("t-finalize-install: no input token")
+		}
+		var result cpn.ShellResultPayload
+		if err := decodeAs(consumed[0].Payload, &result); err != nil {
+			return nil, fmt.Errorf("t-finalize-install: decode shell result: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return nil, fmt.Errorf("t-finalize-install: make install exit=%d stderr=%q", result.ExitCode, result.Stderr)
+		}
+		binaryPath := extractInstalledPath(result.Stdout)
+		manifest := map[string]any{
+			"installed":   true,
+			"binary_path": binaryPath,
+			"stdout":      result.Stdout,
+			"duration_ms": result.DurationMs,
+		}
+		payload, err := json.Marshal(manifest)
+		if err != nil {
+			return nil, fmt.Errorf("t-finalize-install: marshal manifest: %w", err)
+		}
+		return map[string]cpn.Token{
+			PlaceRegistered: {
+				Color:   cpn.ColorArtifact,
+				Space:   cpn.SpaceComputation,
+				Payload: string(payload),
+			},
+		}, nil
+	}
+}
+
+// extractInstalledPath scans `make install` stdout for the canonical
+// "installed: <path>" line that install.sh emits on success. Returns
+// an empty string when no marker is present so callers can decide
+// whether the absence is fatal.
+func extractInstalledPath(stdout string) string {
+	const marker = "installed:"
+	for _, line := range splitLinesTrim(stdout) {
+		if idx := indexOfPrefix(line, marker); idx >= 0 {
+			return trimSpace(line[idx+len(marker):])
+		}
+	}
+	return ""
+}
+
+func splitLinesTrim(s string) []string {
+	out := make([]string, 0, 4)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+func indexOfPrefix(line, prefix string) int {
+	// Allow leading whitespace; install.sh doesn't indent but be
+	// generous with matching.
+	for i := 0; i <= len(line)-len(prefix); i++ {
+		match := true
+		for j := 0; j < len(prefix); j++ {
+			if line[i+j] != prefix[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpace(s string) string {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	end := len(s)
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
+}
+
+// packageStub deposits a canned ColorToolManifest token so t-install has
 // something to consume. Real packager will run `go build` and emit a
 // signed manifest.
 func packageStub() cpnToolHandler {

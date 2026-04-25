@@ -11,11 +11,11 @@ type Strategy string
 
 const (
 	StrategyUnknown   Strategy = ""
-	StrategyReuse     Strategy = "reuse"      // library hit, run as-is
-	StrategyExtend    Strategy = "extend"     // library near-hit, mutate + run
-	StrategyCompose   Strategy = "compose"    // no hit, compose from retrieved tools
-	StrategyToolForge Strategy = "toolforge"  // missing capability → author new tool first
-	StrategyReject    Strategy = "reject"     // no feasible plan (budget/refinement exhausted)
+	StrategyReuse     Strategy = "reuse"     // library hit, run as-is
+	StrategyExtend    Strategy = "extend"    // library near-hit, mutate + run
+	StrategyCompose   Strategy = "compose"   // no hit, compose from retrieved tools
+	StrategyToolForge Strategy = "toolforge" // missing capability → author new tool first
+	StrategyReject    Strategy = "reject"    // no feasible plan (budget/refinement exhausted)
 )
 
 // HITLMode toggles whether the architect interacts with the user before
@@ -35,7 +35,7 @@ const (
 //
 // Equality over ArchitectRequest must be structural for deterministic caching.
 // When adding fields, keep them comparable value types or sorted slices.
-type ArchitectRequest struct {
+type ArchitectRequest struct { //nolint:revive // stutter is intentional: disambiguates from other Request types at import sites
 	SessionID       string
 	TurnID          string
 	NL              string
@@ -52,15 +52,15 @@ type ArchitectRequest struct {
 // design loop. The Architect LLM transition (to be added later) consumes
 // ArchitectDrafts from Plan and decides whether to iterate with the user
 // or proceed to validate+instantiate.
-type ArchitectDraft struct {
+type ArchitectDraft struct { //nolint:revive // stutter is intentional: disambiguates from other Draft types at import sites
 	Strategy     Strategy
-	BaseFlowID   string               // set when Strategy == Reuse | Extend
-	MatchSet     cpn.ToolMatchSet     // tools this plan uses
-	MissingCaps  []string             // capabilities with no covering tool
-	TopologyBlob []byte               // canonical JSON from the jit composer (empty on Reuse)
-	UserPrompt   string               // optional HITL question
-	Confidence   float64              // 0..1
-	Reason       string               // human-readable rationale
+	BaseFlowID   string                  // set when Strategy == Reuse | Extend
+	MatchSet     cpn.ToolMatchSet        // tools this plan uses
+	MissingCaps  []string                // capabilities with no covering tool
+	TopologyBlob []byte                  // canonical JSON from the jit composer (empty on Reuse)
+	UserPrompt   string                  // optional HITL question
+	Confidence   float64                 // 0..1
+	Reason       string                  // human-readable rationale
 	Candidates   []*cpn.FlowLibraryEntry // library near-matches (sorted best-first)
 }
 

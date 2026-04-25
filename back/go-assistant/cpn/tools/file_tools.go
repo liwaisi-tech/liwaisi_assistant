@@ -314,9 +314,9 @@ func countLines(b []byte) int {
 // approximation suitable for review-style output — not a faithful diff
 // implementation. Truncated diffs are middle-elided with a "..."
 // marker so context from both ends survives.
-func unifiedDiff(path string, old, new []byte, maxLines int) (diff string, truncated bool) {
+func unifiedDiff(path string, old, newer []byte, maxLines int) (diff string, truncated bool) {
 	oldLines := splitLines(string(old))
-	newLines := splitLines(string(new))
+	newLines := splitLines(string(newer))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n+++ %s\n", path, path)

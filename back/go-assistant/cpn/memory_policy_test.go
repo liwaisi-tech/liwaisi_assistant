@@ -229,21 +229,21 @@ func TestBuildWorkspacePreamble_AC008_OverflowTrailer(t *testing.T) {
 
 func TestParseLedgerLine(t *testing.T) {
 	cases := []struct {
-		name           string
-		in             string
-		wantVerb       string
-		wantTarget     string
-		wantSummary    string
-		wantOK         bool
+		name        string
+		in          string
+		wantVerb    string
+		wantTarget  string
+		wantSummary string
+		wantOK      bool
 	}{
 		{
-			name: "ok with size",
-			in:   "[ok] write ~/x/main.go (1247 bytes)",
+			name:     "ok with size",
+			in:       "[ok] write ~/x/main.go (1247 bytes)",
 			wantVerb: "write", wantTarget: "~/x/main.go", wantSummary: "(1247 bytes)", wantOK: true,
 		},
 		{
-			name: "ok no size",
-			in:   "[ok] mkdir ~/bin",
+			name:     "ok no size",
+			in:       "[ok] mkdir ~/bin",
 			wantVerb: "mkdir", wantTarget: "~/bin", wantOK: true,
 		},
 		{
@@ -276,7 +276,10 @@ func TestParseLedgerLine(t *testing.T) {
 }
 
 func TestElideMiddle(t *testing.T) {
-	cases := []struct{ in, want string; max int }{
+	cases := []struct {
+		in, want string
+		max      int
+	}{
 		{"short", "short", 60},
 		{"/very/very/long/path/to/some/file.go", "/very/very/lo.../some/file.go", 30},
 	}

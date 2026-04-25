@@ -100,11 +100,7 @@ func LoadArtifactGate(r io.Reader) (*ArtifactGate, error) {
 				return nil, fmt.Errorf("artifact-gate: action %q has invalid pattern %q: %w", actionID, pat, err)
 			}
 		}
-		out.Rules[actionID] = ArtifactRules{
-			AllowedImports:    row.AllowedImports,
-			ForbiddenPatterns: row.ForbiddenPatterns,
-			MaxArtifactBytes:  row.MaxArtifactBytes,
-		}
+		out.Rules[actionID] = ArtifactRules(row)
 	}
 	return out, nil
 }
@@ -203,7 +199,7 @@ func looksLikeImportPath(s string) bool {
 		return true
 	}
 	// Bare stdlib package names — all lowercase, no spaces, length-bounded.
-	if len(s) == 0 || len(s) > 32 {
+	if s == "" || len(s) > 32 {
 		return false
 	}
 	for _, r := range s {

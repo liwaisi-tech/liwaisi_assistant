@@ -21,23 +21,23 @@ import (
 )
 
 const (
-	MaxBinaries         = 16
-	DefaultHelpTimeout  = 3 * time.Second
-	MinHelpTimeout      = 200 * time.Millisecond
-	MaxHelpOutputBytes  = 64 * 1024
-	HelpVariantLong     = "--help"
-	HelpVariantShort    = "-h"
-	GateDenyExitCode    = -2
-	TimeoutExitCode     = -1
+	MaxBinaries        = 16
+	DefaultHelpTimeout = 3 * time.Second
+	MinHelpTimeout     = 200 * time.Millisecond
+	MaxHelpOutputBytes = 64 * 1024
+	HelpVariantLong    = "--help"
+	HelpVariantShort   = "-h"
+	GateDenyExitCode   = -2
+	TimeoutExitCode    = -1
 )
 
 const (
-	PlaceTriggerID           = "p-help-trigger"
-	PlaceHelpLongPrefix      = "p-help-long-"
-	PlaceHelpShortPrefix     = "p-help-short-"
-	PlaceHelpMergedPrefix    = "p-help-merged-"
-	PlaceHelpParsedPrefix    = "p-help-parsed-"
-	PlaceHelpResultPrefix    = "p-help-result-"
+	PlaceTriggerID              = "p-help-trigger"
+	PlaceHelpLongPrefix         = "p-help-long-"
+	PlaceHelpShortPrefix        = "p-help-short-"
+	PlaceHelpMergedPrefix       = "p-help-merged-"
+	PlaceHelpParsedPrefix       = "p-help-parsed-"
+	PlaceHelpResultPrefix       = "p-help-result-"
 	TransitionInvokeLongPrefix  = "t-help-invoke-long-"
 	TransitionInvokeShortPrefix = "t-help-invoke-short-"
 	TransitionMergePrefix       = "t-help-merge-"
@@ -134,9 +134,4 @@ func helpRawToken(r HelpRaw) cpn.Token {
 // helpResultToken wraps a HelpResult into a ColorArtifact token.
 func helpResultToken(r HelpResult) cpn.Token {
 	return cpn.Token{Color: cpn.ColorArtifact, Space: cpn.SpaceComputation, Payload: r}
-}
-
-// helpSchemaToken wraps a HelpSchema into a ColorArtifact token.
-func helpSchemaToken(s HelpSchema) cpn.Token {
-	return cpn.Token{Color: cpn.ColorArtifact, Space: cpn.SpaceComputation, Payload: s}
 }

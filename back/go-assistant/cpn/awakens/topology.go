@@ -43,17 +43,17 @@ const (
 	PlaceAwakeningReportRaw = "p-awakening-report-raw"
 	// PlaceAwakeningReport holds the enriched AwakeningReport produced by
 	// t-awaken-curate (probe + LLM-authored tools_to_register).
-	PlaceAwakeningReport    = "p-awakening-report"
+	PlaceAwakeningReport = "p-awakening-report"
 	// PlaceAwakeningReportSynth carries the same AwakeningReport after
 	// t-awaken-synth has optionally run helpparse + toolsynth to stage
 	// PendingTools. The report payload is unchanged — synthesised manifests
 	// live in PendingToolStore (staged, not registered). Report consumes
 	// this downstream so curate and synth run in series inside one CPN.
 	PlaceAwakeningReportSynth = "p-awakening-report-synth"
-	PlaceHostCapabilitiesWK = cpn.WellKnownHostCapabilitiesPlace
-	PlaceAwakeningSnapshot  = "p-awakening-snapshot"
-	PlaceAwakeningMessage   = "p-awakening-message"
-	PlaceAwakeningToolBatch = "p-awakening-toolbatch"
+	PlaceHostCapabilitiesWK   = cpn.WellKnownHostCapabilitiesPlace
+	PlaceAwakeningSnapshot    = "p-awakening-snapshot"
+	PlaceAwakeningMessage     = "p-awakening-message"
+	PlaceAwakeningToolBatch   = "p-awakening-toolbatch"
 )
 
 // ── Transition ids. ──────────────────────────────────────────────────────────
@@ -86,11 +86,11 @@ const (
 	// synthesize a PendingTool manifest via toolsynth.Compose. Manifests
 	// are staged in deps.PendingToolStore — NEVER auto-registered. Degrades
 	// to a pass-through when the store, LLM, or adapter are missing.
-	TransitionAwakenSynth  = "t-awaken-synth"
-	TransitionAwakenReport = "t-awaken-report"
-	TransitionAwakenPersist          = "t-awaken-persist"
-	TransitionAwakenRegisterTools    = "t-awaken-register-tools"
-	TransitionAwakenEmitMessage      = "t-awaken-emit-message"
+	TransitionAwakenSynth         = "t-awaken-synth"
+	TransitionAwakenReport        = "t-awaken-report"
+	TransitionAwakenPersist       = "t-awaken-persist"
+	TransitionAwakenRegisterTools = "t-awaken-register-tools"
+	TransitionAwakenEmitMessage   = "t-awaken-emit-message"
 )
 
 // Deps groups the collaborators the topology needs. All fields are optional;
@@ -231,13 +231,6 @@ func makeAwakenSeeder(prompt string) func(*cpn.CPN) {
 			})
 		}
 	}
-}
-
-// seedAwakenTrigger is the legacy exported seeder retained for tests and
-// callers that expect the pre-Lexicon behaviour. New code should route
-// through TopologyFactory, which composes the Lexicon-aware prompt.
-func seedAwakenTrigger(c *cpn.CPN) {
-	makeAwakenSeeder(SystemPromptPlan)(c)
 }
 
 // newLLMBootstrapTransition is the first-turn LLM transition. Its inputs are

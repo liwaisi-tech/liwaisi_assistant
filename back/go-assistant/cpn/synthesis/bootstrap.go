@@ -77,7 +77,7 @@ func Bootstrap(safe *SafeRegistry) {
 // on the cpn side of Axiom A13 and cannot import persist directly (e.g.
 // cpn/synthesis/jit). Returns a LintResult with PassedFlag=false and a
 // decode-error note when the blob is unparseable.
-func LintRaw(raw json.RawMessage, safe cpn.SafeRegistryPort, cap cpn.SizeCap) LintResult {
+func LintRaw(raw json.RawMessage, safe cpn.SafeRegistryPort, sizeCap cpn.SizeCap) LintResult {
 	topo, err := decodeTopology(raw)
 	if err != nil {
 		return LintResult{
@@ -85,7 +85,7 @@ func LintRaw(raw json.RawMessage, safe cpn.SafeRegistryPort, cap cpn.SizeCap) Li
 			Other:      []string{"topology decode error: " + err.Error()},
 		}
 	}
-	return Lint(topo, safe, cap)
+	return Lint(topo, safe, sizeCap)
 }
 
 func decodeTopology(raw json.RawMessage) (*persist.CPNTopology, error) {

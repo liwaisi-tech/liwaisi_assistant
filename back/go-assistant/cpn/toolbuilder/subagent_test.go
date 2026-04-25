@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestProfileSpec_NoActionVerbs asserts the foundational invariant of
-// PR1: profile text describes WHO a sub-agent is, not WHAT it does. No
+// TestProfileSpec_NoActionVerbs asserts the foundational invariant:
+// profile text describes WHO a sub-agent is, not WHAT it does. No
 // profile field may contain an action verb. When this test fails, the
 // profile has been contaminated with action-specific text and the
 // (profile × action) decomposition has regressed.
@@ -52,7 +52,7 @@ func TestCatalog_SeedsWithoutError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSubAgentCatalog: %v", err)
 	}
-	wantProfiles := []string{ProfilePM, ProfileArch, ProfileQA, ProfileDevOps, ProfileAIEng, ProfileGoEng}
+	wantProfiles := []string{ProfileArch, ProfileGoEng, ProfileDevOps}
 	for _, id := range wantProfiles {
 		if _, ok := cat.Profiles.Get(id); !ok {
 			t.Errorf("profile %q missing from registry", id)
@@ -94,7 +94,7 @@ func TestCompose_ContainsAllBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := cat.Compose(ProfileQA, ActionReviewSpec)
+	got, err := cat.Compose(ProfileDevOps, ActionReviewSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestCompose_UnknownIDs(t *testing.T) {
 	if _, err := cat.Compose("no-such-profile", ActionReviewSpec); err == nil {
 		t.Error("expected error for unknown profile")
 	}
-	if _, err := cat.Compose(ProfileQA, "no-such-action"); err == nil {
+	if _, err := cat.Compose(ProfileDevOps, "no-such-action"); err == nil {
 		t.Error("expected error for unknown action")
 	}
 }
@@ -142,11 +142,11 @@ func TestTransitionIDConvention(t *testing.T) {
 	}
 }
 
-// TestToolAtelier_ReviewerMetaPopulated asserts every reviewer
-// transition built by BuildToolAtelierTopology carries the sub-agent
+// TestToolCreator_ReviewerMetaPopulated asserts every reviewer
+// transition built by BuildToolCreatorTopology carries the sub-agent
 // Meta the visualizer expects.
-func TestToolAtelier_ReviewerMetaPopulated(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+func TestToolCreator_ReviewerMetaPopulated(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	for _, r := range reviewerRoles {
 		tr, ok := c.Transitions[r.TransitionID]
 		if !ok {
@@ -180,9 +180,9 @@ func TestEffectiveTools_IntersectionSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// PR1 profiles have nil MaxTools and review-spec has nil
-	// RequiredTools — intersection MUST be empty.
-	tools, err := cat.EffectiveTools(ProfileQA, ActionReviewSpec)
+	// review-spec has nil RequiredTools — intersection MUST be empty
+	// regardless of profile.MaxTools.
+	tools, err := cat.EffectiveTools(ProfileDevOps, ActionReviewSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,11 +191,11 @@ func TestEffectiveTools_IntersectionSemantics(t *testing.T) {
 	}
 }
 
-// TestToolAtelier_ArchSubAgentsMetaPopulated covers PR4: the 3
-// heterogeneous LLM transitions (refine-spec, decompose-totals,
-// plan-subtasks) must all be arch sub-agents with Meta populated.
-func TestToolAtelier_ArchSubAgentsMetaPopulated(t *testing.T) {
-	c := BuildToolAtelierTopology("test-session", AtelierDeps{})
+// TestToolCreator_ArchSubAgentsMetaPopulated covers the heterogeneous
+// LLM transitions (refine-spec, decompose-totals, plan-subtasks) — all
+// must be arch sub-agents with Meta populated.
+func TestToolCreator_ArchSubAgentsMetaPopulated(t *testing.T) {
+	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	cases := []struct {
 		tid, action string
 	}{
@@ -225,9 +225,9 @@ func TestToolAtelier_ArchSubAgentsMetaPopulated(t *testing.T) {
 	}
 }
 
-// TestNoOpValidator_Accepts_All keeps the PR2 contract honest: the
-// default validator must accept every payload so plumbing doesn't
-// silently reject output before PR2 lands real schemas.
+// TestNoOpValidator_Accepts_All keeps the validator contract honest:
+// the default validator must accept every payload so plumbing doesn't
+// silently reject output.
 func TestNoOpValidator_Accepts_All(t *testing.T) {
 	v := NoOpValidator{}
 	if err := v.Validate(ActionSpec{}, []byte("not json")); err != nil {

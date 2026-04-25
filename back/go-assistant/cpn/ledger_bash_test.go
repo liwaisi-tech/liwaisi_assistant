@@ -50,13 +50,13 @@ func TestClassifyBashCommand(t *testing.T) {
 			wantVerb: LedgerVerbMv, wantTarget: "new", wantOK: true,
 		},
 		{
-			name:   "ls is read-only",
-			cmd:    "ls", args: []string{"-la"},
+			name: "ls is read-only",
+			cmd:  "ls", args: []string{"-la"},
 			wantOK: false,
 		},
 		{
-			name:   "unknown command",
-			cmd:    "frobnicate", args: []string{"x"},
+			name: "unknown command",
+			cmd:  "frobnicate", args: []string{"x"},
 			wantOK: false,
 		},
 		{

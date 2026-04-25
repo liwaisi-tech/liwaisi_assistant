@@ -94,7 +94,27 @@ const (
 	// SubAgentFinishedPayload. The OK field is false when validate or
 	// gate routed the firing to ErrorPlace.
 	EventSubAgentFinished EventType = "subagent_finished"
+
+	// EventExecutionFailed is emitted when a topology's error-handling
+	// transition consumes a terminal failure token (e.g. tool-creator's
+	// t-handle-error reacting to a validator/gate rejection routed to
+	// PlaceErrors). Payload is ExecutionFailedPayload. Consumers use it
+	// to surface an explicit failure state instead of waiting on a CPN
+	// that would otherwise silently deadlock.
+	EventExecutionFailed EventType = "execution_failed"
 )
+
+// ExecutionFailedPayload accompanies EventExecutionFailed. Fields are
+// best-effort and may be empty when the originating token did not
+// carry enough structured context (e.g. an error from a non-subagent
+// transition).
+type ExecutionFailedPayload struct {
+	Stage     string `json:"stage,omitempty"`      // "validate", "gate", etc.
+	Reason    string `json:"reason,omitempty"`     // human-readable error text
+	ProfileID string `json:"profile_id,omitempty"` // sub-agent profile
+	ActionID  string `json:"action_id,omitempty"`  // sub-agent action
+	Source    string `json:"source,omitempty"`     // originating transition id
+}
 
 // SubAgentStartedPayload accompanies EventSubAgentStarted.
 type SubAgentStartedPayload struct {

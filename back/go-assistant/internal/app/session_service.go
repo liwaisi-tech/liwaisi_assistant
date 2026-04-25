@@ -66,12 +66,12 @@ type SessionService struct {
 	// flowBuilders is the optional role→factory registry that backs the
 	// SendMessage hashtag dispatcher. Keys match the `role` field of the
 	// CPN each factory produces.
-	flowBuilders map[string]TopologyFactory
-	persist         *PersistDeps
-	tokenLedger     TokenLedgerReader
-	toolRegistry    SessionToolRegistry
-	defaultModel    string            // injected by WithDefaultModel; fallback when registry unavailable
-	modelRegistry   cpn.ModelRegistry // optional; enables REQ-GATE-001 runtime validation
+	flowBuilders  map[string]TopologyFactory
+	persist       *PersistDeps
+	tokenLedger   TokenLedgerReader
+	toolRegistry  SessionToolRegistry
+	defaultModel  string            // injected by WithDefaultModel; fallback when registry unavailable
+	modelRegistry cpn.ModelRegistry // optional; enables REQ-GATE-001 runtime validation
 
 	// hostRuntime is the GAP-1 host-side collaborator. When non-nil, every
 	// created CPN inherits it so NodeKindBash transitions can fire.
@@ -469,7 +469,7 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, chann
 
 // CreateSessionWithFactory creates a session bound to a caller-supplied
 // topology factory. Used by POST /api/v1/flows/{hash}/run to start a session
-// on a library topology (e.g., tool-atelier) rather than the default assistant.
+// on a library topology (e.g., tool-creator) rather than the default assistant.
 func (s *SessionService) CreateSessionWithFactory(ctx context.Context, userID string, channel cpn.ChannelType, factory TopologyFactory) (*SessionInfo, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("%w: userID is required", ErrInvalidInput)
@@ -2165,7 +2165,7 @@ func autoTitle(content string) string {
 // findSourcePlace returns the first place with no incoming transitions (source).
 // buildInputToken constructs the token deposited into the CPN's source
 // place on every user turn. It matches the place's Color and Space so
-// multi-topology sessions (e.g. hashtag-dispatched tool-atelier) don't
+// multi-topology sessions (e.g. hashtag-dispatched tool-creator) don't
 // deadlock the CPN on a color/space mismatch.
 //
 // Encoding rules:
@@ -2203,8 +2203,7 @@ func buildInputToken(source *cpn.Place, sessionID, content string) *cpn.Token {
 // that don't use the default "p-input" convention. When a role isn't in
 // this map, callers fall through to findSourcePlace.
 func knownEntryPlace(role string) string {
-	switch role {
-	case "tool-atelier":
+	if role == "tool-creator" {
 		return "p-request"
 	}
 	return ""
@@ -2457,7 +2456,7 @@ func renderLexiconExcerptBytes(lex cpn.Lexicon) []byte {
 	if len(entries) == 0 {
 		return nil
 	}
-	var b []byte
+	b := make([]byte, 0, len(entries)*16)
 	for _, e := range entries {
 		b = append(b, e.Tag...)
 		b = append(b, ':')
@@ -2466,4 +2465,3 @@ func renderLexiconExcerptBytes(lex cpn.Lexicon) []byte {
 	}
 	return b
 }
-

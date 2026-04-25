@@ -58,8 +58,10 @@ rules:
 
 func TestArtifactGate_AdvisoryActionsSkipGate(t *testing.T) {
 	g := DefaultArtifactGate()
-	action := ActionSpec{ID: ActionSecurityEval, Capabilities: ActionCapabilities{AdvisoryOnly: true}}
-	if err := g.Gate(action, []byte(`{"role":"security","threats":[]}`)); err != nil {
+	// review-spec is advisory-only; gating must be a no-op regardless of
+	// payload content.
+	action := ActionSpec{ID: ActionReviewSpec, Capabilities: ActionCapabilities{AdvisoryOnly: true}}
+	if err := g.Gate(action, []byte(`{"role":"go-eng","approved":true}`)); err != nil {
 		t.Fatalf("advisory action must skip gate: %v", err)
 	}
 }

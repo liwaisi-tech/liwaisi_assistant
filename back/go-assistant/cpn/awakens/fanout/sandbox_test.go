@@ -173,12 +173,12 @@ func TestSandbox_IsZero(t *testing.T) {
 
 type fakeInfo struct{ name string }
 
-func (f fakeInfo) Name() string       { return f.name }
-func (fakeInfo) Size() int64          { return 0 }
-func (fakeInfo) Mode() fs.FileMode    { return 0 }
+func (f fakeInfo) Name() string         { return f.name }
+func (fakeInfo) Size() int64            { return 0 }
+func (fakeInfo) Mode() fs.FileMode      { return 0 }
 func (fakeInfo) ModTime() (t time.Time) { return }
-func (fakeInfo) IsDir() bool          { return false }
-func (fakeInfo) Sys() any             { return nil }
+func (fakeInfo) IsDir() bool            { return false }
+func (fakeInfo) Sys() any               { return nil }
 
 func statWith(present map[string]bool) statFunc {
 	return func(p string) (os.FileInfo, error) {

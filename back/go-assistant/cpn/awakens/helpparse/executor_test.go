@@ -174,7 +174,7 @@ func TestInvokeExecutor_ObservabilityCallbacks(t *testing.T) {
 
 func TestMergeHandler_ConcatenatesLongThenShort(t *testing.T) {
 	t.Parallel()
-	h := makeMergeHandler("git", PlaceHelpLongPrefix+"git", PlaceHelpShortPrefix+"git", PlaceHelpMergedPrefix+"git")
+	h := makeMergeHandler("git", PlaceHelpMergedPrefix+"git")
 	tokens := []cpn.Token{
 		helpRawToken(HelpRaw{Binary: "git", Variant: HelpVariantShort, HelpText: "short"}),
 		helpRawToken(HelpRaw{Binary: "git", Variant: HelpVariantLong, HelpText: "long"}),
@@ -191,7 +191,7 @@ func TestMergeHandler_ConcatenatesLongThenShort(t *testing.T) {
 
 func TestMergeHandler_BothEmpty(t *testing.T) {
 	t.Parallel()
-	h := makeMergeHandler("x", "pL", "pS", "pM")
+	h := makeMergeHandler("x", "pM")
 	out, err := h(context.Background(), []cpn.Token{
 		helpRawToken(HelpRaw{Binary: "x", Variant: HelpVariantLong, Err: "fail"}),
 		helpRawToken(HelpRaw{Binary: "x", Variant: HelpVariantShort, Err: "fail"}),

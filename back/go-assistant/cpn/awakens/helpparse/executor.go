@@ -101,7 +101,7 @@ func makeInvokeExecutor(binary, path, variant string, deps Deps) func(context.Co
 // ONE merged HelpRaw whose HelpText is the AND-join (long first, then short,
 // separated by "\n"). If both variants are empty, the merged token carries an
 // Err marker so the downstream LLM-parse stage skips it.
-func makeMergeHandler(binary string, longPlace, shortPlace, outPlace string) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
+func makeMergeHandler(binary string, outPlace string) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
 	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		var longRaw, shortRaw HelpRaw
 		for _, tok := range consumed {
@@ -143,7 +143,7 @@ func sourceSHA256(longText, shortText string) string {
 //
 // Failures at any stage are surfaced as HelpResult{Err, Stage} rather than
 // hard errors — the reducer filters them out (REQ-1104).
-func makeLLMParseHandler(binary, mergedPlace, parsedPlace string, deps Deps) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
+func makeLLMParseHandler(binary, parsedPlace string, deps Deps) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
 	return func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		var merged HelpRaw
 		for _, tok := range consumed {
@@ -237,7 +237,7 @@ func makeLLMParseHandler(binary, mergedPlace, parsedPlace string, deps Deps) fun
 // record its Stage without flowing through another place. This handler just
 // forwards the HelpResult to the final result place. It exists as a distinct
 // transition to match the 5-step pipeline spec (REQ-1103 separation).
-func makeValidateHandler(binary, inPlace, outPlace string) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
+func makeValidateHandler(binary, outPlace string) func(context.Context, []cpn.Token) (map[string]cpn.Token, error) {
 	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
 		var r HelpResult
 		for _, tok := range consumed {

@@ -52,7 +52,7 @@ func BuildToolboxCatalogue(
 	absentTools []string,
 	toolboxes []tools.ToolboxManifest,
 	lexiconExcerpt []byte,
-	cap int,
+	sizeCap int,
 ) (block string, digest string, truncated []CatalogueTruncationEvent, err error) {
 	// Copy + sort toolboxes by the stable render order (GUD-003 variant:
 	// we lead with non-general, highest-count first, namespace asc as
@@ -69,8 +69,8 @@ func BuildToolboxCatalogue(
 	catalogueBytes := renderCatalogueBytes(renderOrder)
 	fullBlock := assembleBlock(osLine, shellLine, presentTools, absentTools, catalogueBytes)
 
-	if cap > 0 {
-		for len(fullBlock) > cap && len(renderOrder) > 0 {
+	if sizeCap > 0 {
+		for len(fullBlock) > sizeCap && len(renderOrder) > 0 {
 			dropped := renderOrder[len(renderOrder)-1]
 			renderOrder = renderOrder[:len(renderOrder)-1]
 			truncated = append(truncated, CatalogueTruncationEvent{

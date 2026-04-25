@@ -16,7 +16,7 @@ func TestComputeFlowSignature_EmptyCPN(t *testing.T) {
 
 func TestComputeFlowSignature_ClassifiesSourcesAndSinks(t *testing.T) {
 	c := &CPN{
-		ID:     "c",
+		ID: "c",
 		Places: map[string]*Place{
 			"in":  {ID: "in", Color: "json", Space: SpaceComputation},
 			"mid": {ID: "mid", Color: "artifact", Space: SpaceComputation},

@@ -391,6 +391,150 @@ func TestSSEBroker_CleanupDoubleCall(t *testing.T) {
 	cleanup()
 }
 
+func TestSSEBroker_BacklogReplayOnLateSubscribe(t *testing.T) {
+	t.Parallel()
+	broker := NewSSEBroker(newTestLogger())
+
+	// Publish N events BEFORE any client subscribes.
+	const N = 5
+	for i := 0; i < N; i++ {
+		broker.Publish("session-late", "evt", []byte{byte('a' + i)})
+	}
+
+	if got := broker.BacklogLen("session-late"); got != N {
+		t.Fatalf("BacklogLen = %d, want %d", got, N)
+	}
+
+	client, cleanup := broker.Subscribe("session-late")
+	defer cleanup()
+
+	// Client should receive all N replayed events in publish order.
+	for i := 0; i < N; i++ {
+		select {
+		case msg := <-client.events:
+			want := string([]byte{byte('a' + i)})
+			if !strings.Contains(string(msg), "data: "+want) {
+				t.Errorf("event %d: expected data %q, got:\n%s", i, want, msg)
+			}
+		default:
+			t.Fatalf("expected replayed event %d, got none", i)
+		}
+	}
+
+	// No more events queued.
+	select {
+	case msg := <-client.events:
+		t.Errorf("unexpected extra event after backlog replay: %s", msg)
+	default:
+	}
+}
+
+func TestSSEBroker_BacklogRingEviction(t *testing.T) {
+	t.Parallel()
+	const ringSize = 4
+	broker := NewSSEBrokerWithBacklog(newTestLogger(), ringSize)
+
+	// Publish 2x ring capacity before any subscriber.
+	total := ringSize * 2
+	for i := 0; i < total; i++ {
+		broker.Publish("s", "evt", []byte{byte('0' + i)})
+	}
+
+	if got := broker.BacklogLen("s"); got != ringSize {
+		t.Fatalf("BacklogLen = %d, want %d", got, ringSize)
+	}
+
+	client, cleanup := broker.Subscribe("s")
+	defer cleanup()
+
+	// Should receive only the most-recent ringSize events, in order.
+	for i := 0; i < ringSize; i++ {
+		expectByte := byte('0' + (total - ringSize + i))
+		select {
+		case msg := <-client.events:
+			if !strings.Contains(string(msg), "data: "+string([]byte{expectByte})) {
+				t.Errorf("replayed event %d: expected byte %c, got:\n%s", i, expectByte, msg)
+			}
+		default:
+			t.Fatalf("expected replayed event %d, got none", i)
+		}
+	}
+
+	select {
+	case msg := <-client.events:
+		t.Errorf("unexpected extra event: %s", msg)
+	default:
+	}
+}
+
+func TestSSEBroker_BacklogDisabled(t *testing.T) {
+	t.Parallel()
+	broker := NewSSEBrokerWithBacklog(newTestLogger(), 0)
+
+	broker.Publish("s", "evt", []byte("a"))
+	if got := broker.BacklogLen("s"); got != 0 {
+		t.Errorf("BacklogLen with disabled backlog = %d, want 0", got)
+	}
+
+	client, cleanup := broker.Subscribe("s")
+	defer cleanup()
+
+	select {
+	case msg := <-client.events:
+		t.Errorf("unexpected replay with backlog disabled: %s", msg)
+	default:
+	}
+}
+
+func TestSSEBroker_BacklogConcurrentPublishLateSubscribe(t *testing.T) {
+	t.Parallel()
+	broker := NewSSEBroker(newTestLogger())
+
+	var wg sync.WaitGroup
+	const publishers = 10
+	const perPublisher = 20
+
+	for i := 0; i < publishers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			for j := 0; j < perPublisher; j++ {
+				broker.Publish("race", "evt", []byte{byte(idx), byte(j)})
+			}
+		}(i)
+	}
+
+	// Late subscriber, joining while publishes are in flight.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		client, cleanup := broker.Subscribe("race")
+		defer cleanup()
+		// Drain whatever is replayed; we only care that the code is race-free
+		// and that the client receives at least one event.
+		got := 0
+		for {
+			select {
+			case <-client.events:
+				got++
+			default:
+				if got > 0 {
+					return
+				}
+				// keep polling briefly until we see something
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// Total events published must equal publishers * perPublisher; the backlog
+	// length is capped by DefaultBacklogSize.
+	if bl := broker.BacklogLen("race"); bl > DefaultBacklogSize {
+		t.Errorf("BacklogLen = %d exceeds cap %d", bl, DefaultBacklogSize)
+	}
+}
+
 // extractDataLine extracts the value after "data: " from an SSE message.
 func extractDataLine(sse string) string {
 	for _, line := range strings.Split(sse, "\n") {

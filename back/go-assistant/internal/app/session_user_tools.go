@@ -155,7 +155,7 @@ func makeUserToolExecutor(toolName, binaryPath string, adapter cpn.HostAdapter) 
 			TimeoutSeconds int      `json:"timeout_seconds"`
 			Cwd            string   `json:"cwd"`
 		}
-		if len(payload) > 0 {
+		if payload != "" {
 			if err := json.Unmarshal([]byte(payload), &args); err != nil {
 				return cpn.Token{}, fmt.Errorf("%s: parse arguments: %w", toolName, err)
 			}

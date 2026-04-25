@@ -153,8 +153,8 @@ func TestJITShortcut_PolicyRespectsParallelismHint(t *testing.T) {
 		hint    string
 		wantNil bool
 	}{
-		{"", true},       // missing → fall through
-		{"auto", true},   // LLM decides
+		{"", true},     // missing → fall through
+		{"auto", true}, // LLM decides
 		{"fanout", false},
 		{"sequence", false},
 	}

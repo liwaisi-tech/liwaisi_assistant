@@ -1,41 +1,40 @@
 package toolbuilder
 
-// toolbuilder.go — BuildToolAtelierTopology constructs the "tool-atelier"
-// CPN. Shape and REQ-* references live in spec/spec-architecture-tool-atelier-cpn.md.
+// toolbuilder.go — BuildToolCreatorTopology constructs the "tool-creator"
+// CPN. Shape and REQ-* references live in the architecture spec (see
+// doc.go for the current pointer).
 //
-// Foundational slice scope:
-//   - All 32 places and ~22 transitions are declared and wired.
-//   - Deterministic Tool transitions (dispatch, enrich, fanout, aggregate,
-//     authorize, gate) have full ToolHandlers.
-//   - LLM transitions carry SystemPrompt + LLMConfig; the CPN engine's
-//     fireLLM path drives them once an LLMClient is attached.
-//   - Bash transitions carry a placeholder BashConfig; the real scripts
-//     (scaffold materialisation, go test / go build) arrive in the
-//     wiring + TDD-loop follow-up tasks.
-//   - t-tdd-loop is a stub handler returning a best-effort TestedArtifact
-//     so the topology is end-to-end compilable and testable today.
+// Scope notes:
+//   - The profile catalog is collapsed to 3 roles (arch, go-eng, devops).
+//   - Installation runs `make install` via a NodeKindBash transition; the
+//     legacy NodeKindRegisterTool path is intentionally not wired.
+//   - A dedicated t-handle-error transition drains PlaceErrors into
+//     PlaceFailed so a validator/gate rejection terminates the flow
+//     explicitly instead of deadlocking silently.
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn"
 )
 
-// AtelierDeps captures external collaborators. Kept as a struct so
+// ToolCreatorDeps captures external collaborators. Kept as a struct so
 // follow-up tasks can add HostAdapter, ToolRegistry, etc. without
 // breaking the constructor signature.
-type AtelierDeps struct {
+type ToolCreatorDeps struct {
 	// TDDRunner drives the red-green loop inside t-tdd-loop. A nil
 	// runner is replaced with NoopTDDRunner so the topology stays
 	// structurally valid even in unit tests.
 	TDDRunner TDDRunner
 }
 
-// BuildToolAtelierTopology constructs the tool-atelier CPN for one session.
-// The returned *cpn.CPN is ready to run once the caller attaches an
-// LLMClient (required for the LLM transitions) and a HostRuntime
-// (required for the bash transitions).
-func BuildToolAtelierTopology(sessionID string, deps AtelierDeps) *cpn.CPN {
+// BuildToolCreatorTopology constructs the tool-creator CPN for one
+// session. The returned *cpn.CPN is ready to run once the caller
+// attaches an LLMClient (required for the LLM transitions) and a
+// HostRuntime (required for the bash transitions).
+func BuildToolCreatorTopology(sessionID string, deps ToolCreatorDeps) *cpn.CPN {
 	places := buildPlaces()
 	transitions := buildTransitions(deps)
 
@@ -49,11 +48,18 @@ func BuildToolAtelierTopology(sessionID string, deps AtelierDeps) *cpn.CPN {
 		transitions,
 	)
 	c.ContextWindowSize = 10
+
+	// Wire the error-handler AFTER construction so the ToolHandler
+	// closure can reference the CPN itself and publish a structured
+	// EventExecutionFailed event alongside the PlaceFailed token.
+	if t, ok := c.Transitions[TrHandleError]; ok {
+		t.ToolHandler = handleErrorHandler(c)
+	}
 	return c
 }
 
 // buildPlaces declares all typed buffers in topological order. Grouped
-// visually so reviewers can cross-check against the spec table (§5).
+// visually so reviewers can cross-check against the spec table.
 func buildPlaces() map[string]*cpn.Place {
 	p := func(id string, col cpn.ColorSet) *cpn.Place { return cpn.NewPlace(id, col, cpn.SpaceComputation) }
 	return map[string]*cpn.Place{
@@ -69,22 +75,16 @@ func buildPlaces() map[string]*cpn.Place {
 		PlaceWorkspaceReady: p(PlaceWorkspaceReady, cpn.ColorArtifact),
 		PlaceSpecV0:         p(PlaceSpecV0, cpn.ColorJSON),
 
-		// spec draft → reviewer fan-out
+		// spec draft → reviewer fan-out (3 reviewers: arch, go-eng, devops)
 		PlaceSpecDraft:     p(PlaceSpecDraft, cpn.ColorJSON),
 		PlaceSpecForGo:     p(PlaceSpecForGo, cpn.ColorJSON),
-		PlaceSpecForAI:     p(PlaceSpecForAI, cpn.ColorJSON),
 		PlaceSpecForDevOps: p(PlaceSpecForDevOps, cpn.ColorJSON),
-		PlaceSpecForQA:     p(PlaceSpecForQA, cpn.ColorJSON),
 		PlaceSpecForArch:   p(PlaceSpecForArch, cpn.ColorJSON),
-		PlaceSpecForPM:     p(PlaceSpecForPM, cpn.ColorJSON),
 
 		// reviewer outputs
 		PlaceReviewGo:     p(PlaceReviewGo, cpn.ColorJSON),
-		PlaceReviewAI:     p(PlaceReviewAI, cpn.ColorJSON),
 		PlaceReviewDevOps: p(PlaceReviewDevOps, cpn.ColorJSON),
-		PlaceReviewQA:     p(PlaceReviewQA, cpn.ColorJSON),
 		PlaceReviewArch:   p(PlaceReviewArch, cpn.ColorJSON),
-		PlaceReviewPM:     p(PlaceReviewPM, cpn.ColorJSON),
 
 		// aggregate → approve / refine
 		PlaceSpecApproved:  p(PlaceSpecApproved, cpn.ColorJSON),
@@ -99,9 +99,11 @@ func buildPlaces() map[string]*cpn.Place {
 		PlaceTested:     p(PlaceTested, cpn.ColorArtifact),
 
 		// terminal
-		PlacePackaged:   p(PlacePackaged, cpn.ColorToolManifest),
-		PlaceRegistered: p(PlaceRegistered, cpn.ColorArtifact),
-		PlaceErrors:     p(PlaceErrors, cpn.ColorError),
+		PlacePackaged:      p(PlacePackaged, cpn.ColorToolManifest),
+		PlaceInstallResult: p(PlaceInstallResult, cpn.ColorShellResult),
+		PlaceRegistered:    p(PlaceRegistered, cpn.ColorArtifact),
+		PlaceErrors:        p(PlaceErrors, cpn.ColorError),
+		PlaceFailed:        p(PlaceFailed, cpn.ColorError),
 	}
 }
 
@@ -116,27 +118,26 @@ func buildSubAgentLLM(
 	transitionID, profileID, actionID string,
 	inputPlaces, outputPlaces []string,
 	llmCfg *cpn.LLMConfig,
-	errorPlace string,
 ) *cpn.Transition {
 	profile, ok := catalog.Profiles.Get(profileID)
 	if !ok {
-		panic(fmt.Sprintf("tool-atelier: sub-agent %s references unknown profile %q", transitionID, profileID))
+		panic(fmt.Sprintf("tool-creator: sub-agent %s references unknown profile %q", transitionID, profileID))
 	}
 	action, ok := catalog.Actions.Get(actionID)
 	if !ok {
-		panic(fmt.Sprintf("tool-atelier: sub-agent %s references unknown action %q", transitionID, actionID))
+		panic(fmt.Sprintf("tool-creator: sub-agent %s references unknown action %q", transitionID, actionID))
 	}
 	if want := TransitionID(actionID, profileID); transitionID != want {
-		panic(fmt.Sprintf("tool-atelier: sub-agent id %q violates convention (want %q)", transitionID, want))
+		panic(fmt.Sprintf("tool-creator: sub-agent id %q violates convention (want %q)", transitionID, want))
 	}
 	sysPrompt, err := catalog.Compose(profileID, actionID)
 	if err != nil {
-		panic(fmt.Sprintf("tool-atelier: compose %s×%s: %v", profileID, actionID, err))
+		panic(fmt.Sprintf("tool-creator: compose %s×%s: %v", profileID, actionID, err))
 	}
 	t := cpn.NewTransition(transitionID, cpn.NodeKindLLM, inputPlaces, outputPlaces)
 	t.SystemPrompt = sysPrompt
 	t.LLMConfig = llmCfg
-	t.ErrorPlace = errorPlace
+	t.ErrorPlace = PlaceErrors
 	t.Meta = SubAgentMeta(profile, action)
 	return t
 }
@@ -145,7 +146,7 @@ func buildSubAgentLLM(
 // configuration (SystemPrompt, BashConfig, ToolHandler) is set inline for
 // readability — reviewers should be able to scan one function top-to-bottom
 // and understand the whole pipeline.
-func buildTransitions(deps AtelierDeps) map[string]*cpn.Transition {
+func buildTransitions(deps ToolCreatorDeps) map[string]*cpn.Transition {
 	tr := make(map[string]*cpn.Transition)
 
 	// Sub-agent catalog — seeded once, used for every (profile × action)
@@ -153,13 +154,13 @@ func buildTransitions(deps AtelierDeps) map[string]*cpn.Transition {
 	// plan-subtasks). Seed failure is a build-time error.
 	catalog, err := NewSubAgentCatalog()
 	if err != nil {
-		panic(fmt.Sprintf("tool-atelier: sub-agent catalog seed failed: %v", err))
+		panic(fmt.Sprintf("tool-creator: sub-agent catalog seed failed: %v", err))
 	}
 
 	// ── t-triage (LLM) ────────────────────────────────────────────────
 	tTriage := cpn.NewTransition(TrTriage, cpn.NodeKindLLM,
 		[]string{PlaceRequest}, []string{PlaceTriaged})
-	tTriage.SystemPrompt = `You are a senior Go software architect acting as a request-triage bot for the tool-atelier.
+	tTriage.SystemPrompt = `You are a senior Go software architect acting as a request-triage bot for tool-creator.
 Read the incoming ToolRequest JSON (field "description" carries the user's intent) and decide if it is specific enough to start design.
 
 DEFAULT TO "ready": true. A request is ready when you can identify at least:
@@ -235,7 +236,7 @@ Output ONLY valid JSON matching SpecDraft:
 	tFanout.ErrorPlace = PlaceErrors
 	tr[TrFanoutReviewers] = tFanout
 
-	// ── t-review-spec-* (6 × LLM sub-agents) ──────────────────────────
+	// ── t-review-spec-* (LLM sub-agents, one per reviewer role) ──────
 	// Each reviewer is a sub-agent composed of (profile × action). The
 	// SystemPrompt is rendered deterministically from the catalog so
 	// profile text stays free of action coupling. Transition.Meta
@@ -245,14 +246,13 @@ Output ONLY valid JSON matching SpecDraft:
 		tr[r.TransitionID] = buildSubAgentLLM(catalog, r.TransitionID,
 			r.ProfileID, r.ActionID,
 			[]string{r.InputPlace}, []string{r.OutputPlace},
-			&cpn.LLMConfig{Role: "structured", MaxTokens: 800, RequireJSON: true},
-			PlaceErrors)
+			&cpn.LLMConfig{Role: "structured", MaxTokens: 800, RequireJSON: true})
 	}
 
 	// ── t-aggregate-approve / t-aggregate-refine (Tool, mutually exclusive guards) ──
-	aggInputs := []string{
-		PlaceReviewGo, PlaceReviewAI, PlaceReviewDevOps,
-		PlaceReviewQA, PlaceReviewArch, PlaceReviewPM,
+	aggInputs := make([]string, 0, len(reviewerRoles))
+	for _, r := range reviewerRoles {
+		aggInputs = append(aggInputs, r.OutputPlace)
 	}
 	tApprove := cpn.NewTransition(TrAggregateApprove, cpn.NodeKindTool,
 		aggInputs, []string{PlaceSpecApproved})
@@ -274,16 +274,14 @@ Output ONLY valid JSON matching SpecDraft:
 	tRefineLLM := buildSubAgentLLM(catalog, TrRefineSpec,
 		ProfileArch, ActionRefineSpec,
 		[]string{PlaceRefineRequest}, []string{PlaceSpecDraft},
-		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true},
-		PlaceErrors)
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true})
 	tr[TrRefineSpec] = tRefineLLM
 
 	// ── t-decompose-totals-arch (LLM sub-agent) ──────────────────────
 	tDecompose := buildSubAgentLLM(catalog, TrDecomposeTotals,
 		ProfileArch, ActionDecomposeTotals,
 		[]string{PlaceSpecApproved}, []string{PlaceTotals},
-		&cpn.LLMConfig{Role: "structured", MaxTokens: 1024, RequireJSON: true},
-		PlaceErrors)
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 1024, RequireJSON: true})
 	tr[TrDecomposeTotals] = tDecompose
 
 	// ── t-authorize-totals (Tool, deterministic) ──────────────────────
@@ -304,8 +302,7 @@ Output ONLY valid JSON matching SpecDraft:
 	tPlan := buildSubAgentLLM(catalog, TrPlanSubtasks,
 		ProfileArch, ActionPlanSubtasks,
 		[]string{PlaceTotalReady}, []string{PlaceSubtasks},
-		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true},
-		PlaceErrors)
+		&cpn.LLMConfig{Role: "structured", MaxTokens: 2048, RequireJSON: true})
 	tr[TrPlanSubtasks] = tPlan
 
 	// ── t-tdd-loop (Tool, v1 stub) ────────────────────────────────────
@@ -325,11 +322,101 @@ Output ONLY valid JSON matching SpecDraft:
 	tPackage.ErrorPlace = PlaceErrors
 	tr[TrPackage] = tPackage
 
-	// ── t-register (RegisterTool) ─────────────────────────────────────
-	tRegister := cpn.NewTransition(TrRegister, cpn.NodeKindRegisterTool,
-		[]string{PlacePackaged}, []string{PlaceRegistered})
-	tRegister.ErrorPlace = PlaceErrors
-	tr[TrRegister] = tRegister
+	// ── t-install (Bash) ──────────────────────────────────────────────
+	// Runs `make install` in the scaffolded tool directory. Makefile
+	// shells out to install.sh which copies bin/<name> into
+	// $BRAE_TOOLS_BIN. On success the transition deposits a
+	// ColorShellResult token on PlaceInstallResult.
+	//
+	// Command/Args/Cwd are left empty on the template here; the adapter
+	// that materialises the scaffold is expected to rewrite BashConfig
+	// at session-bind time to point at the real workspace path. Leaving
+	// the placeholder ensures the topology remains structurally valid
+	// (executor requires a non-nil BashConfig for NodeKindBash).
+	tInstall := cpn.NewTransition(TrInstall, cpn.NodeKindBash,
+		[]string{PlacePackaged}, []string{PlaceInstallResult})
+	tInstall.BashConfig = &cpn.BashConfig{
+		Command: "make",
+		Args:    []string{"install"},
+	}
+	tInstall.ErrorPlace = PlaceErrors
+	tr[TrInstall] = tInstall
+
+	// ── t-finalize-install (Tool) ─────────────────────────────────────
+	// Converts the ColorShellResult from `make install` into a
+	// ColorArtifact manifest token on PlaceRegistered. Extracts the
+	// installed binary path (and, when available, a sha256) by parsing
+	// install.sh's "installed: <path>" line from stdout.
+	tFinalize := cpn.NewTransition(TrFinalizeInstall, cpn.NodeKindTool,
+		[]string{PlaceInstallResult}, []string{PlaceRegistered})
+	tFinalize.ToolHandler = finalizeInstallHandler()
+	tFinalize.ErrorPlace = PlaceErrors
+	tr[TrFinalizeInstall] = tFinalize
+
+	// ── t-handle-error (Tool) ─────────────────────────────────────────
+	// Drains PlaceErrors → PlaceFailed, fixing the silent mid-flow halt
+	// where a validator/gate failure deposited via depositSubAgentError
+	// had no consumer and sat in PlaceErrors forever. The ToolHandler
+	// that also publishes EventExecutionFailed is wired post-build in
+	// BuildToolCreatorTopology so it can capture the owning CPN.
+	tHandleError := cpn.NewTransition(TrHandleError, cpn.NodeKindTool,
+		[]string{PlaceErrors}, []string{PlaceFailed})
+	tHandleError.ToolHandler = handleErrorHandler(nil) // overwritten post-build
+	// No ErrorPlace: this transition is itself the error sink.
+	tr[TrHandleError] = tHandleError
 
 	return tr
+}
+
+// handleErrorHandler returns a Tool handler that forwards a PlaceErrors
+// token to PlaceFailed and, when c is non-nil, publishes an
+// EventExecutionFailed envelope with best-effort decoded context.
+//
+// The nil-c variant is installed at build time so the topology
+// validates (ToolHandler must be non-nil for NodeKindTool). The
+// CPN-bound variant is installed in BuildToolCreatorTopology after
+// NewCPN so the closure captures the constructed CPN.
+func handleErrorHandler(c *cpn.CPN) func(ctx context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+	return func(_ context.Context, consumed []cpn.Token) (map[string]cpn.Token, error) {
+		if len(consumed) == 0 {
+			return nil, fmt.Errorf("%s: no error token", TrHandleError)
+		}
+		tok := consumed[0]
+
+		// Best-effort decode of the structured error payload deposited
+		// by fire_llm.depositSubAgentError.
+		payload := cpn.ExecutionFailedPayload{}
+		if raw, ok := tok.Payload.(string); ok {
+			var decoded struct {
+				TransitionID string `json:"transition_id"`
+				ProfileID    string `json:"profile_id"`
+				ActionID     string `json:"action_id"`
+				Stage        string `json:"stage"`
+				Error        string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+				payload = cpn.ExecutionFailedPayload{
+					Stage:     decoded.Stage,
+					Reason:    decoded.Error,
+					ProfileID: decoded.ProfileID,
+					ActionID:  decoded.ActionID,
+					Source:    decoded.TransitionID,
+				}
+			} else {
+				payload.Reason = raw
+			}
+		}
+
+		if c != nil {
+			c.PublishExecutionFailed(TrHandleError, payload)
+		}
+
+		// Echo the failure onto the terminal place so observers (and
+		// tests) can assert the CPN has stopped deterministically.
+		out := tok
+		out.Color = cpn.ColorError
+		return map[string]cpn.Token{
+			PlaceFailed: out,
+		}, nil
+	}
 }

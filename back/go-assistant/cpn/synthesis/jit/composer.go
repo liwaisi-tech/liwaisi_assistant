@@ -255,8 +255,8 @@ func emit(d cpn.TopologyDraft) ([]byte, error) {
 // lintBlob runs synthesis.LintRaw (which decodes into *persist.CPNTopology
 // inside the synthesis package) so this file avoids importing persist
 // directly (Axiom A13 / CON-001).
-func lintBlob(blob []byte, safe cpn.SafeRegistryPort, cap cpn.SizeCap) cpn.LintResultPort {
-	return synthesis.LintRaw(json.RawMessage(blob), safe, cap)
+func lintBlob(blob []byte, safe cpn.SafeRegistryPort, sizeCap cpn.SizeCap) cpn.LintResultPort {
+	return synthesis.LintRaw(json.RawMessage(blob), safe, sizeCap)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

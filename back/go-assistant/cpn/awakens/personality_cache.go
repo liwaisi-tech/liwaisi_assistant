@@ -38,14 +38,14 @@ type personalityEntry struct {
 
 // NewMemoryPersonalityCache returns a MemoryPersonalityCache with the given
 // cap (≤ 0 selects DefaultPersonalityCacheCap).
-func NewMemoryPersonalityCache(cap int) *MemoryPersonalityCache {
-	if cap <= 0 {
-		cap = DefaultPersonalityCacheCap
+func NewMemoryPersonalityCache(sizeCap int) *MemoryPersonalityCache {
+	if sizeCap <= 0 {
+		sizeCap = DefaultPersonalityCacheCap
 	}
 	return &MemoryPersonalityCache{
-		cap:   cap,
+		cap:   sizeCap,
 		order: list.New(),
-		items: make(map[string]*list.Element, cap),
+		items: make(map[string]*list.Element, sizeCap),
 	}
 }
 

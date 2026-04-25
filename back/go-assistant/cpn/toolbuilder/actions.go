@@ -2,7 +2,7 @@ package toolbuilder
 
 // ActionSpec describes WHAT a sub-agent does in a single CPN transition.
 // It is profile-agnostic: the same action is reusable across many
-// profiles (e.g. review-spec × {pm, arch, qa, devops, ai-eng, go-eng}).
+// profiles (e.g. review-spec × {arch, go-eng, devops}).
 //
 // ActionSpec carries the task verb, the input token contract, the
 // output JSON schema, termination rules, and a few-shot example. It
@@ -12,29 +12,28 @@ package toolbuilder
 // it is only embedded in the prompt and used by the passthrough
 // validator (no enforcement). PR2 swaps in a strict validator.
 type ActionSpec struct {
-	ID              string
-	Verb            string   // imperative task verb ("Review", "Produce", "Audit")
-	InputToken      string   // symbolic name used in the prompt (e.g. "SPEC_DRAFT")
-	Instructions    string   // task-shaped prose: rubric, decision ladder, severity
-	OutputSchema    string   // JSON schema excerpt shown to the LLM
-	FewShot         string   // golden example matching OutputSchema; may be empty
-	Capabilities    ActionCapabilities
-	RequiredTools   []string // tools this action needs; intersected with profile.MaxTools
+	ID            string
+	Verb          string // imperative task verb ("Review", "Produce", "Audit")
+	InputToken    string // symbolic name used in the prompt (e.g. "SPEC_DRAFT")
+	Instructions  string // task-shaped prose: rubric, decision ladder, severity
+	OutputSchema  string // JSON schema excerpt shown to the LLM
+	FewShot       string // golden example matching OutputSchema; may be empty
+	Capabilities  ActionCapabilities
+	RequiredTools []string // tools this action needs; intersected with profile.MaxTools
 }
 
 // ActionCapabilities declares what the action's output is allowed to
 // influence downstream. Used by policy_gate (PR2) to decide whether
 // gating is required before a runner consumes the artifact.
 type ActionCapabilities struct {
-	EmitsCode     bool // output contains executable code
-	EmitsTests    bool // output contains test source
-	AdvisoryOnly  bool // structured-data only; cannot be executed
+	EmitsCode    bool // output contains executable code
+	EmitsTests   bool // output contains test source
+	AdvisoryOnly bool // structured-data only; cannot be executed
 }
 
 // ActionID constants — stable across the repo.
 const (
 	ActionReviewSpec      = "review-spec"
-	ActionSecurityEval    = "security-eval"
 	ActionReviewCode      = "review-code"
 	ActionRefineSpec      = "refine-spec"
 	ActionDecomposeTotals = "decompose-totals"
@@ -43,9 +42,8 @@ const (
 	// ActionBuildTDDFromSpec = "build-tdd-from-spec"
 )
 
-// seedActions returns the built-in action catalog. PR1 shipped
-// review-spec. PR2 adds security-eval + review-code. PR4 adds
-// refine-spec / decompose-totals / plan-subtasks.
+// seedActions returns the built-in action catalog used by tool-creator:
+// review-spec, review-code, refine-spec, decompose-totals, plan-subtasks.
 func seedActions() []ActionSpec {
 	return []ActionSpec{
 		{
@@ -60,19 +58,6 @@ issues outside your discipline rather than opining on them.`,
 			FewShot:       `{"role":"go-eng","approved":false,"blocking_issues":["ports import adapters"],"suggestions":["prefer table-driven tests for edge cases"]}`,
 			Capabilities:  ActionCapabilities{AdvisoryOnly: true},
 			RequiredTools: nil,
-		},
-		{
-			ID:         ActionSecurityEval,
-			Verb:       "Audit",
-			InputToken: "ARTIFACT",
-			Instructions: `Read the <ARTIFACT> (spec or code) between the delimiters. Classify threats using STRIDE
-(Spoofing, Tampering, Repudiation, Info-disclosure, Denial-of-service, Elevation). For each threat assign a severity
-(low|med|high|crit) and a concrete mitigation. Emit required_controls listing controls that MUST be present. Approve only
-when zero high/crit threats remain. Do NOT emit executable code — this action is advisory-only.`,
-			OutputSchema:  `{"role":"security","approved":bool,"threats":[{"id":string,"stride":"S|T|R|I|D|E","severity":"low|med|high|crit","mitigation":string}],"required_controls":[string]}`,
-			FewShot:       `{"role":"security","approved":false,"threats":[{"id":"T1","stride":"I","severity":"high","mitigation":"move secret to env var"}],"required_controls":["no secrets in source"]}`,
-			Capabilities:  ActionCapabilities{AdvisoryOnly: true},
-			RequiredTools: []string{"read_file"},
 		},
 		{
 			ID:         ActionReviewCode,

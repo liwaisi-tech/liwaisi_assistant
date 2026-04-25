@@ -226,10 +226,10 @@ func TestTDDLoopHandler_RetryThenSucceed(t *testing.T) {
 	runner := newFakeRunner(90)
 	// iter 1: red=fail ok, green=fail (cov low) ; iter 2: red=fail, green=pass w/ cov.
 	runner.scripts["TestFlaky"] = []runOutcome{
-		{passed: false, cov: 0},    // red1
-		{passed: false, cov: 40},   // green1 — low
-		{passed: false, cov: 0},    // red2
-		{passed: true, cov: 92},    // green2 — passes
+		{passed: false, cov: 0},  // red1
+		{passed: false, cov: 40}, // green1 — low
+		{passed: false, cov: 0},  // red2
+		{passed: true, cov: 92},  // green2 — passes
 	}
 	batch := SubtasksBatch{
 		ByTotal: []TotalSubs{

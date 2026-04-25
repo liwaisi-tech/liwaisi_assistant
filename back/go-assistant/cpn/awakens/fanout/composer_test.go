@@ -30,7 +30,7 @@ func TestCompose_3Probes_ShapeInvariants(t *testing.T) {
 	}
 
 	// (a) len(Transitions) == 3 LLM probes + 8 mandatory info probes + 1 reducer = 12.
-	expectedProbes := 3 + (len(mandatoryInfoProbes())+len(mandatoryDevtoolProbes()))
+	expectedProbes := 3 + (len(mandatoryInfoProbes()) + len(mandatoryDevtoolProbes()))
 	if got, want := len(c.Transitions), expectedProbes+1; got != want {
 		t.Fatalf("expected %d transitions (%d probes + reducer), got %d", want, expectedProbes, got)
 	}
@@ -130,7 +130,7 @@ func TestCompose_SeedsTriggerAndPlan(t *testing.T) {
 	// One trigger token per probe — each probe transition consumes from
 	// the shared trigger place, so it must be seeded with (len(probes) +
 	// mandatoryInfoProbes) tokens to prevent sub-CPN deadlock.
-	wantTokens := len(plan.Probes) + (len(mandatoryInfoProbes())+len(mandatoryDevtoolProbes()))
+	wantTokens := len(plan.Probes) + (len(mandatoryInfoProbes()) + len(mandatoryDevtoolProbes()))
 	if got := c.Places[PlaceTriggerID].Len(); got != wantTokens {
 		t.Fatalf("trigger seed count: got %d want %d", got, wantTokens)
 	}
@@ -196,7 +196,7 @@ func TestCompose_DedupesDuplicateIDs(t *testing.T) {
 		t.Fatalf("Compose error: %v", err)
 	}
 	// 2 dedup'd LLM probes + 8 mandatory info probes + 1 reducer.
-	want := 2 + (len(mandatoryInfoProbes())+len(mandatoryDevtoolProbes())) + 1
+	want := 2 + (len(mandatoryInfoProbes()) + len(mandatoryDevtoolProbes())) + 1
 	if got := len(c.Transitions); got != want {
 		t.Fatalf("expected %d transitions, got %d", want, got)
 	}

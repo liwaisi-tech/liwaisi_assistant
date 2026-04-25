@@ -84,21 +84,21 @@ func Compose(sessionID string, binaries []HelpInput, deps Deps) (*cpn.CPN, error
 		tMerge := cpn.NewTransition(mergeID, cpn.NodeKindTool,
 			[]string{longPlace, shortPlace}, []string{mergedPlace})
 		tMerge.ToolName = mergeID
-		tMerge.ToolHandler = makeMergeHandler(b.Binary, longPlace, shortPlace, mergedPlace)
+		tMerge.ToolHandler = makeMergeHandler(b.Binary, mergedPlace)
 		transitions[mergeID] = tMerge
 
 		llmID := TransitionLLMParsePrefix + b.Binary
 		tLLM := cpn.NewTransition(llmID, cpn.NodeKindTool,
 			[]string{mergedPlace}, []string{parsedPlace})
 		tLLM.ToolName = llmID
-		tLLM.ToolHandler = makeLLMParseHandler(b.Binary, mergedPlace, parsedPlace, deps)
+		tLLM.ToolHandler = makeLLMParseHandler(b.Binary, parsedPlace, deps)
 		transitions[llmID] = tLLM
 
 		valID := TransitionValidatePrefix + b.Binary
 		tVal := cpn.NewTransition(valID, cpn.NodeKindTool,
 			[]string{parsedPlace}, []string{resultPlace})
 		tVal.ToolName = valID
-		tVal.ToolHandler = makeValidateHandler(b.Binary, parsedPlace, resultPlace)
+		tVal.ToolHandler = makeValidateHandler(b.Binary, resultPlace)
 		transitions[valID] = tVal
 	}
 

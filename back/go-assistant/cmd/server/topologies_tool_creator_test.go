@@ -7,9 +7,9 @@ import (
 	"github.com/liwaisi-tech/liwaisi_assistant/back/go-assistant/cpn/toolbuilder"
 )
 
-func TestRegisterToolAtelier_AddsEntry(t *testing.T) {
+func TestRegisterToolCreator_AddsEntry(t *testing.T) {
 	lib := cpn.NewFlowLibrary()
-	registerToolAtelier(lib)
+	registerToolCreator(lib)
 
 	got, ok := lib.Get(toolbuilder.FlowName)
 	if !ok {
@@ -23,33 +23,33 @@ func TestRegisterToolAtelier_AddsEntry(t *testing.T) {
 	}
 }
 
-func TestRegisterToolAtelier_SignatureHasHashtags(t *testing.T) {
+func TestRegisterToolCreator_SignatureHasHashtags(t *testing.T) {
 	lib := cpn.NewFlowLibrary()
-	registerToolAtelier(lib)
+	registerToolCreator(lib)
 
 	entry, ok := lib.GetEntry(toolbuilder.FlowName)
 	if !ok {
 		t.Fatal("no entry")
 	}
-	if entry.Signature.Template != "tool-atelier" {
-		t.Fatalf("expected template 'tool-atelier', got %q", entry.Signature.Template)
+	if entry.Signature.Template != "tool-creator" {
+		t.Fatalf("expected template 'tool-creator', got %q", entry.Signature.Template)
 	}
 	found := false
 	for _, h := range entry.Signature.Hashtags {
-		if h == "tool-atelier" {
+		if h == "tool-creator" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("hashtag 'tool-atelier' missing from signature: %v", entry.Signature.Hashtags)
+		t.Fatalf("hashtag 'tool-creator' missing from signature: %v", entry.Signature.Hashtags)
 	}
 	if entry.Origin != "builtin" {
 		t.Fatalf("expected origin 'builtin', got %q", entry.Origin)
 	}
 }
 
-func TestRegisterToolAtelier_NilLibrary(t *testing.T) {
+func TestRegisterToolCreator_NilLibrary(t *testing.T) {
 	// Should not panic.
-	registerToolAtelier(nil)
+	registerToolCreator(nil)
 }

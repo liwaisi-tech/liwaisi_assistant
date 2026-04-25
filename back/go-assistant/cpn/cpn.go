@@ -449,6 +449,23 @@ func (c *CPN) PublishHITLRequested(transitionID string, payload HITLRequestedPay
 	})
 }
 
+// PublishExecutionFailed emits a typed EventExecutionFailed envelope
+// bound to transitionID. Used by topologies (notably tool-creator) to
+// signal an explicit terminal failure when a dedicated error-handling
+// transition consumes a PlaceErrors token — avoiding the silent
+// deadlock that would occur if PlaceErrors had no consumer.
+func (c *CPN) PublishExecutionFailed(transitionID string, payload ExecutionFailedPayload) {
+	if c == nil {
+		return
+	}
+	c.emit(&Event{
+		Type:           EventExecutionFailed,
+		TransitionID:   transitionID,
+		TransitionKind: NodeKindTool,
+		Payload:        payload,
+	})
+}
+
 // SessionEventSink returns an Event sink bound to this CPN for use with
 // PTYRequest.EventSink. It wraps the Event into the payload expected by
 // PublishProcessEvent so adapters can emit pre-shaped Event values
