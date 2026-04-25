@@ -50,6 +50,7 @@ export function ChatContainer({
     awakeningPhase,
     pendingToolApprovals,
     resolveToolApproval,
+    progressSteps,
   } = useChat(sessionId);
   const [showClearDialog, setShowClearDialog] = useState(false);
 
@@ -123,6 +124,7 @@ export function ChatContainer({
         onReceiptDismiss={dismissReceipt}
         pendingToolApprovals={pendingToolApprovals}
         onToolApprovalResolved={resolveToolApproval}
+        progressSteps={progressSteps}
       />
       {notice && (
         <div className="px-4 pt-2">

@@ -34,9 +34,18 @@ func NewOutputHook() (*OutputHook, error) {
 // Validate runs StrictJSONValidator against the action's contract.
 // Returns nil for transitions whose Meta.kind != "subagent" so the
 // hook is safe to attach to any CPN.
+//
+// Reviewer outputs (ActionReviewSpec) are intentionally exempt: a strict
+// schema failure on a reviewer token used to route to PlaceErrors and
+// terminate the flow. Reviewers are advisory only — parseReviews already
+// degrades unparseable output to a synthetic Review, so we let the lenient
+// downstream parser do its job and keep the flow forward-progressing.
 func (h *OutputHook) Validate(t *cpn.Transition, raw []byte) error {
 	actionID, ok := subAgentActionID(t)
 	if !ok {
+		return nil
+	}
+	if actionID == ActionReviewSpec {
 		return nil
 	}
 	action, ok := h.catalog.Actions.Get(actionID)

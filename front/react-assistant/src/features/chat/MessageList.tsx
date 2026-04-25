@@ -3,12 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { loadNamespace } from '../../i18n/loadNamespace';
 import { MessageBubble } from './MessageBubble';
 import { ActivityBubble } from './ActivityBubble';
+import { ProgressLog } from './ProgressLog';
 import type { SessionState } from '../../types/api';
 import type { ChatMessage, HITLAction } from '../../types/chat';
 import type {
   AwakeningPhase,
   CurrentActivity,
   PendingToolApproval,
+  ProgressStep,
   RecentReceipt,
 } from '../../hooks/useChat';
 import type { A2UIAction, A2UIPayload } from './a2ui/types';
@@ -37,6 +39,8 @@ interface MessageListProps {
   pendingToolApprovals?: PendingToolApproval[];
   /** Called once a tool approval POST resolves successfully. */
   onToolApprovalResolved?: (requestId: string) => void;
+  /** Persistent per-turn progress log (rendered above ActivityBubble). */
+  progressSteps?: ProgressStep[];
 }
 
 export function MessageList({
@@ -53,6 +57,7 @@ export function MessageList({
   onReceiptDismiss,
   pendingToolApprovals = [],
   onToolApprovalResolved,
+  progressSteps = [],
 }: MessageListProps) {
   const { t } = useTranslation('chat');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -209,6 +214,8 @@ export function MessageList({
               onResolved={() => onToolApprovalResolved?.(approval.requestId)}
             />
           ))}
+
+        <ProgressLog steps={progressSteps} />
 
         <ActivityBubble
           activity={currentActivity}

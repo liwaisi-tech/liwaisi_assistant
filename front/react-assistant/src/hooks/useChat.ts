@@ -48,6 +48,27 @@ export interface PendingToolApproval {
   preview: unknown; // A2UIPayload shape validated at render time by the renderer itself
 }
 
+// ProgressStep is one row in the persistent progress log rendered above
+// the ActivityBubble. Unlike CurrentActivity (a single transient pill),
+// progress steps accumulate across the agent's turn so the user can see
+// what tool-creator (or any multi-step CPN) is doing without polling/
+// refreshing. Cleared when the user starts a new turn or the session
+// resets.
+export interface ProgressStep {
+  /** Stable key — the originating transitionId. */
+  transitionId: string;
+  /** Human-friendly verb (e.g. "Thinking", "Calling tool"). */
+  verb: string;
+  /** Optional sub-detail (tool name, role hint). */
+  detail?: string;
+  /** "running" while in flight, "done" once the matching completion lands. */
+  status: 'running' | 'done';
+  /** Wall-clock ms when the step was first observed. */
+  startedAt: number;
+  /** Total elapsed ms once status flips to done. */
+  durationMs?: number;
+}
+
 export interface ChatState {
   // Tracks the session whose stream we are willing to apply. STREAM_CHUNK
   // actions whose SessionID does not match are dropped so a late chunk from
@@ -74,7 +95,17 @@ export interface ChatState {
    * (approve or deny via POST /tool-approvals) removes it.
    */
   pendingToolApprovals: PendingToolApproval[];
+  /**
+   * Persistent progress log: one entry per non-silent transition fired
+   * during the current turn. Capped at MAX_PROGRESS_STEPS (oldest dropped).
+   * Cleared on USER_MESSAGE (new turn), SESSION_LOADED, and RESET.
+   */
+  progressSteps: ProgressStep[];
 }
+
+// Soft cap so a long-running multi-agent CPN (tool-creator: ~25 transitions)
+// doesn't grow the chat into an unscrollable wall.
+const MAX_PROGRESS_STEPS = 32;
 
 export type ChatAction =
   // SESSION_LOADED carries the sessionId so the reducer can begin filtering
@@ -102,6 +133,9 @@ export type ChatAction =
   | { type: 'ACTIVITY_END'; transitionId: string; sessionId: string; durationMs?: number; costUsd?: number }
   | { type: 'ACTIVITY_RECEIPT_SHOW'; durationMs: number; costUsd: number }
   | { type: 'ACTIVITY_RECEIPT_DISMISS' }
+  | { type: 'PROGRESS_STEP_START'; transitionId: string; sessionId: string; verb: string; detail?: string }
+  | { type: 'PROGRESS_STEP_END'; transitionId: string; sessionId: string; durationMs?: number }
+  | { type: 'PROGRESS_CLEAR' }
   | { type: 'INJECT_LOCAL_MESSAGE'; id: string; content: string; cpnRole?: string }
   | { type: 'UPDATE_MESSAGE_CONTENT'; id: string; content: string }
   | { type: 'TOOL_EXECUTED'; cpnId: string; sessionId: string; execution: ToolExecution }
@@ -256,6 +290,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           },
         ],
         error: null,
+        // New turn: drop the previous turn's progress log so the agent's
+        // next run starts from a clean slate.
+        progressSteps: [],
       };
 
     case 'SET_SENDING':
@@ -591,6 +628,46 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'ACTIVITY_RECEIPT_DISMISS':
       return { ...state, recentReceipt: null };
 
+    case 'PROGRESS_STEP_START': {
+      // Session-id race guard — drop steps from a prior session.
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      // Idempotence: re-dispatch with the same transitionId is a no-op so
+      // duplicate events don't spawn duplicate rows.
+      if (state.progressSteps.some((s) => s.transitionId === action.transitionId)) {
+        return state;
+      }
+      const next: ProgressStep = {
+        transitionId: action.transitionId,
+        verb: action.verb,
+        detail: action.detail,
+        status: 'running',
+        startedAt: Date.now(),
+      };
+      const grown = [...state.progressSteps, next];
+      const capped = grown.length > MAX_PROGRESS_STEPS
+        ? grown.slice(grown.length - MAX_PROGRESS_STEPS)
+        : grown;
+      return { ...state, progressSteps: capped };
+    }
+
+    case 'PROGRESS_STEP_END': {
+      if (state.sessionId !== null && action.sessionId !== state.sessionId) {
+        return state;
+      }
+      let touched = false;
+      const next = state.progressSteps.map((s) => {
+        if (s.transitionId !== action.transitionId || s.status === 'done') return s;
+        touched = true;
+        return { ...s, status: 'done' as const, durationMs: action.durationMs };
+      });
+      return touched ? { ...state, progressSteps: next } : state;
+    }
+
+    case 'PROGRESS_CLEAR':
+      return state.progressSteps.length === 0 ? state : { ...state, progressSteps: [] };
+
     case 'INJECT_LOCAL_MESSAGE':
       return {
         ...state,
@@ -680,6 +757,7 @@ export const initialState: ChatState = {
   currentActivity: null,
   recentReceipt: null,
   pendingToolApprovals: [],
+  progressSteps: [],
 };
 
 export interface UseChatOptions {
@@ -765,6 +843,8 @@ export interface UseChatReturn {
    */
   pendingToolApprovals: PendingToolApproval[];
   resolveToolApproval: (requestId: string) => void;
+  /** Persistent per-turn progress log; see ProgressStep. */
+  progressSteps: ProgressStep[];
   // Local message injection — used by the in-chat A2UI model-admin
   // fragment to drop a synthetic assistant bubble without a backend
   // round-trip. The bubble's content carries a `$$a2ui:` payload which
@@ -915,6 +995,16 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
           verb: label.verb,
           detail: label.detail,
         });
+        // Persistent log: the ActivityBubble shows only the latest step
+        // transiently. Append to progressSteps so a multi-transition run
+        // (e.g. tool-creator) leaves a visible trail in the chat surface.
+        dispatch({
+          type: 'PROGRESS_STEP_START',
+          transitionId: data.TransitionID,
+          sessionId: data.SessionID,
+          verb: label.verb,
+          detail: label.detail,
+        });
       }
       options?.onTransitionStarted?.(data);
     },
@@ -933,6 +1023,12 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
         sessionId: data.SessionID,
         durationMs: payload?.duration_ms,
         costUsd: payload?.cost_usd,
+      });
+      dispatch({
+        type: 'PROGRESS_STEP_END',
+        transitionId: data.TransitionID,
+        sessionId: data.SessionID,
+        durationMs: payload?.duration_ms,
       });
       options?.onTransitionCompleted?.(data);
     },
@@ -1148,5 +1244,6 @@ export function useChat(sessionId: string | null, options?: UseChatOptions): Use
     sendUserAction,
     pendingToolApprovals: state.pendingToolApprovals,
     resolveToolApproval,
+    progressSteps: state.progressSteps,
   };
 }

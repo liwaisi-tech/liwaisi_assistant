@@ -166,7 +166,11 @@ func TestHandleErrorTransition_WiredAndConsumesErrors(t *testing.T) {
 	}
 }
 
-func TestBuildToolCreatorTopology_AggregatorsMutuallyExclusive(t *testing.T) {
+func TestBuildToolCreatorTopology_AggregatorAlwaysApproves(t *testing.T) {
+	// Autonomous mode: the aggregator always approves once every reviewer
+	// slot has produced a token. Reviewer blocking_issues become
+	// suggestions on the downstream Verdict; the refine guard is now
+	// dormant (kept for back-compat but never fires).
 	c := BuildToolCreatorTopology("test-session", ToolCreatorDeps{})
 	app := c.Transitions[TrAggregateApprove]
 	ref := c.Transitions[TrAggregateRefine]
@@ -176,7 +180,6 @@ func TestBuildToolCreatorTopology_AggregatorsMutuallyExclusive(t *testing.T) {
 	if ref.Guard == nil {
 		t.Fatal("refine aggregator has no guard")
 	}
-	// Construct N approved reviews → only approve fires.
 	mk := func(role string, approved bool, blocking []string) *cpn.Token {
 		b, _ := json.Marshal(Review{Role: role, Approved: approved, BlockingIssues: blocking})
 		return &cpn.Token{Color: cpn.ColorJSON, Payload: string(b)}
@@ -186,20 +189,20 @@ func TestBuildToolCreatorTopology_AggregatorsMutuallyExclusive(t *testing.T) {
 		allApproved = append(allApproved, mk(r.ProfileID, true, nil))
 	}
 	if !app.Guard(allApproved) {
-		t.Error("approve guard should fire on all-approved")
+		t.Error("approve guard should fire when all slots present")
 	}
 	if ref.Guard(allApproved) {
-		t.Error("refine guard should NOT fire on all-approved")
+		t.Error("refine guard must never fire (dormant)")
 	}
 
-	// One blocker → only refine fires.
+	// One blocker → approve still fires (autonomous), refine still dormant.
 	oneBlocker := append([]*cpn.Token{}, allApproved...)
 	oneBlocker[0] = mk(reviewerRoles[0].ProfileID, false, []string{"missing non-goals"})
-	if app.Guard(oneBlocker) {
-		t.Error("approve guard should NOT fire with a blocker")
+	if !app.Guard(oneBlocker) {
+		t.Error("approve guard should fire with a blocker (autonomous mode)")
 	}
-	if !ref.Guard(oneBlocker) {
-		t.Error("refine guard should fire with a blocker")
+	if ref.Guard(oneBlocker) {
+		t.Error("refine guard must never fire even with blockers")
 	}
 }
 
